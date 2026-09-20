@@ -58,6 +58,16 @@ export const IconMindMap = (p) => (
   </Svg>
 )
 
+// Issue #129: "Bileşenler" menusu — urun kirilimindeki bir bileseni (kutu)
+// temsil eden izometrik kup.
+export const IconComponent = (p) => (
+  <Svg {...p}>
+    <path d="M12 2.5 21 7v10l-9 4.5L3 17V7l9-4.5Z" />
+    <path d="M3 7l9 4.5L21 7" />
+    <path d="M12 11.5V21.5" />
+  </Svg>
+)
+
 export const IconMatrix = (p) => (
   <Svg {...p}>
     <rect x="3" y="3" width="18" height="18" rx="2" />

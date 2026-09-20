@@ -91,6 +91,20 @@ describe('Sidebar — menu gruplari', () => {
     expect(screen.getByText('Kabul Testleri')).toBeInTheDocument()
   })
 
+  // Issue #129: bilesen bazli gorunum ayri bir ust seviye menudur; "Bağlantı
+  // Ağacı" (PBS) yerine gecmez, yanina eklenir.
+  it('"Bileşenler" menusu ust seviyede yer alir ve tiklaninca yonlendirir', () => {
+    const onNavigate = vi.fn()
+    render(
+      <LanguageProvider>
+        <Sidebar active="dashboard" onNavigate={onNavigate} />
+      </LanguageProvider>,
+    )
+    expect(screen.getByText('Bağlantı Ağacı')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Bileşenler'))
+    expect(onNavigate).toHaveBeenCalledWith('components')
+  })
+
   it('Sözlük bagimsiz (grupsuz) oge olarak gorunur', () => {
     renderSidebar()
     expect(screen.getByText('Sözlük')).toBeInTheDocument()

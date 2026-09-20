@@ -3,10 +3,10 @@
 //    1) Giris yoksa           -> <Login/>
 //    2) Aktif proje secilmemis -> <ProjectSelect/>
 //    3) Aksi halde             -> Sidebar + Topbar + sayfa yonlendirmesi.
-//  Sayfa anahtarlari: dashboard, req-user, req-system, req-subsystem,
-//  test-acceptance, test-system, test-subsystem, glossary, coverage,
-//  traceability, mind-map (zihin haritasi), documents (AI analizi),
-//  document-library (Dökümanlar), audit.
+//  Sayfa anahtarlari: dashboard, pbs-tree, components (bilesen bazli gorunum),
+//  req-user, req-system, req-subsystem, test-acceptance, test-system,
+//  test-subsystem, glossary, coverage, traceability, mind-map (zihin
+//  haritasi), documents (AI analizi), document-library (Dökümanlar), audit.
 // ============================================================================
 import { useState, useEffect, useMemo } from 'react'
 import { useApp } from './context/AppContext.jsx'
@@ -18,6 +18,7 @@ import Topbar from './components/layout/Topbar.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Hierarchy from './pages/Hierarchy.jsx'
 import PbsTree from './pages/PbsTree.jsx'
+import Components from './pages/Components.jsx'
 import MyAssignments from './pages/MyAssignments.jsx'
 import TestCases from './pages/TestCases.jsx'
 import Glossary from './pages/Glossary.jsx'
@@ -113,6 +114,7 @@ export default function App() {
         <main className="flex-1 overflow-y-auto p-6">
           {page === 'dashboard' && <Dashboard onNavigate={setPage} />}
           {page === 'pbs-tree' && <PbsTree />}
+          {page === 'components' && <Components />}
           {page === 'my-work' && <MyAssignments />}
           {REQ_KEYS.includes(pageKey) && (
             <Hierarchy
