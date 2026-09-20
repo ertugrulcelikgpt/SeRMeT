@@ -11,6 +11,7 @@ import {
   collectExpandableKeys,
   defaultExpandedKeys,
   layoutMindMap,
+  mindMapEdgePath,
   levelOfType,
   mindMapNodeKey,
 } from '../mindMap.js'
@@ -69,6 +70,62 @@ describe('buildMindMapGraph', () => {
     expect(levelOfType(REQ_TYPE.SOFTWARE)).toBe('subsystem')
     expect(levelOfType(REQ_TYPE.HARDWARE)).toBe('subsystem')
     expect(levelOfType(TEST_TYPE.ACCEPTANCE)).toBe('test')
+  })
+})
+
+describe('layoutMindMap — dikey (yukarıdan aşağı) yön', () => {
+  const opened = () => {
+    const g = buildMindMapGraph(REQS, TESTS, LINKS)
+    return {
+      g,
+      h: layoutMindMap(g, collectExpandableKeys(g).keys),
+      v: layoutMindMap(g, collectExpandableKeys(g).keys, { orientation: 'vertical' }),
+    }
+  }
+
+  it('derinlik ASAGI buyur; kardesler yana dizilir', () => {
+    const { v } = opened()
+    const byId = Object.fromEntries(v.nodes.map((n) => [n.id, n]))
+    expect(v.orientation).toBe('vertical')
+    expect(byId.u1.y).toBeLessThan(byId.s1.y)
+    expect(byId.s1.y).toBeLessThan(byId.w1.y)
+    // Ayni seviyedeki kardesler ayni satirda, farkli sutunlarda durur.
+    expect(byId.w1.y).toBe(byId.t1.y)
+    expect(byId.w1.x).not.toBe(byId.t1.x)
+  })
+
+  it('yatay yonde ise derinlik SAGA buyur (Issue #122 davranisi korunur)', () => {
+    const { h } = opened()
+    const byId = Object.fromEntries(h.nodes.map((n) => [n.id, n]))
+    expect(h.orientation).toBe('horizontal')
+    expect(byId.u1.x).toBeLessThan(byId.s1.x)
+    expect(byId.w1.x).toBe(byId.t1.x)
+  })
+
+  it('ust dugum cocuklarinin ORTASINA hizalanir', () => {
+    const { v } = opened()
+    const byId = Object.fromEntries(v.nodes.map((n) => [n.id, n]))
+    const mid = (byId.w1.x + byId.t1.x) / 2
+    expect(byId.s1.x).toBeCloseTo(mid, 5)
+  })
+
+  it('kenarlar alt kenardan cocugun ust kenarina baglanir', () => {
+    const { v } = opened()
+    const edge = v.edges[0]
+    expect(edge.vertical).toBe(true)
+    expect(edge.y2).toBeGreaterThan(edge.y1)
+    // Dikey kenar DIRSEK cizer (bezier degil): dikey/yatay parcalar.
+    const d = mindMapEdgePath(edge)
+    expect(d.startsWith('M ')).toBe(true)
+    expect(d).toMatch(/[VH]/)
+  })
+
+  it('dikey duzende genislik kardes eksenine, yukseklik derinlige baglidir', () => {
+    const { h, v } = opened()
+    expect(v.width).toBeGreaterThan(v.height)
+    expect(h.width).toBeGreaterThan(h.height)
+    // Ayni graf: yatayda genislik derinlikten, dikeyde yukseklik derinlikten.
+    expect(v.height).toBeGreaterThan(0)
   })
 })
 

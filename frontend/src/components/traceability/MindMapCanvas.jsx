@@ -71,16 +71,31 @@ export default function MindMapCanvas({
   }, [])
 
   // --- Haritayi ekrana sigdir ----------------------------------------------
-  const fitView = useCallback(() => {
-    const { w, h } = { w: size.w, h: size.h }
-    if (!w || !h || !mapLayout.width || !mapLayout.height) return
-    const k = clamp(Math.min(w / mapLayout.width, h / mapLayout.height), MIN_ZOOM, 1.1)
-    setView({
-      k,
-      x: -mapLayout.minX * k + (w - mapLayout.width * k) / 2,
-      y: -mapLayout.minY * k + (h - mapLayout.height * k) / 2,
-    })
-  }, [size.w, size.h, mapLayout.width, mapLayout.height, mapLayout.minX, mapLayout.minY])
+  //  `readable`: ILK acilista kullanilir. Genis bir agaci zorla ekrana
+  //  sigdirmak olcegi etiketlerin cizilmedigi seviyenin altina dusurur ve
+  //  kullanici bos kutulardan olusan bir duvar gorur. Bu kipte olcek
+  //  okunur sinirin altina inmez; sigmayan harita, KOK dugum ust-ortada
+  //  olacak sekilde konumlanir ve kullanici kaydirarak gezer.
+  const fitView = useCallback(
+    ({ readable = false } = {}) => {
+      const { w, h } = { w: size.w, h: size.h }
+      if (!w || !h || !mapLayout.width || !mapLayout.height) return
+      const raw = Math.min(w / mapLayout.width, h / mapLayout.height)
+      const k = clamp(readable ? Math.max(raw, LABEL_MIN_ZOOM) : raw, MIN_ZOOM, 1.1)
+      const fitsW = mapLayout.width * k <= w
+      const fitsH = mapLayout.height * k <= h
+      const anchor = mapLayout.nodes[0]
+      setView({
+        k,
+        x:
+          fitsW || !anchor
+            ? -mapLayout.minX * k + (w - mapLayout.width * k) / 2
+            : w / 2 - (anchor.x + mapLayout.layout.nodeWidth / 2) * k,
+        y: fitsH ? -mapLayout.minY * k + (h - mapLayout.height * k) / 2 : -mapLayout.minY * k,
+      })
+    },
+    [size.w, size.h, mapLayout],
+  )
 
   // Ilk anlamli duzende bir kez sigdir. SONRAKI tazelemelerde (canli
   // guncelleme) gorus BILEREK korunur — kullanicinin baktigi yer kaymasin.
@@ -88,7 +103,7 @@ export default function MindMapCanvas({
     if (fittedRef.current) return
     if (!size.w || mapLayout.nodes.length === 0) return
     fittedRef.current = true
-    fitView()
+    fitView({ readable: true })
   }, [size.w, mapLayout.nodes.length, fitView])
 
   const zoomBy = useCallback(
@@ -174,6 +189,12 @@ export default function MindMapCanvas({
 
   // Govde tiklamasi dali mi acar? Yalnizca acilacak bir dal VARSA.
   const togglesOnClick = (n) => nodeClickToggles && n.hasChildren
+
+  // Ac/kapa noktasi dalin CIKTIGI kenarda durur: yatay duzende sag orta,
+  // dikey (yukaridan asagi) duzende alt orta.
+  const vertical = mapLayout.orientation === 'vertical'
+  const dotXOf = (n) => (vertical ? n.x + L.nodeWidth / 2 : n.x + L.nodeWidth)
+  const dotYOf = (n) => (vertical ? n.y + L.nodeHeight / 2 : n.y)
 
   const ctrl = (label, onClick, children, testId) => (
     <button
@@ -330,8 +351,8 @@ export default function MindMapCanvas({
                       }}
                     >
                       <circle
-                        cx={n.x + L.nodeWidth}
-                        cy={n.y}
+                        cx={dotXOf(n)}
+                        cy={dotYOf(n)}
                         r={9}
                         fill={colors.dotBg}
                         stroke={n.color}
@@ -339,8 +360,8 @@ export default function MindMapCanvas({
                       />
                       <path
                         d={
-                          `M ${n.x + L.nodeWidth - 4} ${n.y} H ${n.x + L.nodeWidth + 4}` +
-                          (n.expanded ? '' : ` M ${n.x + L.nodeWidth} ${n.y - 4} V ${n.y + 4}`)
+                          `M ${dotXOf(n) - 4} ${dotYOf(n)} H ${dotXOf(n) + 4}` +
+                          (n.expanded ? '' : ` M ${dotXOf(n)} ${dotYOf(n) - 4} V ${dotYOf(n) + 4}`)
                         }
                         stroke={n.color}
                         strokeWidth={1.9}
@@ -349,8 +370,8 @@ export default function MindMapCanvas({
                       />
                       {!n.expanded && (
                         <text
-                          x={n.x + L.nodeWidth + 16}
-                          y={n.y + 4}
+                          x={dotXOf(n) + 14}
+                          y={dotYOf(n) + 4}
                           fontSize={10}
                           fontWeight={700}
                           fill={colors.subText}
@@ -377,7 +398,7 @@ export default function MindMapCanvas({
           <span className="text-base font-bold leading-none">−</span>,
           'mindmap-zoom-out',
         )}
-        {ctrl(t('mindmap.fit'), fitView, <IconSearch size={15} />, 'mindmap-fit')}
+        {ctrl(t('mindmap.fit'), () => fitView(), <IconSearch size={15} />, 'mindmap-fit')}
         {ctrl(
           t('mindmap.resetZoom'),
           () => setView((v) => ({ ...v, k: 1 })),

@@ -38,7 +38,7 @@ vi.mock('../../context/AuthContext.jsx', () => ({
   AuthProvider: ({ children }) => children,
 }))
 vi.mock('../../context/ProjectContext.jsx', () => ({
-  useProject: () => ({ activeProject: { id: 'p1', name: 'Kahve Makinesi' } }),
+  useProject: () => ({ activeProject: { id: 'p1', name: 'Kahve Makinesi Projesi' } }),
   ProjectProvider: ({ children }) => children,
 }))
 
@@ -131,19 +131,27 @@ const selectPump = () => {
 const mapNode = (textId) => screen.queryByTestId(`mindmap-node-${textId}`)
 
 describe('Bileşenler — harita görünümü (varsayılan)', () => {
-  it('sayfa HARITA olarak acilir; urun kirilimi dallanarak cizilir', () => {
+  it('harita TEK proje dugumuyle acilir; kirilim inerek acilir', () => {
     renderPage()
     expect(screen.getByTestId('comp-view-map')).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTestId('mindmap-canvas')).toBeInTheDocument()
-    // Kok acik baslar: ilk seviye kirilim gorunur.
+    // Tepede proje dugumu + ilk seviye; derin dallar KAPALI baslar.
+    expect(screen.getByText('Kahve Makinesi Projesi')).toBeInTheDocument()
     expect(mapNode('EH-TİD-1')).toBeInTheDocument()
-    expect(mapNode('EH-TİD-SYS-002')).toBeInTheDocument()
-    // Daha derin dallar kapalidir.
-    expect(mapNode('EH-TİD-HW-001')).not.toBeInTheDocument()
+    expect(mapNode('EH-TİD-SYS-002')).not.toBeInTheDocument()
+  })
+
+  it('harita YUKARIDAN ASAGI dallanir: cocuk dugum ustunun ALTINDA durur', () => {
+    renderPage()
+    fireEvent.click(mapNode('EH-TİD-1'))
+    const parent = Number(mapNode('EH-TİD-1').getAttribute('y'))
+    const child = Number(mapNode('EH-TİD-SYS-001').getAttribute('y'))
+    expect(child).toBeGreaterThan(parent)
   })
 
   it('dugume TIKLAYINCA dal acilir, tekrar tiklayinca kapanir', () => {
     renderPage()
+    fireEvent.click(mapNode('EH-TİD-1'))
     fireEvent.click(mapNode('EH-TİD-SYS-002'))
     expect(mapNode('EH-TİD-HW-001')).toBeInTheDocument()
     expect(mapNode('EH-TİD-SW-001')).toBeInTheDocument()
@@ -156,19 +164,22 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
 
   it('dal ucundaki nokta da acar/kapatir', () => {
     renderPage()
-    fireEvent.click(screen.getByTestId('mindmap-toggle-EH-TİD-SYS-002'))
-    expect(mapNode('EH-TİD-HW-001')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('mindmap-toggle-EH-TİD-1'))
+    expect(mapNode('EH-TİD-SYS-002')).toBeInTheDocument()
   })
 
-  it('dugum kendi ozetini tasir: kirilimlide sayac, yaprakta yontem + durum', () => {
+  it('ozet satiri YALNIZCA kirilimi olan dugumde durur (yaprak sade kalir)', () => {
     renderPage()
+    fireEvent.click(mapNode('EH-TİD-1'))
     fireEvent.click(mapNode('EH-TİD-SYS-002'))
     expect(screen.getByText('3 gereksinim · 1 doğrulandı')).toBeInTheDocument()
-    expect(screen.getByText('T · Doğrulandı')).toBeInTheDocument()
+    // Yaprak dugumde ucuncu satir yoktur.
+    expect(screen.queryByText('T · Doğrulandı')).not.toBeInTheDocument()
   })
 
   it('CIFT TIKLAMA kaydin detayini (ViewModal) acar', () => {
     renderPage()
+    fireEvent.click(mapNode('EH-TİD-1'))
     fireEvent.doubleClick(mapNode('EH-TİD-SYS-002'))
     const modal = screen.getByTestId('view-modal')
     expect(modal).toHaveTextContent('EH-TİD-SYS-002')
@@ -180,12 +191,14 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
     fireEvent.click(screen.getByTestId('comp-expand-all'))
     expect(mapNode('EH-TİD-HW-001')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('comp-collapse-all'))
-    expect(mapNode('EH-TİD-SYS-002')).not.toBeInTheDocument()
-    expect(mapNode('EH-TİD-1')).toBeInTheDocument()
+    // Her sey kapali: geriye yalnizca proje dugumu kalir.
+    expect(mapNode('EH-TİD-1')).not.toBeInTheDocument()
+    expect(screen.getByText('Kahve Makinesi Projesi')).toBeInTheDocument()
   })
 
   it('haritadaki secim Liste gorunumune tasinir (tek secim, iki gorunum)', () => {
     renderPage()
+    fireEvent.click(mapNode('EH-TİD-1'))
     fireEvent.click(mapNode('EH-TİD-SYS-002'))
     expect(screen.getByTestId('comp-selection')).toHaveTextContent('Basınç Pompası Ünitesi')
     showList()
@@ -208,6 +221,17 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
     fireEvent.click(screen.getByTestId('comp-expand-all'))
     expect(mapNode('EH-TİD-HW-001')).not.toBeInTheDocument()
     expect(mapNode('EH-TİD-SYS-002')).toBeInTheDocument()
+  })
+
+  it('proje dugumu secilince kapsam TUM projedir', () => {
+    renderPage()
+    // Proje dugumu bir KAYIT degildir: text_id'si bostur.
+    fireEvent.click(screen.getByTestId('mindmap-node-'))
+    expect(screen.getByTestId('comp-selection')).toHaveTextContent('Kahve Makinesi Projesi')
+    expect(screen.getByTestId('comp-selection')).toHaveTextContent('5 gereksinim · 1 doğrulandı')
+    showList()
+    expect(screen.getByTestId('comp-row-EH-TİD-SYS-001')).toBeInTheDocument()
+    expect(screen.getByTestId('comp-row-EH-TİD-HW-001')).toBeInTheDocument()
   })
 })
 

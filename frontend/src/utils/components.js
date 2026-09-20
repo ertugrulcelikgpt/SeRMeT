@@ -32,6 +32,14 @@ export const COMPONENT_SOURCE = { PBS: 'pbs', FIELD: 'field' }
 /** Alani (disiplini) bos olan kayitlarin toplandigi sanal bilesen anahtari. */
 export const FIELD_NONE_KEY = '__nofield__'
 
+/**
+ * Haritanin tepesindeki SANAL proje dugumu. Kok gereksinimler (User
+ * Requirement) cogu projede onlarca tanedir; bunlari tek bir ust dugumun
+ * altinda toplamak haritayi hem dagilmaktan kurtarir hem de "kapali basla,
+ * inerek ac" gezinmesini mumkun kilar. Bir KAYIT degildir: detayi acilmaz.
+ */
+export const PROJECT_ROOT_KEY = '__project__'
+
 // --- Dogrulama yontemi (T / M / D / A / CoC) --------------------------------
 //  TID tablosunun son sutunu. Proje bazli modular bir oznitelikte (orn.
 //  "Doğrulama Yöntemi") tutuluyorsa ORADAN okunur; tanimli degilse kayda
@@ -314,6 +322,9 @@ export function subtreeStats(tree, verificationIndex) {
  *                   (orn. "6 gereksinim · 2 doğrulandı")
  *   groupMetaOf     (component) => string — Alan kaynagindaki grup dugumu icin
  *   fieldNoneLabel  Alani bos olan grubun gorunen adi
+ *   rootLabel       verilirse tum kokler bu SANAL proje dugumunun altina
+ *                   toplanir (bkz. PROJECT_ROOT_KEY)
+ *   rootMeta        proje dugumunun ozet satiri
  * @returns {{nodes:Map, children:Map, rootIds:string[], linkCount:number}}
  */
 export function buildComponentGraph(
@@ -324,6 +335,8 @@ export function buildComponentGraph(
     metaOf = null,
     groupMetaOf = null,
     fieldNoneLabel = '',
+    rootLabel = '',
+    rootMeta = '',
   } = {},
 ) {
   const t = tree || buildRequirementTree(requirements)
@@ -388,10 +401,34 @@ export function buildComponentGraph(
     // Alan modunda gereksinimler DUZ listelenir: kendi alt kirilimlari
     // gruplarin altinda tekrar dallanmaz (ayni kayit iki yerde cikardi).
     for (const r of requirements || []) children.delete(r.id)
-    return { nodes, children, rootIds: groups.map((g) => g.key), linkCount }
+    return withProjectRoot({ nodes, children, rootIds: groups.map((g) => g.key), linkCount })
   }
 
-  return { nodes, children, rootIds: t.roots.map((r) => r.id), linkCount }
+  return withProjectRoot({ nodes, children, rootIds: t.roots.map((r) => r.id), linkCount })
+
+  /** Istenmisse koklerin uzerine sanal proje dugumunu ekler. */
+  function withProjectRoot(graph) {
+    if (!rootLabel || graph.rootIds.length === 0) return graph
+    graph.nodes.set(PROJECT_ROOT_KEY, {
+      id: PROJECT_ROOT_KEY,
+      kind: 'project', // kaydi olmayan SANAL dugum: detayi acilmaz
+      type: null,
+      text_id: '',
+      label: rootLabel,
+      labelIsFallback: false,
+      level: 'user',
+      typeSuffix: '',
+      outline: '',
+      meta: rootMeta,
+      row: null,
+    })
+    graph.children.set(PROJECT_ROOT_KEY, graph.rootIds)
+    return {
+      ...graph,
+      rootIds: [PROJECT_ROOT_KEY],
+      linkCount: graph.linkCount + graph.rootIds.length,
+    }
+  }
 }
 
 /** "2.10" > "2.9" olacak sekilde anahat numarasi karsilastirmasi. */

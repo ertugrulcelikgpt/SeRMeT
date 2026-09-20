@@ -208,27 +208,43 @@ export function collectExpandableKeys(graph, { maxNodes = MIND_MAP_MAX_NODES } =
 }
 
 /**
- * Acik dallari klasik yatay mind map duzenine yerlestirir.
+ * Acik dallari mind map duzenine yerlestirir. Iki yon desteklenir:
  *
- *   x = derinlik * sutun adimi                     (soldan saga dallanma)
- *   y = yaprak ise sıradaki satir, degilse cocuklarinin ortasi
+ *   'horizontal' (varsayilan, Issue #122): derinlik SAGA buyur
+ *       derinlik ekseni = x, kardes ekseni = y
+ *   'vertical'   (Issue #129 Bilesenler): derinlik ASAGI buyur — klasik
+ *       organizasyon semasi / yukaridan asagi zihin haritasi
+ *       derinlik ekseni = y, kardes ekseni = x
+ *
+ * Her iki yonde de yaprak dugumler kardes ekseninde sirayla dizilir, ust
+ * dugum ise cocuklarinin ORTASINA hizalanir.
+ *
+ * Dugum konumu SOZLESMESI yonden bagimsizdir (cizim katmani buna guvenir):
+ *   x = dugumun SOL kenari, y = dugumun DIKEY MERKEZI.
  *
  * KAPALI dal hic dolasilmaz: maliyet toplam kayit sayisiyla degil GORUNEN
  * dugum sayisiyla artar.
  *
  * @param {object} graph        buildMindMapGraph ciktisi
  * @param {Set<string>} expandedKeys acik yol anahtarlari
- * @returns {{nodes: array, edges: array, width, height, minX, minY, truncated, leafRows}}
+ * @param {object} options      { layout, maxNodes, orientation }
+ * @returns {{nodes, edges, orientation, width, height, minX, minY, truncated, leafRows}}
  */
 export function layoutMindMap(graph, expandedKeys, options = {}) {
   const L = { ...MIND_MAP_LAYOUT, ...(options.layout || {}) }
   const maxNodes = options.maxNodes ?? MIND_MAP_MAX_NODES
   const expanded = expandedKeys || new Set()
-  const rowPitch = L.nodeHeight + L.rowGap
-  const colPitch = L.nodeWidth + L.columnGap
+  const vertical = options.orientation === 'vertical'
+  // Derinlik ekseni asagi (dikey) ya da saga (yatay) buyur; kardes ekseni
+  // her zaman digeridir. Adimlar buna gore secilir.
+  const depthPitch = vertical ? L.nodeHeight + L.rowGap : L.nodeWidth + L.columnGap
+  const crossPitch = vertical ? L.nodeWidth + L.columnGap : L.nodeHeight + L.rowGap
+  const crossHalf = vertical ? L.nodeWidth / 2 : L.nodeHeight / 2
 
   const nodes = []
   const edges = []
+  // `row` = kardes ekseninde tuketilen yaprak sayaci (yatayda satir,
+  // dikeyde sutun).
   let row = 0
   let maxDepth = 0
   let truncated = false
@@ -249,7 +265,7 @@ export function layoutMindMap(graph, expandedKeys, options = {}) {
     const kids = childIdsOf(graph, id).filter((c) => !ancestors.has(c))
     const hasChildren = kids.length > 0
     const isExpanded = hasChildren && expanded.has(key)
-    const x = depth * colPitch
+    const depthPos = depth * depthPitch
     if (depth > maxDepth) maxDepth = depth
 
     const record = {
@@ -258,42 +274,59 @@ export function layoutMindMap(graph, expandedKeys, options = {}) {
       node,
       level: node.level,
       depth,
-      x,
+      // Konumlar `cross` belirlendikten SONRA yazilir (asagida): yatayda
+      // x derinlikten, dikeyde y derinlikten gelir.
+      x: 0,
       y: 0,
+      cross: 0,
       hasChildren,
       expanded: isExpanded,
       childCount: kids.length,
       color: MIND_MAP_BRANCH_COLORS[node.level] || MIND_MAP_BRANCH_COLORS.system,
     }
 
+    const kidRecords = []
     if (isExpanded) {
       const nextAncestors = new Set(ancestors)
       nextAncestors.add(id)
-      const kidRecords = []
       for (const cid of kids) {
         const kr = walk(cid, key, depth + 1, nextAncestors)
         if (kr) kidRecords.push(kr)
       }
-      if (kidRecords.length === 0) {
-        record.y = row * rowPitch + L.nodeHeight / 2
-        row += 1
-      } else {
-        record.y = (kidRecords[0].y + kidRecords[kidRecords.length - 1].y) / 2
-        for (const kr of kidRecords) {
-          edges.push({
-            key: `${key}->${kr.key}`,
-            x1: x + L.nodeWidth,
-            y1: record.y,
-            x2: kr.x,
-            y2: kr.y,
-            color: kr.color,
-            depth: kr.depth,
-          })
-        }
-      }
-    } else {
-      record.y = row * rowPitch + L.nodeHeight / 2
+    }
+
+    if (kidRecords.length === 0) {
+      // Yaprak (ya da kapali dal): kardes ekseninde siradaki yeri alir.
+      record.cross = row * crossPitch + crossHalf
       row += 1
+    } else {
+      // Ust dugum cocuklarinin ORTASINA hizalanir.
+      record.cross = (kidRecords[0].cross + kidRecords[kidRecords.length - 1].cross) / 2
+    }
+
+    // Sozlesme: x = sol kenar, y = dikey merkez (yon farketmez).
+    if (vertical) {
+      record.x = record.cross - L.nodeWidth / 2
+      record.y = depthPos + L.nodeHeight / 2
+    } else {
+      record.x = depthPos
+      record.y = record.cross
+    }
+
+    // Kenarlar ust dugumun konumu belli olduktan sonra baglanir: dikeyde
+    // alt kenar ortasindan cocugun ust kenar ortasina, yatayda sag kenardan
+    // cocugun sol kenarina.
+    for (const kr of kidRecords) {
+      edges.push({
+        key: `${key}->${kr.key}`,
+        x1: vertical ? record.x + L.nodeWidth / 2 : record.x + L.nodeWidth,
+        y1: vertical ? record.y + L.nodeHeight / 2 : record.y,
+        x2: vertical ? kr.x + L.nodeWidth / 2 : kr.x,
+        y2: vertical ? kr.y - L.nodeHeight / 2 : kr.y,
+        vertical,
+        color: kr.color,
+        depth: kr.depth,
+      })
     }
 
     nodes.push(record)
@@ -305,12 +338,18 @@ export function layoutMindMap(graph, expandedKeys, options = {}) {
   // Cizim sirasi: yukaridan asagi, soldan saga (deterministik ciktı).
   nodes.sort((a, b) => a.y - b.y || a.depth - b.depth)
 
-  const contentWidth = maxDepth * colPitch + L.nodeWidth
-  const contentHeight = Math.max(row, 1) * rowPitch
+  const depthExtent = maxDepth * depthPitch + (vertical ? L.nodeHeight : L.nodeWidth)
+  const crossExtent = Math.max(row, 1) * crossPitch
+  const contentWidth = vertical ? crossExtent : depthExtent
+  const contentHeight = vertical ? depthExtent : crossExtent
   return {
     nodes,
     edges,
     layout: L,
+    orientation: vertical ? 'vertical' : 'horizontal',
+    // Dikeyde dugum kendi kardes konumunun ETRAFINA yerlesir; ilk sutunun
+    // merkezi nodeWidth/2 oldugu icin sol kenari yine 0'dir — iki yonde de
+    // icerik (0,0)'dan baslar.
     minX: -L.padding,
     minY: -L.padding,
     width: contentWidth + L.padding * 2,
@@ -320,10 +359,31 @@ export function layoutMindMap(graph, expandedKeys, options = {}) {
   }
 }
 
-/** Kenar (dal) egrisi — yatay mind map'in klasik "S" bezier'i. */
+/**
+ * Kenar (dal) cizgisi.
+ *   yatay : klasik "S" bezier'i (soldan saga dallanma)
+ *   dikey : koseleri yuvarlatilmis DIRSEK — yukaridan asagi semalarda
+ *           egri demeti "spagetti" gorunurken dirsek, hangi dugumun kimin
+ *           altinda oldugunu tek bakista okutur.
+ */
 export function mindMapEdgePath(edge) {
-  const dx = Math.max(28, (edge.x2 - edge.x1) / 2)
   const r = (n) => Math.round(n * 10) / 10
+  if (edge.vertical) {
+    const midY = (edge.y1 + edge.y2) / 2
+    const dx = edge.x2 - edge.x1
+    // Ayni sutundaki cocuk: duz dikey cizgi.
+    if (Math.abs(dx) < 1) return `M ${r(edge.x1)} ${r(edge.y1)} V ${r(edge.y2)}`
+    const dir = dx > 0 ? 1 : -1
+    const k = Math.min(12, Math.abs(dx) / 2, Math.abs(midY - edge.y1), Math.abs(edge.y2 - midY))
+    return (
+      `M ${r(edge.x1)} ${r(edge.y1)} V ${r(midY - k)} ` +
+      `Q ${r(edge.x1)} ${r(midY)} ${r(edge.x1 + dir * k)} ${r(midY)} ` +
+      `H ${r(edge.x2 - dir * k)} ` +
+      `Q ${r(edge.x2)} ${r(midY)} ${r(edge.x2)} ${r(midY + k)} ` +
+      `V ${r(edge.y2)}`
+    )
+  }
+  const dx = Math.max(28, (edge.x2 - edge.x1) / 2)
   return `M ${r(edge.x1)} ${r(edge.y1)} C ${r(edge.x1 + dx)} ${r(edge.y1)}, ${r(
     edge.x2 - dx,
   )} ${r(edge.y2)}, ${r(edge.x2)} ${r(edge.y2)}`
@@ -359,14 +419,19 @@ export function buildMindMapSvg(mapLayout, { theme = 'dark', title = 'Mind Map' 
     )
     .join('')
 
+  const vertical = mapLayout.orientation === 'vertical'
   const nodes = mapLayout.nodes
     .map((n) => {
       const top = n.y - L.nodeHeight / 2
       const label = fitLabel(n.node.label, L.nodeWidth)
+      // Ac/kapa noktasi dalin CIKTIGI kenardadir: yatayda sag orta,
+      // dikeyde alt orta.
+      const dx = vertical ? n.x + L.nodeWidth / 2 : n.x + L.nodeWidth
+      const dy = vertical ? n.y + L.nodeHeight / 2 : n.y
       const dot = n.hasChildren
-        ? `<circle cx="${n.x + L.nodeWidth}" cy="${n.y}" r="8" fill="${c.dotBg}" stroke="${n.color}" stroke-width="2"/>` +
-          `<path d="M ${n.x + L.nodeWidth - 4} ${n.y} H ${n.x + L.nodeWidth + 4}${
-            n.expanded ? '' : ` M ${n.x + L.nodeWidth} ${n.y - 4} V ${n.y + 4}`
+        ? `<circle cx="${dx}" cy="${dy}" r="8" fill="${c.dotBg}" stroke="${n.color}" stroke-width="2"/>` +
+          `<path d="M ${dx - 4} ${dy} H ${dx + 4}${
+            n.expanded ? '' : ` M ${dx} ${dy - 4} V ${dy + 4}`
           }" stroke="${n.color}" stroke-width="1.8" stroke-linecap="round"/>`
         : ''
       return (

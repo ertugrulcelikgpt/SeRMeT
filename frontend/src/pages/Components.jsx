@@ -6,10 +6,14 @@
 //  Unitesi icin hangi gereksinimler var?" Bu sayfa o soruyu cevaplar.
 //
 //  IKI GORUNUM, TEK SECIM:
-//    HARITA (varsayilan) — urun kirilimi zaten bir agac oldugu icin Obsidian
-//      tarzi yatay zihin haritasi dogal sunumdur: dugume TIKLAYINCA dal
-//      acilir/kapanir, CIFT TIKLAYINCA kaydin detayi acilir. Her dugum kendi
-//      ozetini tasir ("6 gereksinim · 2 doğrulandı").
+//    HARITA (varsayilan) — urun kirilimi zaten bir agac oldugu icin zihin
+//      haritasi dogal sunumdur. YUKARIDAN ASAGI (organizasyon semasi gibi)
+//      dallanir: dugume TIKLAYINCA dal acilir/kapanir, CIFT TIKLAYINCA
+//      kaydin detayi acilir.
+//      SADELIK: harita tek bir proje dugumuyle acilir ve asagi inildikce
+//      genisler; ozet satiri yalnizca KIRILIMI OLAN dugumlerde durur
+//      (yapraklar iki satir kalir). Kalabaligi doguran sey tum kayitlarin
+//      ayni anda ekranda olmasiydi.
 //    LISTE — ayni secimin kullanim kilavuzundaki TID tablosu duzeni:
 //      TID No · Text ID · Baslik · Gereksinim Metni · Bagli SGD · Dogrulama.
 //    Iki gorunum AYNI secimi paylasir; CSV/PDF disa aktarimi her ikisinde de
@@ -40,15 +44,12 @@ import {
 } from '../components/common/Icons.jsx'
 import { componentKeyOf } from '../utils/permissions.js'
 import { getDisplayLabel } from '../utils/format.js'
-import {
-  buildVerificationIndex,
-  verificationOf,
-  VERIFICATION_LABEL_KEY,
-} from '../utils/verification.js'
+import { buildVerificationIndex } from '../utils/verification.js'
 import { collectExpandableKeys, defaultExpandedKeys, layoutMindMap } from '../utils/mindMap.js'
 import {
   COMPONENT_SOURCE,
   FIELD_NONE_KEY,
+  PROJECT_ROOT_KEY,
   VERIFICATION_METHOD_LABEL_KEY,
   buildComponentGraph,
   buildComponentPrintHtml,
@@ -62,12 +63,12 @@ import {
   subtreeRows,
   subtreeStats,
   summarizeComponent,
-  verificationMethodOf,
 } from '../utils/components.js'
 
-// Harita dugumu ucuncu bir satir (ozet) tasidigi icin #122'deki varsayilan
-// olculerden biraz daha yuksek/genistir.
-const MAP_LAYOUT = { nodeWidth: 248, nodeHeight: 58 }
+// Dikey duzende `rowGap` SEVIYELER arasi (dikey) bosluk, `columnGap` ise
+// KARDESLER arasi (yatay) bosluktur. Dugum, ozet satirini tasiyabilmek icin
+// #122'deki varsayilandan biraz daha yuksektir.
+const MAP_LAYOUT = { nodeWidth: 200, nodeHeight: 56, rowGap: 46, columnGap: 16 }
 
 const VIEW = { MAP: 'map', LIST: 'list' }
 
@@ -146,26 +147,28 @@ export default function Components() {
   const summaryText = (s) => t('comp.summary', { n: s.total, v: s.verified })
 
   // --- Harita grafigi -------------------------------------------------------
-  //  Her dugum kendi ozetini tasir: kirilimi olanlar alt agac ozetini
-  //  ("6 gereksinim · 2 doğrulandı"), yapraklar kendi dogrulama yontemi +
-  //  durumunu ("T · Doğrulandı"). Boylece harita tabloyu okumadan da konusur.
+  //  Ozet satiri YALNIZCA kirilimi olan dugumlerde durur ("6 gereksinim ·
+  //  2 doğrulandı"); yapraklar iki satir kalir. Yapragin dogrulama yontemi
+  //  ve durumu zaten Liste gorunumunun isi — haritada her kutuya ucuncu bir
+  //  satir koymak okunurlugu bozuyordu.
+  const projectLabel = activeProject?.name || t('comp.projectRoot')
   const graph = useMemo(() => {
-    const metaOf = (row, { childCount }) => {
-      if (childCount > 0) return summaryText(stats.get(row.id) || { total: 1, verified: 0 })
-      const verification = verificationOf(verificationIndex, row.id)
-      const method = verificationMethodOf(row, { methodKeys, verification })
-      return `${method ? method.code : '—'} · ${t(VERIFICATION_LABEL_KEY[verification.state])}`
-    }
+    const metaOf = (row, { childCount }) =>
+      childCount > 0 ? summaryText(stats.get(row.id) || { total: 1, verified: 0 }) : ''
     return buildComponentGraph(visibleRequirements, {
       source,
       tree,
       metaOf,
       groupMetaOf: (g) => summaryText(summarizeComponent(g.rows, verificationIndex)),
       fieldNoneLabel: t('comp.fieldNone'),
+      // Onlarca kok gereksinim tek bir proje dugumunun altinda toplanir:
+      // harita "kapali" baslar, kullanici inerek acar.
+      rootLabel: projectLabel,
+      rootMeta: summaryText(summarizeComponent(visibleRequirements, verificationIndex)),
     })
     // summaryText/labelOf yalnizca t()'ye bagli; dil degisimi zaten render eder.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleRequirements, source, tree, stats, verificationIndex, methodKeys, t])
+  }, [visibleRequirements, source, tree, stats, verificationIndex, projectLabel, t])
 
   // Yeni gorunen kokler kendiliginden acilir: yeni eklenen bir kayit sayfa
   // yenilemeden haritada dallariyla belirir.
@@ -181,7 +184,7 @@ export default function Components() {
   }, [graph])
 
   const mapLayout = useMemo(
-    () => layoutMindMap(graph, expanded, { layout: MAP_LAYOUT }),
+    () => layoutMindMap(graph, expanded, { layout: MAP_LAYOUT, orientation: 'vertical' }),
     [graph, expanded],
   )
 
@@ -215,6 +218,15 @@ export default function Components() {
   //  olabilir; yaprak secilirse tek satirlik bir liste cikar — bu da gecerli
   //  bir "bu kaydin kirilimi" gorunumudur.
   const selection = useMemo(() => {
+    // Sanal proje dugumu secildiyse kapsam TUM projedir (disa aktarim da).
+    if (selectedId === PROJECT_ROOT_KEY) {
+      return {
+        key: PROJECT_ROOT_KEY,
+        label: projectLabel,
+        outline: '',
+        rows: tree.roots.flatMap((r) => subtreeRows(tree, r.id)),
+      }
+    }
     const comp = components.find((c) => c.key === selectedId)
     if (comp) return { key: comp.key, label: labelOf(comp), outline: comp.outline, rows: comp.rows }
     const node = tree.byId.get(selectedId)
@@ -230,7 +242,7 @@ export default function Components() {
     if (!first) return null
     return { key: first.key, label: labelOf(first), outline: first.outline, rows: first.rows }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [components, selectedId, tree, t])
+  }, [components, selectedId, tree, projectLabel, t])
 
   const selectionSummary = useMemo(
     () => (selection ? summarizeComponent(selection.rows, verificationIndex) : null),

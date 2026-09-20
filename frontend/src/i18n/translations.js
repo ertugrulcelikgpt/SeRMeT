@@ -565,8 +565,9 @@ export const STRINGS = {
     'comp.view.map': 'Harita',
     'comp.view.list': 'Liste',
     'comp.mapHint':
-      'Düğüme tıkla: dalı aç / kapat · çift tıkla: kayıt detayı · tekerlek: yakınlaştır · sürükle: kaydır',
+      'Düğüme tıkla: alt kırılımı aç / kapat · çift tıkla: kayıt detayı · tekerlek: yakınlaştır · sürükle: kaydır',
     'comp.mapCounts': '{visible} / {total} düğüm',
+    'comp.projectRoot': 'Proje',
     'comp.source.pbs': 'Ürün Ağacı',
     'comp.source.field': 'Alan',
     'comp.search': 'Bileşen ara…',
@@ -1552,8 +1553,9 @@ export const STRINGS = {
     'comp.view.map': 'Map',
     'comp.view.list': 'List',
     'comp.mapHint':
-      'Click a node: expand / collapse · double-click: record details · wheel: zoom · drag: pan',
+      'Click a node: expand / collapse its breakdown · double-click: record details · wheel: zoom · drag: pan',
     'comp.mapCounts': '{visible} / {total} nodes',
+    'comp.projectRoot': 'Project',
     'comp.source.pbs': 'Product tree',
     'comp.source.field': 'Field',
     'comp.search': 'Search components…',
