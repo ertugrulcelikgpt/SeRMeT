@@ -6,13 +6,14 @@
 //  Unitesi icin hangi gereksinimler var?" Bu sayfa o soruyu cevaplar.
 //
 //  IKI GORUNUM, TEK SECIM:
-//    HARITA (varsayilan) — urun kirilimi zaten bir agac oldugu icin zihin
-//      haritasi dogal sunumdur. YUKARIDAN ASAGI (organizasyon semasi gibi)
-//      dallanir: dugume TIKLAYINCA dal acilir/kapanir, CIFT TIKLAYINCA
-//      kaydin detayi acilir.
-//      SADELIK: harita tek bir proje dugumuyle acilir ve asagi inildikce
-//      genisler; ozet satiri yalnizca KIRILIMI OLAN dugumlerde durur
-//      (yapraklar iki satir kalir). Kalabaligi doguran sey tum kayitlarin
+//    HARITA (varsayilan) — urun kirilimi zaten bir agac oldugu icin akis
+//      semasi dogal sunumdur. YUKARIDAN ASAGI dallanir: kokten disa acilan
+//      yelpaze, yaprak yiginlari ise ust kutunun altinda ayni hizada bir
+//      zincir (bkz. layoutMindMap `compact`).
+//      Kutuda YALNIZCA ISIM yazar; KUTUYA TIKLAYINCA kaydin detayi (ID,
+//      aciklama, oznitelikler) acilir ve secim oraya tasinir, dal ucundaki
+//      NOKTA dali acar/kapatir. Harita tek bir proje dugumuyle acilir ve
+//      asagi inildikce genisler — kalabaligi doguran sey tum kayitlarin
 //      ayni anda ekranda olmasiydi.
 //    LISTE — ayni secimin kullanim kilavuzundaki TID tablosu duzeni:
 //      TID No · Text ID · Baslik · Gereksinim Metni · Bagli SGD · Dogrulama.
