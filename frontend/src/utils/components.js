@@ -20,7 +20,7 @@
 //  sayfasindaki numara ile bu sayfadaki numara BIREBIR ortusur.
 // ============================================================================
 import { LINK_TYPE, TYPE_SUFFIX } from './constants.js'
-import { getDisplayLabel, stripHtml, truncate } from './format.js'
+import { getDisplayLabel, stripHtml } from './format.js'
 import { levelOfType } from './mindMap.js'
 import { VERIFICATION, verificationOf } from './verification.js'
 
@@ -135,18 +135,45 @@ export function methodCodeOf(value) {
 }
 
 /**
+ * Bir gereksinim BIRDEN FAZLA yontemle dogrulanabilir — kullanim
+ * kilavuzundaki TID tablosunda "T/CoC" ve "CoC/M" boyle yazilir. Deger
+ * ayirici (/ , + & ve bosluk) uzerinden parcalanir, her parca ayri ayri
+ * cozulur; sira KORUNUR (once yazilan once gosterilir).
+ * @returns {string[]} taninan kodlar (yoksa bos dizi)
+ */
+export function methodCodesOf(value) {
+  const parts = String(value ?? '')
+    .split(/[/,+&]|\s+/)
+    .map(methodCodeOf)
+    .filter(Boolean)
+  return [...new Set(parts)]
+}
+
+/**
  * Bir gereksinimin dogrulama yontemi.
- * @returns {{code:string, raw:string|null, derived:boolean}|null}
- *   derived=true: oznitelik yok, bagli test senaryolarindan turetildi.
+ * @returns {{codes:string[], code:string, label:string, raw, derived}|null}
+ *   codes  : birden fazla olabilir (orn. ['T','CoC'])
+ *   label  : tabloda gorunen hali — "T/CoC"
+ *   derived: oznitelik yok, bagli test senaryolarindan turetildi.
  */
 export function verificationMethodOf(row, { methodKeys = [], verification = null } = {}) {
   const bag = row?.attributes || {}
   for (const key of methodKeys) {
     const raw = bag[key] ?? row?.[key]
-    const code = methodCodeOf(raw)
-    if (code) return { code, raw: raw == null ? null : String(raw), derived: false }
+    const codes = methodCodesOf(raw)
+    if (codes.length > 0) {
+      return {
+        codes,
+        code: codes[0],
+        label: codes.join('/'),
+        raw: raw == null ? null : String(raw),
+        derived: false,
+      }
+    }
   }
-  if (verification && verification.total > 0) return { code: 'T', raw: null, derived: true }
+  if (verification && verification.total > 0) {
+    return { codes: ['T'], code: 'T', label: 'T', raw: null, derived: true }
+  }
   return null
 }
 
@@ -476,15 +503,31 @@ export function linkedTextIds(index, id, byId) {
 
 // --- Tablo satirlari + ozet -------------------------------------------------
 
-/** Gereksinim metni onizlemesi (HTML'den arindirilmis, kisaltilmis). */
-const TEXT_PREVIEW_MAX = 220
-
 /**
- * Bilesen tablosunun satirlari — TID tablosu duzeni:
- * TID No / Text ID / Baslik / Gereksinim Metni / Bagli SGD / Dogrulama yontemi.
+ * Bilesen tablosunun satirlari — kullanim kilavuzundaki TID tablosunun
+ * BIREBIR duzeni:
+ *
+ *   TID No | Text ID | Baslik | Gereksinim Metni | Bagli SGD | Dogr.
+ *   2.1.1    ...-2.1.1   Su Deposu Alt Sistemi     ...   SGD-06   M     <- bilesen
+ *   2.1.1.1  ...-2.1.1.1   Depo Kapasitesi ...     ...   SGD-06   T     <- alti
+ *
+ * Yani tablo "bir bilesenin satirlari" degil, SUREKLI bir belgedir: alt
+ * kirilimi olan her kayit kendi blogunun BASLIK satiridir (`isComponent`),
+ * altindakiler Baslik sutununda GIRINTILENIR (`depth`).
+ *
+ * Bagli SGD: kaydin KARSILADIGI ust kayitlar (Satisfies) once, onu
+ * karsilayan alt kayitlar sonra — kilavuzdaki gibi duz, virgulle ayrilmis
+ * kod listesi olarak (ok/rozet yok; tabloyu okunur tutar).
  */
 export function buildComponentViewRows(rows, ctx) {
   const { tree, satisfiesIndex, verificationIndex, methodKeys = [] } = ctx || {}
+  const depthOf = (id) => tree.infoById.get(id)?.depth ?? 0
+  // Girinti SECIME GORE gorelidir: bir alt bilesen secildiginde tablo
+  // soldan baslar, proje secildiginde tam agac girintisi gorunur.
+  const baseDepth = (rows || []).reduce(
+    (min, r) => Math.min(min, depthOf(r.id)),
+    Number.POSITIVE_INFINITY,
+  )
   return (rows || []).map((r) => {
     const verification = verificationOf(verificationIndex, r.id)
     const linked = linkedTextIds(satisfiesIndex, r.id, tree.byId)
@@ -498,12 +541,11 @@ export function buildComponentViewRows(rows, ctx) {
       title: label.isFallback ? '' : label.text,
       titleIsFallback: label.isFallback,
       text: plain,
-      textPreview: truncate(plain, TEXT_PREVIEW_MAX),
+      depth: Math.max(0, depthOf(r.id) - (Number.isFinite(baseDepth) ? baseDepth : 0)),
+      isComponent: (tree.childrenOf.get(r.id) || []).length > 0,
       linkedUp: linked.up,
       linkedDown: linked.down,
-      linkedText: [...linked.up.map((x) => `↑ ${x}`), ...linked.down.map((x) => `↓ ${x}`)].join(
-        ', ',
-      ),
+      linkedText: [...linked.up, ...linked.down].join(', '),
       verification,
       method: verificationMethodOf(r, { methodKeys, verification }),
     }
@@ -532,18 +574,11 @@ function csvCell(value) {
  * Bilesen listesini CSV'ye cevirir. Basina BOM eklenir: Excel dosyayi
  * UTF-8 olarak acsin (aksi halde Turkce karakterler bozulur).
  */
-export function componentRowsToCsv(viewRows, { headers, methodLabel = (c) => c } = {}) {
+export function componentRowsToCsv(viewRows, { headers } = {}) {
   const lines = [headers.map(csvCell).join(CSV_SEPARATOR)]
   for (const v of viewRows || []) {
     lines.push(
-      [
-        v.outline,
-        v.text_id,
-        v.title,
-        v.text,
-        v.linkedText,
-        v.method ? methodLabel(v.method.code) : '',
-      ]
+      [v.outline, v.text_id, v.title, v.text, v.linkedText, v.method ? v.method.label : '']
         .map(csvCell)
         .join(CSV_SEPARATOR),
     )
@@ -571,19 +606,24 @@ export function buildComponentPrintHtml({
   summary,
   headers,
   viewRows,
-  methodLabel = (c) => c,
   generatedAt = new Date(),
 }) {
   const head = headers.map((h) => `<th>${escapeHtml(h)}</th>`).join('')
   const body = (viewRows || [])
-    .map(
-      (v) =>
-        `<tr><td class="num">${escapeHtml(v.outline)}</td><td class="mono">${escapeHtml(
-          v.text_id,
-        )}</td><td>${escapeHtml(v.title)}</td><td>${escapeHtml(v.text)}</td><td class="mono">${escapeHtml(
-          v.linkedText,
-        )}</td><td class="num">${escapeHtml(v.method ? methodLabel(v.method.code) : '—')}</td></tr>`,
-    )
+    .map((v) => {
+      // Bilesen satiri KOYU ve gri zeminli; altindakiler Baslik sutununda
+      // girintili — kilavuzdaki TID tablosunun aynisi.
+      const indent = 'padding-left:' + (6 + (v.depth || 0) * 14) + 'px'
+      return (
+        `<tr class="${v.isComponent ? 'comp' : ''}">` +
+        `<td class="num">${escapeHtml(v.outline)}</td>` +
+        `<td class="mono">${escapeHtml(v.text_id)}</td>` +
+        `<td style="${indent}">${escapeHtml(v.title)}</td>` +
+        `<td>${escapeHtml(v.text)}</td>` +
+        `<td class="mono">${escapeHtml(v.linkedText)}</td>` +
+        `<td class="num">${escapeHtml(v.method ? v.method.label : '—')}</td></tr>`
+      )
+    })
     .join('')
   return `<!doctype html>
 <html lang="tr"><head><meta charset="utf-8" />
@@ -596,7 +636,8 @@ export function buildComponentPrintHtml({
   .meta { color: #64748b; font-size: 10px; margin-bottom: 10px; }
   table { width: 100%; border-collapse: collapse; }
   th, td { border: 1px solid #cbd5e1; padding: 4px 6px; text-align: left; vertical-align: top; }
-  th { background: #f1f5f9; font-size: 10px; text-transform: uppercase; letter-spacing: .03em; }
+  th { background: #1e293b; color: #fff; font-size: 10px; text-transform: uppercase; letter-spacing: .03em; }
+  tr.comp td { background: #e2e8f0; font-weight: 700; }
   .mono { font-family: ui-monospace, "JetBrains Mono", monospace; white-space: nowrap; }
   .num { white-space: nowrap; text-align: center; }
   tr { break-inside: avoid; }

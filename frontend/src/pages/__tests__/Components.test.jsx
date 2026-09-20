@@ -136,7 +136,7 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
     expect(screen.getByTestId('comp-view-map')).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTestId('mindmap-canvas')).toBeInTheDocument()
     // Tepede proje dugumu + ilk seviye; derin dallar KAPALI baslar.
-    expect(screen.getByText('Kahve Makinesi Projesi')).toBeInTheDocument()
+    expect(screen.getByTestId('mindmap-node-')).toBeInTheDocument() // proje dugumu
     expect(mapNode('EH-TİD-1')).toBeInTheDocument()
     expect(mapNode('EH-TİD-SYS-002')).not.toBeInTheDocument()
   })
@@ -193,7 +193,7 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
     fireEvent.click(screen.getByTestId('comp-collapse-all'))
     // Her sey kapali: geriye yalnizca proje dugumu kalir.
     expect(mapNode('EH-TİD-1')).not.toBeInTheDocument()
-    expect(screen.getByText('Kahve Makinesi Projesi')).toBeInTheDocument()
+    expect(screen.getByTestId('mindmap-node-')).toBeInTheDocument()
   })
 
   it('haritadaki secim Liste gorunumune tasinir (tek secim, iki gorunum)', () => {
@@ -319,8 +319,9 @@ describe('Bileşenler — seçilen bileşenin gereksinimleri', () => {
     const row = within(screen.getByTestId('comp-row-EH-TİD-HW-001'))
     expect(row.getByText('1.2.1')).toBeInTheDocument()
     expect(row.getByText(/9 bar basınç üretmelidir/)).toBeInTheDocument()
-    // Bagli ust kayit (karsiladigi System gereksinimi).
-    expect(row.getByText('↑ EH-TİD-SYS-002')).toBeInTheDocument()
+    // Bagli ust kayit (karsiladigi System gereksinimi) — kilavuzdaki gibi
+    // duz kod listesi.
+    expect(row.getByText('EH-TİD-SYS-002')).toBeInTheDocument()
   })
 
   it('dogrulama yontemi sutunu oznitelikten okunur, yoksa testten turetilir', () => {
@@ -361,6 +362,52 @@ describe('Bileşenler — seçilen bileşenin gereksinimleri', () => {
     renderPage()
     expect(screen.getByTestId('comp-empty')).toBeInTheDocument()
     expect(screen.getByTestId('comp-export-csv')).toBeDisabled()
+  })
+})
+
+describe('Bileşenler — TİD tablosu (liste görünümü)', () => {
+  it('varsayilan olarak TUM proje tek tabloda, kilavuzdaki sirayla gelir', () => {
+    renderPage()
+    showList()
+    // Bilesen basligi ve ALTINDAKILER ayni tabloda, arka arkaya.
+    expect(screen.getByTestId('comp-row-EH-TİD-SYS-002')).toBeInTheDocument()
+    expect(screen.getByTestId('comp-row-EH-TİD-HW-001')).toBeInTheDocument()
+    // Baska bir bilesenin blogu da ayni tabloda durur.
+    expect(screen.getByTestId('comp-row-EH-TİD-SYS-001')).toBeInTheDocument()
+  })
+
+  it('alt kirilimi olan kayit BASLIK satiri olarak isaretlenir', () => {
+    renderPage()
+    showList()
+    expect(screen.getByTestId('comp-row-EH-TİD-SYS-002')).toHaveAttribute('data-component', 'true')
+    expect(screen.getByTestId('comp-row-EH-TİD-HW-001')).not.toHaveAttribute('data-component')
+  })
+
+  it('alt kayitlarin basligi daha iceride (girintili) cizilir', () => {
+    renderPage()
+    showList()
+    const cellOf = (textId) =>
+      within(screen.getByTestId(`comp-row-${textId}`)).getAllByRole('cell')[2]
+    const pad = (el) => parseFloat(el.style.paddingLeft)
+    expect(pad(cellOf('EH-TİD-HW-001'))).toBeGreaterThan(pad(cellOf('EH-TİD-SYS-002')))
+    expect(pad(cellOf('EH-TİD-SYS-002'))).toBeGreaterThan(pad(cellOf('EH-TİD-1')))
+  })
+
+  it('birlesik dogrulama yontemi "T/CoC" olarak gosterilir', () => {
+    appMock.requirements = appMock.requirements.map((r) =>
+      r.id === 'h1' ? { ...r, attributes: { verification_method: 'T/CoC' } } : r,
+    )
+    renderPage()
+    showList()
+    expect(screen.getByTestId('comp-method-EH-TİD-HW-001')).toHaveTextContent('T/CoC')
+  })
+
+  it('bilesen secilince tablo o bilesene daralir', () => {
+    renderPage()
+    showList()
+    fireEvent.click(screen.getByTestId('comp-item-s2'))
+    expect(screen.getByTestId('comp-row-EH-TİD-HW-001')).toBeInTheDocument()
+    expect(screen.queryByTestId('comp-row-EH-TİD-SYS-001')).not.toBeInTheDocument()
   })
 })
 

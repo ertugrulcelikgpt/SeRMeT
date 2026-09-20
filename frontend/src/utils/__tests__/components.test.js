@@ -17,7 +17,9 @@ import {
   componentRowsToCsv,
   methodAttributeKeys,
   methodCodeOf,
+  methodCodesOf,
   slugify,
+  subtreeRows,
   summarizeComponent,
   verificationMethodOf,
 } from '../components.js'
@@ -212,7 +214,8 @@ describe('buildComponentViewRows — TİD tablosu satirlari', () => {
     const unit = rows.find((r) => r.text_id === 'EH-TİD-SYS-002')
     expect(unit.linkedUp).toEqual(['EH-TİD-USR-001'])
     expect(unit.linkedDown).toEqual(['EH-TİD-HW-001'])
-    expect(unit.linkedText).toBe('↑ EH-TİD-USR-001, ↓ EH-TİD-HW-001')
+    // Kilavuzdaki TID tablosundaki gibi: ok/rozet yok, duz kod listesi.
+    expect(unit.linkedText).toBe('EH-TİD-USR-001, EH-TİD-HW-001')
   })
 
   it('dogrulama yontemi sutunu doldurulur', () => {
@@ -221,6 +224,68 @@ describe('buildComponentViewRows — TİD tablosu satirlari', () => {
       code: 'T',
       derived: true,
     })
+  })
+})
+
+describe('TİD tablosu düzeni (kullanım kılavuzu s.7)', () => {
+  const tree = buildRequirementTree(REQS)
+  const ctx = {
+    tree,
+    satisfiesIndex: buildSatisfiesIndex(LINKS),
+    verificationIndex: buildVerificationIndex(LINKS, TESTS),
+    methodKeys: ['verification_method'],
+  }
+  // Belge gibi SUREKLI tablo: tum agac, anahat sirasinda.
+  const all = buildComponentViewRows(
+    tree.roots.flatMap((r) => subtreeRows(tree, r.id)),
+    ctx,
+  )
+  const row = (textId) => all.find((v) => v.text_id === textId)
+
+  it('alt kirilimi olan kayit BILESEN BASLIGI satiridir', () => {
+    // "Su Deposu Alt Sistemi" bir baslik satiri; altindaki "Depo hacmi" degil.
+    expect(row('EH-TİD-SYS-001').isComponent).toBe(true)
+    expect(row('EH-TİD-SW-001').isComponent).toBe(false)
+  })
+
+  it('alt kayitlar Baslik sutununda GIRINTILENIR', () => {
+    expect(row('EH-TİD-USR-001').depth).toBe(0)
+    expect(row('EH-TİD-SYS-001').depth).toBe(1)
+    expect(row('EH-TİD-SW-001').depth).toBe(2)
+  })
+
+  it('girinti secime goredir: alt bilesen secilince tablo soldan baslar', () => {
+    const pump = componentByLabel(
+      buildComponents(REQS, { source: COMPONENT_SOURCE.PBS, tree }),
+      'Basınç Pompası Ünitesi',
+    )
+    const rows = buildComponentViewRows(pump.rows, ctx)
+    expect(rows[0].depth).toBe(0) // bilesenin kendisi
+    expect(rows[1].depth).toBe(1) // altindakiler
+  })
+
+  it('bilesen bloklari anahat sirasinda arka arkaya gelir', () => {
+    expect(all.map((v) => v.outline)).toEqual(['1', '1.1', '1.1.1', '1.2', '1.2.1', '1.2.2'])
+  })
+})
+
+describe('birleşik doğrulama yöntemi (T/CoC, CoC/M)', () => {
+  it('ayirici ile yazilmis birden fazla yontem cozulur', () => {
+    expect(methodCodesOf('T/CoC')).toEqual(['T', 'CoC'])
+    expect(methodCodesOf('CoC/M')).toEqual(['CoC', 'M'])
+    expect(methodCodesOf('Test, Muayene')).toEqual(['T', 'M'])
+    expect(methodCodesOf('T + T')).toEqual(['T']) // tekrar edenler tekillesir
+    expect(methodCodesOf('bilinmeyen')).toEqual([])
+  })
+
+  it('satirda "T/CoC" olarak gosterilir', () => {
+    const m = verificationMethodOf(
+      { attributes: { verification_method: 'T/CoC' } },
+      { methodKeys: ['verification_method'] },
+    )
+    expect(m.codes).toEqual(['T', 'CoC'])
+    expect(m.label).toBe('T/CoC')
+    expect(m.code).toBe('T') // birincil kod (geriye donuk)
   })
 })
 

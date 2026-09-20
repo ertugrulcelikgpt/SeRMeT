@@ -34,7 +34,6 @@ import { useLang } from '../context/LanguageContext.jsx'
 import { useProject } from '../context/ProjectContext.jsx'
 import MindMapCanvas from '../components/traceability/MindMapCanvas.jsx'
 import ViewModal from '../components/common/ViewModal.jsx'
-import { VerificationBadge } from '../components/common/Badge.jsx'
 import {
   IconDownload,
   IconSearch,
@@ -238,6 +237,16 @@ export default function Components() {
         rows: subtreeRows(tree, node.id),
       }
     }
+    // Varsayilan: TUM PROJE. Boylece Liste gorunumu, kullanim kilavuzundaki
+    // TID tablosunun tamami gibi acilir; bir bilesen secmek onu daraltir.
+    if (tree.roots.length > 0) {
+      return {
+        key: PROJECT_ROOT_KEY,
+        label: projectLabel,
+        outline: '',
+        rows: tree.roots.flatMap((r) => subtreeRows(tree, r.id)),
+      }
+    }
     const first = components[0]
     if (!first) return null
     return { key: first.key, label: labelOf(first), outline: first.outline, rows: first.rows }
@@ -288,7 +297,7 @@ export default function Components() {
   const exportCsv = () => {
     setExportError('')
     try {
-      const csv = componentRowsToCsv(viewRows, { headers, methodLabel })
+      const csv = componentRowsToCsv(viewRows, { headers })
       download(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `${baseName()}.csv`)
     } catch {
       setExportError(t('comp.exportError'))
@@ -309,7 +318,6 @@ export default function Components() {
         summary: summaryText(selectionSummary),
         headers,
         viewRows,
-        methodLabel,
       })
       const win = window.open('', '_blank')
       if (!win) {
@@ -630,73 +638,77 @@ export default function Components() {
                             key={v.id}
                             onClick={() => setViewRow(v.row)}
                             data-testid={`comp-row-${v.text_id}`}
+                            data-component={v.isComponent ? 'true' : undefined}
                             title={t('comp.rowOpen')}
-                            className="cursor-pointer align-top hover:bg-slate-50 dark:hover:bg-slate-800/60"
+                            className={
+                              'cursor-pointer align-top ' +
+                              // Alt kirilimi olan kayit kendi blogunun BASLIK
+                              // satiridir: koyu yazi + gri zemin (kilavuzdaki
+                              // TID tablosuyla ayni okuma duzeni).
+                              (v.isComponent
+                                ? 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-800'
+                                : 'hover:bg-slate-50 dark:hover:bg-slate-800/60')
+                            }
                           >
-                            <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-slate-400 tabular-nums">
+                            <td
+                              className={
+                                'whitespace-nowrap px-3 py-2 font-mono text-xs tabular-nums ' +
+                                (v.isComponent
+                                  ? 'font-bold text-slate-700 dark:text-slate-200'
+                                  : 'text-slate-400')
+                              }
+                            >
                               {v.outline}
                             </td>
-                            <td className="whitespace-nowrap px-3 py-2 font-mono text-xs font-semibold text-brand-700 dark:text-brand-300">
+                            <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-brand-700 dark:text-brand-300">
                               {v.text_id}
                             </td>
-                            <td className="px-3 py-2 text-[13px] font-semibold text-slate-800 dark:text-slate-100">
-                              {v.title || <span className="text-slate-400">—</span>}
+                            {/* Girinti = agactaki derinlik: "Depo Kapasitesi"
+                                basligi "Su Deposu Alt Sistemi"nin altinda
+                                iceri kayar. */}
+                            <td
+                              className={
+                                'px-3 py-2 text-[13px] ' +
+                                (v.isComponent
+                                  ? 'font-bold text-slate-900 dark:text-white'
+                                  : 'font-semibold text-slate-800 dark:text-slate-100')
+                              }
+                              style={{ paddingLeft: `${0.75 + v.depth * 1.15}rem` }}
+                            >
+                              {v.title || <span className="font-normal text-slate-400">—</span>}
                             </td>
                             <td className="px-3 py-2 text-[13px] text-slate-600 dark:text-slate-300">
-                              {v.textPreview || <span className="text-slate-400">—</span>}
+                              {v.text || <span className="text-slate-400">—</span>}
                             </td>
-                            <td className="px-3 py-2">
-                              {v.linkedUp.length === 0 && v.linkedDown.length === 0 ? (
-                                <span className="text-slate-400">—</span>
-                              ) : (
-                                <span className="flex flex-wrap gap-1">
-                                  {v.linkedUp.map((id) => (
-                                    <span
-                                      key={`up-${id}`}
-                                      title={t('comp.linkedUp')}
-                                      className="rounded bg-violet-50 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-violet-700 dark:bg-violet-900/30 dark:text-violet-300"
-                                    >
-                                      ↑ {id}
-                                    </span>
-                                  ))}
-                                  {v.linkedDown.map((id) => (
-                                    <span
-                                      key={`down-${id}`}
-                                      title={t('comp.linkedDown')}
-                                      className="rounded bg-brand-50 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-brand-700 dark:bg-brand-900/30 dark:text-brand-300"
-                                    >
-                                      ↓ {id}
-                                    </span>
-                                  ))}
+                            <td className="px-3 py-2 font-mono text-[11px] text-slate-500 dark:text-slate-400">
+                              {v.linkedText ? (
+                                <span title={`${t('comp.linkedUp')} / ${t('comp.linkedDown')}`}>
+                                  {v.linkedText}
                                 </span>
+                              ) : (
+                                <span className="text-slate-400">—</span>
                               )}
                             </td>
                             <td className="whitespace-nowrap px-3 py-2">
-                              <span className="flex items-center gap-1.5">
-                                <span
-                                  data-testid={`comp-method-${v.text_id}`}
-                                  title={
-                                    v.method
-                                      ? `${methodLabel(v.method.code)}${
-                                          v.method.derived ? ` · ${t('comp.method.derived')}` : ''
-                                        }`
-                                      : t('comp.method.missing')
-                                  }
-                                  className={
-                                    'inline-flex min-w-[2rem] justify-center rounded px-1.5 py-0.5 text-[11px] font-bold ' +
-                                    (v.method
-                                      ? v.method.derived
-                                        ? 'bg-slate-100 text-slate-500 ring-1 ring-dashed ring-slate-300 dark:bg-slate-800 dark:text-slate-400 dark:ring-slate-600'
-                                        : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
-                                      : 'text-slate-400')
-                                  }
-                                >
-                                  {v.method ? v.method.code : '—'}
-                                </span>
-                                {/* Yontem (T/M/D/A/CoC) NE ile dogrulanacagini,
-                                    rozet ise o dogrulamanin NEREDE oldugunu
-                                    soyler — ikisi birbirinin yerine gecmez. */}
-                                <VerificationBadge info={v.verification} t={t} showCount={false} />
+                              <span
+                                data-testid={`comp-method-${v.text_id}`}
+                                title={
+                                  v.method
+                                    ? `${v.method.codes.map(methodLabel).join(' · ')}${
+                                        v.method.derived ? ` · ${t('comp.method.derived')}` : ''
+                                      }`
+                                    : t('comp.method.missing')
+                                }
+                                className={
+                                  'text-[12px] font-bold ' +
+                                  (v.method
+                                    ? v.method.derived
+                                      ? 'text-slate-500 underline decoration-dotted underline-offset-2 dark:text-slate-400'
+                                      : 'text-slate-800 dark:text-slate-100'
+                                    : 'text-slate-400')
+                                }
+                              >
+                                {v.method ? v.method.label : '—'}
                               </span>
                             </td>
                           </tr>
