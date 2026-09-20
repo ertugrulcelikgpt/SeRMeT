@@ -377,6 +377,12 @@ export function buildMindMapSvg(mapLayout, { theme = 'dark', title = 'Mind Map' 
           n.node.text_id,
         )}${n.node.typeSuffix ? ` <tspan fill="${c.subText}">· ${esc(n.node.typeSuffix)}</tspan>` : ''}</text>` +
         `<text x="${n.x + 14}" y="${top + 32}" font-family="Inter, Segoe UI, sans-serif" font-size="11" fill="${c.nodeText}">${esc(label)}</text>` +
+        // Ucuncu satir yalnizca dugum ozet tasiyorsa (bkz. MindMapCanvas).
+        (n.node.meta
+          ? `<text x="${n.x + 14}" y="${top + 47}" font-family="Inter, Segoe UI, sans-serif" font-size="10" font-weight="600" fill="${c.subText}">${esc(
+              fitLabel(n.node.meta, L.nodeWidth),
+            )}</text>`
+          : '') +
         dot +
         `</g>`
       )

@@ -4,6 +4,14 @@
 //  yakinlastirma / kaydirma etkilesimini yonetmek. Veri, acik/kapali durumu
 //  ve kayit detayi UST bilesenin (pages/MindMap.jsx) isidir.
 //
+//  ETKILESIM iki kipte calisir (ust bilesen secer):
+//    nodeClickToggles=false (varsayilan, Issue #122 Zihin Haritasi):
+//      dugum govdesine tiklamak DETAYI acar, dal ucundaki nokta acar/kapatir.
+//    nodeClickToggles=true (Issue #129 Bilesenler haritasi):
+//      dugum govdesine tiklamak dali ACAR/KAPATIR (Obsidian tarzi gezinme),
+//      detay CIFT TIKLAMA (ya da Enter) ile acilir. Cocuksuz dugumde tek
+//      tiklama da detayi acar — acilacak bir dal yoktur.
+//
 //  PERFORMANS: 500+ dugumlu projelerde tum dugumleri DOM'a basmak pahalidir.
 //  Iki kademeli koruma vardir:
 //    1) KAPALI dallar zaten duzene hic girmez (kademeli yukleme),
@@ -35,6 +43,8 @@ export default function MindMapCanvas({
   onToggle,
   onOpenNode,
   canOpenNode = () => true,
+  // true: dugum govdesi dali acar/kapatir, detay cift tiklama ile gelir.
+  nodeClickToggles = false,
   className = '',
 }) {
   const { t } = useLang()
@@ -162,6 +172,9 @@ export default function MindMapCanvas({
 
   const showLabels = view.k >= LABEL_MIN_ZOOM
 
+  // Govde tiklamasi dali mi acar? Yalnizca acilacak bir dal VARSA.
+  const togglesOnClick = (n) => nodeClickToggles && n.hasChildren
+
   const ctrl = (label, onClick, children, testId) => (
     <button
       type="button"
@@ -232,10 +245,16 @@ export default function MindMapCanvas({
                     fill={colors.nodeBg}
                     stroke={n.color}
                     strokeWidth={1.5}
-                    style={{ cursor: openable ? 'pointer' : 'default' }}
-                    onClick={() => openable && onOpenNode?.(n)}
+                    style={{ cursor: openable || togglesOnClick(n) ? 'pointer' : 'default' }}
+                    onClick={() => {
+                      if (togglesOnClick(n)) onToggle?.(n.key, n)
+                      else if (openable) onOpenNode?.(n)
+                    }}
+                    onDoubleClick={() => openable && onOpenNode?.(n)}
                     onKeyDown={(e) => {
-                      if (openable && (e.key === 'Enter' || e.key === ' ')) onOpenNode?.(n)
+                      if (e.key !== 'Enter' && e.key !== ' ') return
+                      if (openable) onOpenNode?.(n)
+                      else if (togglesOnClick(n)) onToggle?.(n.key, n)
                     }}
                   />
                   <rect
@@ -272,6 +291,22 @@ export default function MindMapCanvas({
                       >
                         {fitLabel(n.node.label, L.nodeWidth)}
                       </text>
+                      {/* Ucuncu satir (istege bagli): dugumun kendi ozeti —
+                          orn. "6 gereksinim · 2 doğrulandı". Yalnizca veren
+                          sayfalarda vardir; dugum yuksekligi o sayfanin
+                          duzeninden (layout.nodeHeight) gelir. */}
+                      {n.node.meta && (
+                        <text
+                          x={n.x + 14}
+                          y={top + 47}
+                          fontSize={10}
+                          fontWeight={600}
+                          fill={colors.subText}
+                          pointerEvents="none"
+                        >
+                          {fitLabel(n.node.meta, L.nodeWidth)}
+                        </text>
+                      )}
                     </>
                   )}
                   {/* Dalin ucundaki nokta: dali acar / kapatir. */}
@@ -289,9 +324,9 @@ export default function MindMapCanvas({
                         },
                       )}
                       style={{ cursor: 'pointer' }}
-                      onClick={() => onToggle?.(n.key)}
+                      onClick={() => onToggle?.(n.key, n)}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') onToggle?.(n.key)
+                        if (e.key === 'Enter' || e.key === ' ') onToggle?.(n.key, n)
                       }}
                     >
                       <circle

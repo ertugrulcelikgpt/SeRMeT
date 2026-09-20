@@ -561,6 +561,12 @@ export const STRINGS = {
 
     // --- Bileşenler (Issue #129: bileşen bazlı görünüm) ---
     'comp.source': 'Bileşen kaynağı',
+    'comp.view': 'Görünüm',
+    'comp.view.map': 'Harita',
+    'comp.view.list': 'Liste',
+    'comp.mapHint':
+      'Düğüme tıkla: dalı aç / kapat · çift tıkla: kayıt detayı · tekerlek: yakınlaştır · sürükle: kaydır',
+    'comp.mapCounts': '{visible} / {total} düğüm',
     'comp.source.pbs': 'Ürün Ağacı',
     'comp.source.field': 'Alan',
     'comp.search': 'Bileşen ara…',
@@ -1542,6 +1548,12 @@ export const STRINGS = {
 
     // --- Components (Issue #129: component-based view) ---
     'comp.source': 'Component source',
+    'comp.view': 'View',
+    'comp.view.map': 'Map',
+    'comp.view.list': 'List',
+    'comp.mapHint':
+      'Click a node: expand / collapse · double-click: record details · wheel: zoom · drag: pan',
+    'comp.mapCounts': '{visible} / {total} nodes',
     'comp.source.pbs': 'Product tree',
     'comp.source.field': 'Field',
     'comp.search': 'Search components…',

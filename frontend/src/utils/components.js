@@ -19,8 +19,9 @@
 //  backend tree.js ile ayni sekilde text_id'ye gore siralanir, boylece agac
 //  sayfasindaki numara ile bu sayfadaki numara BIREBIR ortusur.
 // ============================================================================
-import { LINK_TYPE } from './constants.js'
+import { LINK_TYPE, TYPE_SUFFIX } from './constants.js'
 import { getDisplayLabel, stripHtml, truncate } from './format.js'
+import { levelOfType } from './mindMap.js'
 import { VERIFICATION, verificationOf } from './verification.js'
 
 export const ROOT_KEY = '__root__'
@@ -262,6 +263,135 @@ function fieldComponents(requirements, tree) {
     if (b.key === FIELD_NONE_KEY) return -1
     return a.label.localeCompare(b.label, 'tr')
   })
+}
+
+// --- Zihin haritasi (mind map) grafigi --------------------------------------
+//  Bilesen gorunumunun ASIL sunumu haritadir: urun kirilimi zaten bir AGAC
+//  oldugu icin Obsidian tarzi yatay dallanma dogal karsiligidir. Cizim ve
+//  yerlesim Issue #122'de yazilan TEK motoru (utils/mindMap.js +
+//  MindMapCanvas) yeniden kullanir; burada yalnizca o motorun bekledigi graf
+//  sekli (nodes/children/rootIds) PBS agacindan uretilir.
+//
+//  FARK: #122'deki harita IZLENEBILIRLIK BAGI grafigidir (Satisfies/Verifies,
+//  cok ebeveynli, testleri de icerir); burasi tek-ebeveynli URUN AGACIDIR.
+
+/**
+ * Alt agac ozetleri — TEK gecisle (post-order) hesaplanir.
+ * Her dugum icin { total, verified }: kendisi + tum alt kirilimi.
+ * Bilesen basina ayri ayri dolasmak O(n^2) olurdu.
+ */
+export function subtreeStats(tree, verificationIndex) {
+  const stats = new Map()
+  const visit = (id, seen) => {
+    const memo = stats.get(id)
+    if (memo) return memo
+    if (seen.has(id)) return { total: 0, verified: 0 }
+    seen.add(id)
+    const self = verificationOf(verificationIndex, id).state === VERIFICATION.VERIFIED ? 1 : 0
+    let total = 1
+    let verified = self
+    for (const child of tree.childrenOf.get(id) || []) {
+      const s = visit(child.id, seen)
+      total += s.total
+      verified += s.verified
+    }
+    const out = { total, verified }
+    stats.set(id, out)
+    return out
+  }
+  for (const root of tree.roots) visit(root.id, new Set())
+  return stats
+}
+
+/**
+ * PBS agacini (ya da Alan gruplarini) mind map motorunun graf sekline cevirir.
+ *
+ * @param {Array} requirements
+ * @param {object} opts
+ *   source          'pbs' | 'field'
+ *   tree            hazir buildRequirementTree ciktisi (tekrar kurulmasin)
+ *   metaOf          (row, { childCount }) => string — dugumun ucuncu satiri
+ *                   (orn. "6 gereksinim · 2 doğrulandı")
+ *   groupMetaOf     (component) => string — Alan kaynagindaki grup dugumu icin
+ *   fieldNoneLabel  Alani bos olan grubun gorunen adi
+ * @returns {{nodes:Map, children:Map, rootIds:string[], linkCount:number}}
+ */
+export function buildComponentGraph(
+  requirements,
+  {
+    source = COMPONENT_SOURCE.PBS,
+    tree,
+    metaOf = null,
+    groupMetaOf = null,
+    fieldNoneLabel = '',
+  } = {},
+) {
+  const t = tree || buildRequirementTree(requirements)
+  const nodes = new Map()
+  const children = new Map()
+  let linkCount = 0
+
+  const toNode = (r, childCount) => {
+    const label = getDisplayLabel(r, { max: 120 })
+    return {
+      id: r.id,
+      kind: 'requirement',
+      type: r.type,
+      text_id: r.text_id || '',
+      label: label.text,
+      labelIsFallback: label.isFallback,
+      level: levelOfType(r.type),
+      typeSuffix: TYPE_SUFFIX[r.type] || '',
+      outline: t.infoById.get(r.id)?.outline || '',
+      meta: metaOf ? metaOf(r, { childCount }) : '',
+      row: r,
+    }
+  }
+
+  for (const r of requirements || []) {
+    if (!r?.id) continue
+    const kids = t.childrenOf.get(r.id) || []
+    nodes.set(r.id, toNode(r, kids.length))
+    if (kids.length > 0) {
+      children.set(
+        r.id,
+        kids.map((k) => k.id),
+      )
+      linkCount += kids.length
+    }
+  }
+
+  if (source === COMPONENT_SOURCE.FIELD) {
+    // Alan kaynagi: her Alan bir KOK dugumdur, gereksinimleri duz cocuklari.
+    const groups = fieldComponents(requirements, t)
+    for (const g of groups) {
+      const label = g.key === FIELD_NONE_KEY ? fieldNoneLabel : g.label
+      nodes.set(g.key, {
+        id: g.key,
+        kind: 'field', // kaydi olmayan SANAL dugum: detayi acilmaz
+        type: null,
+        text_id: '',
+        label,
+        labelIsFallback: false,
+        level: 'user',
+        typeSuffix: '',
+        outline: '',
+        meta: groupMetaOf ? groupMetaOf(g) : '',
+        row: null,
+      })
+      children.set(
+        g.key,
+        g.rows.map((r) => r.id),
+      )
+      linkCount += g.rows.length
+    }
+    // Alan modunda gereksinimler DUZ listelenir: kendi alt kirilimlari
+    // gruplarin altinda tekrar dallanmaz (ayni kayit iki yerde cikardi).
+    for (const r of requirements || []) children.delete(r.id)
+    return { nodes, children, rootIds: groups.map((g) => g.key), linkCount }
+  }
+
+  return { nodes, children, rootIds: t.roots.map((r) => r.id), linkCount }
 }
 
 /** "2.10" > "2.9" olacak sekilde anahat numarasi karsilastirmasi. */
