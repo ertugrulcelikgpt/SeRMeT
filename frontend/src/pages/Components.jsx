@@ -65,9 +65,10 @@ import {
 } from '../utils/components.js'
 
 // Dikey duzende `rowGap` SEVIYELER arasi (dikey) bosluk, `columnGap` ise
-// KARDESLER arasi (yatay) bosluktur. Dugum, ozet satirini tasiyabilmek icin
-// #122'deki varsayilandan biraz daha yuksektir.
-const MAP_LAYOUT = { nodeWidth: 200, nodeHeight: 56, rowGap: 46, columnGap: 16 }
+// KARDESLER arasi (yatay) bosluktur. Kutuda YALNIZCA ISIM yazdigi icin
+// (ID ve aciklama tiklayinca acilan detayda) dugumler kucuk ve tek
+// satirdir — hem daha sakin gorunur hem de harita belirgin sekilde daralir.
+const MAP_LAYOUT = { nodeWidth: 176, nodeHeight: 36, rowGap: 30, columnGap: 18 }
 
 const VIEW = { MAP: 'map', LIST: 'list' }
 
@@ -146,10 +147,9 @@ export default function Components() {
   const summaryText = (s) => t('comp.summary', { n: s.total, v: s.verified })
 
   // --- Harita grafigi -------------------------------------------------------
-  //  Ozet satiri YALNIZCA kirilimi olan dugumlerde durur ("6 gereksinim ·
-  //  2 doğrulandı"); yapraklar iki satir kalir. Yapragin dogrulama yontemi
-  //  ve durumu zaten Liste gorunumunun isi — haritada her kutuya ucuncu bir
-  //  satir koymak okunurlugu bozuyordu.
+  //  Kutuda YALNIZCA ISIM yazar. Ozet ("6 gereksinim · 2 doğrulandı") artik
+  //  kutunun ustune gelince IPUCU olarak gorunur; sayfa ust seridindeki
+  //  secim rozetinde ve Liste gorunumunde zaten tam haliyle durur.
   const projectLabel = activeProject?.name || t('comp.projectRoot')
   const graph = useMemo(() => {
     const metaOf = (row, { childCount }) =>
@@ -217,9 +217,17 @@ export default function Components() {
       can('read', componentKeyOf('requirement', record.node.type)),
     [can],
   )
-  const openNode = useCallback((record) => {
-    if (record?.node?.row) setViewRow(record.node.row)
-  }, [])
+
+  // Kutuya tiklamak KAYDIN DETAYINI acar (ID + aciklama + oznitelikler) ve
+  // ayni tiklamayla secimi tasir; dal acma/kapama dal ucundaki noktadadir.
+  // Kaydi olmayan sanal dugumler (proje / Alan grubu) yalnizca secilir.
+  const handleNodeClick = useCallback(
+    (record) => {
+      if (record?.id) setSelectedId(record.id)
+      if (canOpenNode(record) && record.node.row) setViewRow(record.node.row)
+    },
+    [canOpenNode],
+  )
 
   // --- Secim (iki gorunum ortak) -------------------------------------------
   //  Secim bir BILESEN anahtari (Alan modu) ya da agactaki bir DUGUM id'si
@@ -496,9 +504,9 @@ export default function Components() {
             mapLayout={mapLayout}
             theme={theme}
             onToggle={toggle}
-            onOpenNode={openNode}
+            onNodeClick={handleNodeClick}
             canOpenNode={canOpenNode}
-            nodeClickToggles
+            nodeDetail="label"
             className="min-h-[460px] flex-1"
           />
           <p className="text-[11px] text-slate-400" data-testid="comp-map-hint">

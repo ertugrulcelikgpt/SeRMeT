@@ -2,8 +2,9 @@
 //  Components.test.jsx — "Bileşenler" sayfasi (Issue #129).
 //
 //  Kapsam (kabul kriterleri):
-//   - HARITA gorunumu varsayilandir: dugume tiklayinca dal acilir/kapanir,
-//     cift tiklayinca kaydin detayi acilir
+//   - HARITA gorunumu varsayilandir: kutuda yalnizca ISIM yazar, kutuya
+//     tiklayinca kaydin detayi (ID + aciklama) acilir, dal ucundaki nokta
+//     dali acar/kapatir
 //   - Bilesen secilince O BILESENE ait TUM gereksinimler (User/System/
 //     Sub-system birlikte) tek listede gorunur
 //   - Liste sutunlari: TID No / Text ID / Baslik / Gereksinim Metni /
@@ -129,6 +130,8 @@ const selectPump = () => {
   fireEvent.click(screen.getByTestId('comp-item-s2'))
 }
 const mapNode = (textId) => screen.queryByTestId(`mindmap-node-${textId}`)
+// Dal ucundaki nokta: dali acar/kapatir (kutu tiklamasi detayi acar).
+const expandDot = (textId) => fireEvent.click(screen.getByTestId(`mindmap-toggle-${textId}`))
 
 describe('Bileşenler — harita görünümü (varsayılan)', () => {
   it('harita TEK proje dugumuyle acilir; kirilim inerek acilir', () => {
@@ -143,47 +146,41 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
 
   it('harita YUKARIDAN ASAGI dallanir: cocuk dugum ustunun ALTINDA durur', () => {
     renderPage()
-    fireEvent.click(mapNode('EH-TİD-1'))
+    expandDot('EH-TİD-1')
     const parent = Number(mapNode('EH-TİD-1').getAttribute('y'))
     const child = Number(mapNode('EH-TİD-SYS-001').getAttribute('y'))
     expect(child).toBeGreaterThan(parent)
   })
 
-  it('dugume TIKLAYINCA dal acilir, tekrar tiklayinca kapanir', () => {
+  it('kutuda YALNIZCA ISIM yazar (ID ve aciklama kutuda degil)', () => {
     renderPage()
-    fireEvent.click(mapNode('EH-TİD-1'))
-    fireEvent.click(mapNode('EH-TİD-SYS-002'))
-    expect(mapNode('EH-TİD-HW-001')).toBeInTheDocument()
-    expect(mapNode('EH-TİD-SW-001')).toBeInTheDocument()
-
-    fireEvent.click(mapNode('EH-TİD-SYS-002'))
-    expect(mapNode('EH-TİD-HW-001')).not.toBeInTheDocument()
-    // Kardes dal etkilenmez — dallar TEK TEK acilip kapanir.
-    expect(mapNode('EH-TİD-SYS-001')).toBeInTheDocument()
+    expandDot('EH-TİD-1')
+    expect(screen.getAllByText('Basınç Pompası Ünitesi').length).toBeGreaterThan(0)
+    // Kutuda ID yoktur; ipucunda (title) ve detayda okunur.
+    expect(screen.queryByText('EH-TİD-SYS-002')).not.toBeInTheDocument()
+    expect(mapNode('EH-TİD-SYS-002')).toHaveTextContent('EH-TİD-SYS-002') // <title> ipucu
   })
 
-  it('dal ucundaki nokta da acar/kapatir', () => {
+  it('KUTUYA TIKLAYINCA kaydin detayi (ID + aciklama) acilir', () => {
     renderPage()
-    fireEvent.click(screen.getByTestId('mindmap-toggle-EH-TİD-1'))
-    expect(mapNode('EH-TİD-SYS-002')).toBeInTheDocument()
-  })
-
-  it('ozet satiri YALNIZCA kirilimi olan dugumde durur (yaprak sade kalir)', () => {
-    renderPage()
-    fireEvent.click(mapNode('EH-TİD-1'))
+    expandDot('EH-TİD-1')
     fireEvent.click(mapNode('EH-TİD-SYS-002'))
-    expect(screen.getByText('3 gereksinim · 1 doğrulandı')).toBeInTheDocument()
-    // Yaprak dugumde ucuncu satir yoktur.
-    expect(screen.queryByText('T · Doğrulandı')).not.toBeInTheDocument()
-  })
-
-  it('CIFT TIKLAMA kaydin detayini (ViewModal) acar', () => {
-    renderPage()
-    fireEvent.click(mapNode('EH-TİD-1'))
-    fireEvent.doubleClick(mapNode('EH-TİD-SYS-002'))
     const modal = screen.getByTestId('view-modal')
     expect(modal).toHaveTextContent('EH-TİD-SYS-002')
     expect(modal).toHaveAttribute('data-can-write', 'false')
+  })
+
+  it('dal ucundaki nokta dali acar, tekrar tiklayinca kapatir', () => {
+    renderPage()
+    expandDot('EH-TİD-1')
+    expandDot('EH-TİD-SYS-002')
+    expect(mapNode('EH-TİD-HW-001')).toBeInTheDocument()
+    expect(mapNode('EH-TİD-SW-001')).toBeInTheDocument()
+
+    expandDot('EH-TİD-SYS-002')
+    expect(mapNode('EH-TİD-HW-001')).not.toBeInTheDocument()
+    // Kardes dal etkilenmez — dallar TEK TEK acilip kapanir.
+    expect(mapNode('EH-TİD-SYS-001')).toBeInTheDocument()
   })
 
   it('"Tümünü Aç" / "Tümünü Kapat" tum kirilimi yonetir', () => {
@@ -198,7 +195,7 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
 
   it('haritadaki secim Liste gorunumune tasinir (tek secim, iki gorunum)', () => {
     renderPage()
-    fireEvent.click(mapNode('EH-TİD-1'))
+    expandDot('EH-TİD-1')
     fireEvent.click(mapNode('EH-TİD-SYS-002'))
     expect(screen.getByTestId('comp-selection')).toHaveTextContent('Basınç Pompası Ünitesi')
     showList()

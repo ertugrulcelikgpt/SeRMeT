@@ -80,18 +80,7 @@ export const MIND_MAP_LAYOUT = {
   rowGap: 12,
   columnGap: 88,
   padding: 56,
-  // Yalnizca sikisik (compact) dikey duzende: yigilmis cocuklarin ust
-  // dugumden ice kaymasi.
-  indent: 26,
 }
-
-// Sikisik dikey duzende bir dugumun cocuklari, sayilari bunu astiginda YAN
-// YANA degil ALT ALTA dizilir (girintili liste gibi). Genis seviyeler
-// haritayi binlerce piksel genisletip, ekrana sigdirmak icin gereken
-// yakinlastirmayi etiketlerin cizilmedigi seviyenin altina dusuruyordu;
-// yigma, genisligi derinlige cevirir. Az sayida cocuk hala yan yana
-// dallanir — harita "liste" degil harita gibi durur.
-export const MIND_MAP_STACK_OVER = 3
 
 // Tek seferde yerlestirilecek dugum ust siniri. Kullanici "tumunu ac"
 // dedigi devasa projelerde tarayiciyi kilitlememek icin duzen bu sinirda
@@ -249,18 +238,33 @@ export function collectExpandableKeys(graph, { maxNodes = MIND_MAP_MAX_NODES } =
  * sigdirmak %15 yakinlastirma demek, o olcekte ise etiketler cizilmiyor ve
  * kullanici bos kutulardan olusan bir serit goruyordu.
  *
- * Cozum, anahat (outline) mantigi: bir dugumun cocuklari
- *   - YAN YANA dizilir (klasik dallanma) — az sayida ve aralarinda kendi
- *     kirilimi olanlar varsa,
- *   - ALT ALTA yigilir (girintili liste) — hepsi yapraksa ya da
- *     MIND_MAP_STACK_OVER'dan fazlaysa.
- * Boylece genislik derinlige cevrilir: harita daralir, asagi uzar ve
- * okunabilir olcekte kaydirilarak gezilir.
+ * Cozum, el cizimi akis semalarinin (Excalidraw / Obsidian canvas) duzeni:
+ *   - KIRILIMI OLAN cocuklar YAN YANA dizilir (kokten disa acilan yelpaze),
+ *   - HEPSI YAPRAK olan cocuklar ust dugumun ALTINDA, ayni hizada bir
+ *     ZINCIR olusturur (kutudan kutuya inen kisa oklar).
+ * Boylece her dal kendi sutununda asagi akar; harita genis ama ALCAK
+ * kalir ve okunabilir olcekte yatay kaydirilarak gezilir. Yapraklarin her
+ * birine ayri sutun ayirmak haritayi gereksiz yere kat kat genisletiyordu.
  *
  * Yerlesim, alt agaclari KUTU olarak paketler: her dal once kendi (0,0)
  * merkezli kutusunu uretir, sonra ust dugum onlari yan yana ya da alt alta
  * yerlestirip kendi konumunu belirler.
  */
+/** Iki dugum arasinda dikey kenar: ust kutunun altindan alt kutunun ustune. */
+function edgeBetween(from, to, L) {
+  return {
+    key: `${from.key}=>${to.key}`,
+    vertical: true,
+    x1: from.x + L.nodeWidth / 2,
+    y1: from.y + L.nodeHeight / 2,
+    x2: to.x + L.nodeWidth / 2,
+    y2: to.y - L.nodeHeight / 2,
+    color: to.color,
+    level: to.node?.level,
+    depth: to.depth,
+  }
+}
+
 function layoutCompactVertical(graph, expandedKeys, L, maxNodes) {
   const expanded = expandedKeys || new Set()
   const rowPitch = L.nodeHeight + L.rowGap
@@ -333,31 +337,25 @@ function layoutCompactVertical(graph, expandedKeys, L, maxNodes) {
       return box
     }
 
-    // Yigma karari: cocuk sayisi esigi asiyorsa alt alta, aksi halde yan yana.
-    const stacked = kidBoxes.length > MIND_MAP_STACK_OVER
+    // Yigma karari: cocuklarin HEPSI yapraksa zincir, aksi halde yelpaze.
+    const stacked = kids.every((cid) => childIdsOf(graph, cid).length === 0)
 
     if (stacked) {
-      // Alt alta, girintili: ust dugumun sol kenarindan inen bir omurga.
+      // Zincir: cocuklar ust dugumle AYNI HIZADA, alt alta; aralarinda kisa
+      // dikey oklar (referans akis semasindaki sutunlar).
       let cursorY = rowPitch
       let width = L.nodeWidth
+      let prev = record
       for (const kb of kidBoxes) {
-        shift(kb, L.indent, cursorY)
+        shift(kb, 0, cursorY)
         box.nodes.push(...kb.nodes)
         box.edges.push(...kb.edges)
         const kidRecord = kb.nodes[0]
-        box.edges.push({
-          key: `${key}->${kidRecord.key}`,
-          kind: 'stack',
-          vertical: true,
-          x1: record.x + L.indent / 2,
-          y1: record.y + L.nodeHeight / 2,
-          x2: kidRecord.x,
-          y2: kidRecord.y,
-          color: kidRecord.color,
-          depth: kidRecord.depth,
-        })
+        box.edges.push(edgeBetween(prev, kidRecord, L))
         cursorY += kb.height + L.rowGap
-        width = Math.max(width, L.indent + kb.width)
+        width = Math.max(width, kb.width)
+        // Zincir ARDISIKTIR: ok, ust dugumden degil bir ONCEKI kutudan iner.
+        prev = kidRecord
       }
       box.width = width
       box.height = cursorY - L.rowGap
@@ -383,20 +381,7 @@ function layoutCompactVertical(graph, expandedKeys, L, maxNodes) {
       selfX = 0
     }
     record.x = selfX
-    for (const kb of kidBoxes) {
-      const kidRecord = kb.nodes[0]
-      box.edges.push({
-        key: `${key}->${kidRecord.key}`,
-        kind: 'branch',
-        vertical: true,
-        x1: record.x + L.nodeWidth / 2,
-        y1: record.y + L.nodeHeight / 2,
-        x2: kidRecord.x + L.nodeWidth / 2,
-        y2: kidRecord.y - L.nodeHeight / 2,
-        color: kidRecord.color,
-        depth: kidRecord.depth,
-      })
-    }
+    for (const kb of kidBoxes) box.edges.push(edgeBetween(record, kb.nodes[0], L))
     box.selfX = selfX
     box.width = Math.max(childrenWidth, selfX + L.nodeWidth)
     box.height = rowPitch + tallest
@@ -533,6 +518,7 @@ export function layoutMindMap(graph, expandedKeys, options = {}) {
         y2: vertical ? kr.y - L.nodeHeight / 2 : kr.y,
         vertical,
         color: kr.color,
+        level: kr.node?.level,
         depth: kr.depth,
       })
     }
@@ -576,17 +562,6 @@ export function layoutMindMap(graph, expandedKeys, options = {}) {
  */
 export function mindMapEdgePath(edge) {
   const r = (n) => Math.round(n * 10) / 10
-  if (edge.kind === 'stack') {
-    // Girintili liste omurgasi: ust dugumun sol tarafindan asagi iner,
-    // cocugun hizasinda saga kivrilip sol kenarina girer (dosya agaci gibi).
-    const k = Math.min(8, Math.abs(edge.x2 - edge.x1), Math.abs(edge.y2 - edge.y1))
-    if (k < 1) return `M ${r(edge.x1)} ${r(edge.y1)} L ${r(edge.x2)} ${r(edge.y2)}`
-    return (
-      `M ${r(edge.x1)} ${r(edge.y1)} V ${r(edge.y2 - k)} ` +
-      `Q ${r(edge.x1)} ${r(edge.y2)} ${r(edge.x1 + k)} ${r(edge.y2)} ` +
-      `H ${r(edge.x2)}`
-    )
-  }
   if (edge.vertical) {
     const midY = (edge.y1 + edge.y2) / 2
     const dx = edge.x2 - edge.x1

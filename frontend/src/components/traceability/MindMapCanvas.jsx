@@ -4,13 +4,17 @@
 //  yakinlastirma / kaydirma etkilesimini yonetmek. Veri, acik/kapali durumu
 //  ve kayit detayi UST bilesenin (pages/MindMap.jsx) isidir.
 //
-//  ETKILESIM iki kipte calisir (ust bilesen secer):
-//    nodeClickToggles=false (varsayilan, Issue #122 Zihin Haritasi):
-//      dugum govdesine tiklamak DETAYI acar, dal ucundaki nokta acar/kapatir.
-//    nodeClickToggles=true (Issue #129 Bilesenler haritasi):
-//      dugum govdesine tiklamak dali ACAR/KAPATIR (Obsidian tarzi gezinme),
-//      detay CIFT TIKLAMA (ya da Enter) ile acilir. Cocuksuz dugumde tek
-//      tiklama da detayi acar — acilacak bir dal yoktur.
+//  ETKILESIM: dugum govdesine tiklamak KAYDIN DETAYINI acar (ID, aciklama,
+//  oznitelikler...), dal ucundaki NOKTA dali acar/kapatir. Ust bilesen
+//  `onNodeClick` verirse tiklamanin ne yapacagina kendisi karar verir
+//  (orn. ayni tiklamayla secimi de tasimak icin).
+//
+//  DUGUM ICERIGI iki kipte cizilir:
+//    nodeDetail='full'  (varsayilan, #122): ID + tip eki, baslik, istege
+//      bagli ozet satiri.
+//    nodeDetail='label' (#129 Bilesenler): YALNIZCA ISIM. Kutular kucuk ve
+//      sakin kalir; ID ve aciklama tiklaninca acilan detayda okunur, ustune
+//      gelince de ipucu (tooltip) olarak gorunur.
 //
 //  PERFORMANS: 500+ dugumlu projelerde tum dugumleri DOM'a basmak pahalidir.
 //  Iki kademeli koruma vardir:
@@ -21,7 +25,12 @@
 // ============================================================================
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLang } from '../../context/LanguageContext.jsx'
-import { fitLabel, mindMapEdgePath, mindMapTheme } from '../../utils/mindMap.js'
+import {
+  MIND_MAP_BRANCH_COLORS,
+  fitLabel,
+  mindMapEdgePath,
+  mindMapTheme,
+} from '../../utils/mindMap.js'
 import { IconPlus, IconReset, IconSearch } from '../common/Icons.jsx'
 
 const MIN_ZOOM = 0.15
@@ -43,8 +52,11 @@ export default function MindMapCanvas({
   onToggle,
   onOpenNode,
   canOpenNode = () => true,
-  // true: dugum govdesi dali acar/kapatir, detay cift tiklama ile gelir.
-  nodeClickToggles = false,
+  // Verilirse dugum tiklamasini TAMAMEN ust bilesen yonetir (detayi acmak
+  // da dahil); verilmezse tiklama `onOpenNode` ile detayi acar.
+  onNodeClick = null,
+  // 'full' | 'label' — bkz. dosya basligi.
+  nodeDetail = 'full',
   className = '',
 }) {
   const { t } = useLang()
@@ -204,11 +216,9 @@ export default function MindMapCanvas({
 
   const showLabels = view.k >= LABEL_MIN_ZOOM
 
-  // Govde tiklamasi dali mi acar? Yalnizca acilacak bir dal VARSA.
-  const togglesOnClick = (n) => nodeClickToggles && n.hasChildren
-
   // Ac/kapa noktasi dalin CIKTIGI kenarda durur: yatay duzende sag orta,
   // dikey (yukaridan asagi) duzende alt orta.
+  const labelOnly = nodeDetail === 'label'
   const vertical = mapLayout.orientation === 'vertical'
   const dotXOf = (n) => (vertical ? n.x + L.nodeWidth / 2 : n.x + L.nodeWidth)
   const dotYOf = (n) => (vertical ? n.y + L.nodeHeight / 2 : n.y)
@@ -245,6 +255,24 @@ export default function MindMapCanvas({
         onPointerUp={endPan}
         onPointerCancel={endPan}
       >
+        {/* Ok uclari dal rengine gore hazirlanir (SVG marker'lari boya
+            degerini miras almaz, her renk icin ayri tanim gerekir). */}
+        <defs>
+          {Object.entries(MIND_MAP_BRANCH_COLORS).map(([level, color]) => (
+            <marker
+              key={level}
+              id={`mm-arrow-${level}`}
+              viewBox="0 0 8 8"
+              refX="7.5"
+              refY="4"
+              markerWidth="5"
+              markerHeight="5"
+              orient="auto-start-reverse"
+            >
+              <path d="M0 0 L8 4 L0 8 Z" fill={color} opacity="0.85" />
+            </marker>
+          ))}
+        </defs>
         <g transform={`translate(${view.x},${view.y}) scale(${view.k})`}>
           <g>
             {drawn.edges.map((e) => (
@@ -256,6 +284,7 @@ export default function MindMapCanvas({
                 strokeWidth={2}
                 strokeOpacity={0.75}
                 strokeLinecap="round"
+                markerEnd={e.level ? `url(#mm-arrow-${e.level})` : undefined}
               />
             ))}
           </g>
@@ -283,18 +312,23 @@ export default function MindMapCanvas({
                     fill={colors.nodeBg}
                     stroke={n.color}
                     strokeWidth={1.5}
-                    style={{ cursor: openable || togglesOnClick(n) ? 'pointer' : 'default' }}
+                    style={{ cursor: onNodeClick || openable ? 'pointer' : 'default' }}
                     onClick={() => {
-                      if (togglesOnClick(n)) onToggle?.(n.key, n)
+                      if (onNodeClick) onNodeClick(n)
                       else if (openable) onOpenNode?.(n)
                     }}
-                    onDoubleClick={() => openable && onOpenNode?.(n)}
                     onKeyDown={(e) => {
                       if (e.key !== 'Enter' && e.key !== ' ') return
-                      if (openable) onOpenNode?.(n)
-                      else if (togglesOnClick(n)) onToggle?.(n.key, n)
+                      if (onNodeClick) onNodeClick(n)
+                      else if (openable) onOpenNode?.(n)
                     }}
-                  />
+                  >
+                    {/* Kutuda yalnizca isim yazdiginda ID ve ozet ustune
+                        gelince ipucu olarak gorunur. */}
+                    <title>
+                      {[n.node.text_id, n.node.label, n.node.meta].filter(Boolean).join(' — ')}
+                    </title>
+                  </rect>
                   <rect
                     x={n.x}
                     y={top + 6}
@@ -304,7 +338,20 @@ export default function MindMapCanvas({
                     fill={n.color}
                     pointerEvents="none"
                   />
-                  {showLabels && (
+                  {showLabels && labelOnly && (
+                    // YALNIZCA ISIM: tek satir, kutunun dikey ortasinda.
+                    <text
+                      x={n.x + 14}
+                      y={n.y + 4}
+                      fontSize={12}
+                      fontWeight={600}
+                      fill={colors.nodeText}
+                      pointerEvents="none"
+                    >
+                      {fitLabel(n.node.label, L.nodeWidth)}
+                    </text>
+                  )}
+                  {showLabels && !labelOnly && (
                     <>
                       <text
                         x={n.x + 14}
