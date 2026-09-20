@@ -73,6 +73,68 @@ describe('buildMindMapGraph', () => {
   })
 })
 
+describe('layoutMindMap — sıkışık (compact) dikey düzen', () => {
+  // Genis bir agac: tek kok, 8 cocuk (esigi asar), her birinin 1 yapragi.
+  const wideGraph = () => {
+    const reqs = [{ id: 'r', text_id: 'R-0', title: 'Kök', type: REQ_TYPE.USER }]
+    const links = []
+    for (let i = 1; i <= 8; i += 1) {
+      reqs.push({ id: 's' + i, text_id: 'S-' + i, title: 'Dal', type: REQ_TYPE.SYSTEM })
+      links.push(link('r', 's' + i))
+      reqs.push({ id: 'w' + i, text_id: 'W-' + i, title: 'Yaprak', type: REQ_TYPE.SOFTWARE })
+      links.push(link('s' + i, 'w' + i))
+    }
+    return buildMindMapGraph(reqs, [], links)
+  }
+  const openAll = (g, opts) => layoutMindMap(g, collectExpandableKeys(g).keys, opts)
+
+  it('genis seviye ALT ALTA yigilir; harita dramatik sekilde daralir', () => {
+    const g = wideGraph()
+    const classic = openAll(g, { orientation: 'vertical' })
+    const compact = openAll(g, { orientation: 'vertical', compact: true })
+    expect(compact.compact).toBe(true)
+    expect(compact.width).toBeLessThan(classic.width / 3)
+    // Genislik derinlige cevrilir: harita uzar.
+    expect(compact.height).toBeGreaterThan(classic.height)
+  })
+
+  it('yigilmis kardesler alt alta ve GIRINTILI durur', () => {
+    const compact = openAll(wideGraph(), { orientation: 'vertical', compact: true })
+    const byId = Object.fromEntries(compact.nodes.map((n) => [n.id, n]))
+    expect(byId.s2.y).toBeGreaterThan(byId.s1.y) // alt alta
+    expect(byId.s1.x).toBe(byId.s2.x) // ayni girinti hizasi
+    expect(byId.s1.x).toBeGreaterThan(byId.r.x) // ustunden iceri kaymis
+  })
+
+  it('az sayida cocuk hala YAN YANA dallanir (harita "liste"ye donusmez)', () => {
+    const g = buildMindMapGraph(REQS, TESTS, LINKS) // s1 -> w1 + t1
+    const compact = openAll(g, { orientation: 'vertical', compact: true })
+    const byId = Object.fromEntries(compact.nodes.map((n) => [n.id, n]))
+    expect(byId.w1.y).toBe(byId.t1.y)
+    expect(byId.w1.x).not.toBe(byId.t1.x)
+    // Ust dugum cocuklarinin ortasinda.
+    expect(byId.s1.x).toBeCloseTo((byId.w1.x + byId.t1.x) / 2, 5)
+  })
+
+  it('yigma kenari omurga (dosya agaci) cizgisi cizer', () => {
+    const compact = openAll(wideGraph(), { orientation: 'vertical', compact: true })
+    const stack = compact.edges.find((e) => e.kind === 'stack')
+    expect(stack).toBeTruthy()
+    const d = mindMapEdgePath(stack)
+    expect(d).toMatch(/^M .* V .* H /) // asagi in, sonra saga kivril
+  })
+
+  it('dugum ust siniri sikisik duzende de uygulanir', () => {
+    const compact = layoutMindMap(wideGraph(), collectExpandableKeys(wideGraph()).keys, {
+      orientation: 'vertical',
+      compact: true,
+      maxNodes: 3,
+    })
+    expect(compact.truncated).toBe(true)
+    expect(compact.nodes.length).toBeLessThanOrEqual(3)
+  })
+})
+
 describe('layoutMindMap — dikey (yukarıdan aşağı) yön', () => {
   const opened = () => {
     const g = buildMindMapGraph(REQS, TESTS, LINKS)

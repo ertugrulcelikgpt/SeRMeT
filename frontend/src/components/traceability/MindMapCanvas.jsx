@@ -81,7 +81,14 @@ export default function MindMapCanvas({
       const { w, h } = { w: size.w, h: size.h }
       if (!w || !h || !mapLayout.width || !mapLayout.height) return
       const raw = Math.min(w / mapLayout.width, h / mapLayout.height)
-      const k = clamp(readable ? Math.max(raw, LABEL_MIN_ZOOM) : raw, MIN_ZOOM, 1.1)
+      // Okunur kipte once GENISLIGE sigdirilir: sikisik harita bilerek
+      // uzundur, yuksekligi de sigdirmaya calismak olcegi gereksiz yere
+      // kucultur. Alt sinir, etiketlerin cizildigi olcektir.
+      const k = clamp(
+        readable ? Math.max(Math.min(w / mapLayout.width, 1.1), LABEL_MIN_ZOOM) : raw,
+        MIN_ZOOM,
+        1.1,
+      )
       const fitsW = mapLayout.width * k <= w
       const fitsH = mapLayout.height * k <= h
       const anchor = mapLayout.nodes[0]
@@ -119,15 +126,25 @@ export default function MindMapCanvas({
     [size.w, size.h],
   )
 
-  // Tekerlek ile yakinlastirma. React'in onWheel'i pasif dinleyiciye baglandigi
-  // icin sayfanin kaymasini engelleyebilmek adina elle baglanir.
+  // Tekerlek KAYDIRIR, Ctrl/Cmd + tekerlek YAKINLASTIRIR (Figma/Miro
+  // sozlesmesi). Sikisik dikey harita ekrana sigmayacak kadar UZUN oldugu
+  // icin tekerlegin yakinlastirmasi gezinmeyi zorlastiriyordu; belge gibi
+  // kaydirmak dogal olani. Shift ile yatay kaydirilir.
+  // React'in onWheel'i pasif dinleyiciye baglandigi icin sayfanin kaymasini
+  // engelleyebilmek adina elle baglanir.
   useEffect(() => {
     const el = boxRef.current
     if (!el) return undefined
     const onWheel = (e) => {
       e.preventDefault()
-      const rect = el.getBoundingClientRect()
-      zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX - rect.left, e.clientY - rect.top)
+      if (e.ctrlKey || e.metaKey) {
+        const rect = el.getBoundingClientRect()
+        zoomBy(e.deltaY < 0 ? 1.12 : 1 / 1.12, e.clientX - rect.left, e.clientY - rect.top)
+        return
+      }
+      const dx = e.shiftKey ? e.deltaY : e.deltaX
+      const dy = e.shiftKey ? 0 : e.deltaY
+      setView((v) => ({ ...v, x: v.x - dx, y: v.y - dy }))
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)

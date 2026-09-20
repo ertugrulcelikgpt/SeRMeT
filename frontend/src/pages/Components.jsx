@@ -183,7 +183,16 @@ export default function Components() {
   }, [graph])
 
   const mapLayout = useMemo(
-    () => layoutMindMap(graph, expanded, { layout: MAP_LAYOUT, orientation: 'vertical' }),
+    () =>
+      layoutMindMap(graph, expanded, {
+        layout: MAP_LAYOUT,
+        orientation: 'vertical',
+        // Genis seviyeler (onlarca kardes) yan yana dizilince harita
+        // binlerce piksel genisliyor ve ekrana sigdirmak icin gereken
+        // yakinlastirmada etiketler okunmuyordu. Sikisik duzen bu
+        // seviyeleri girintili listeye cevirir: harita daralir, asagi uzar.
+        compact: true,
+      }),
     [graph, expanded],
   )
 
