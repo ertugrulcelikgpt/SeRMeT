@@ -55,6 +55,20 @@ export const SATISFIES_ALLOWED_PARENTS = {
   [REQ_TYPE.SOFTWARE]: [REQ_TYPE.SYSTEM, REQ_TYPE.USER],
   [REQ_TYPE.HARDWARE]: [REQ_TYPE.SYSTEM, REQ_TYPE.USER],
 }
+// SATISFIES_ALLOWED_PARENTS'in TERS bakisi: bir tipin HANGI cocuk tiplerine
+// ust olabildigi. Tek kaynaktan (yukaridaki tablodan) turetilir ki iki liste
+// birbirinden ayrisamasin. Bos dizi => o tipin altina gereksinim baglanamaz
+// (yaprak tip: Software / Hardware). "Alt bag beklenir mi?" sorusunun
+// cevabi da budur (bkz. utils/linkIndex.js, yetim kayit isareti).
+export const SATISFIES_CHILD_TYPES = Object.fromEntries(
+  Object.values(REQ_TYPE).map((parentCandidate) => [
+    parentCandidate,
+    Object.entries(SATISFIES_ALLOWED_PARENTS)
+      .filter(([, parents]) => parents.includes(parentCandidate))
+      .map(([childType]) => childType),
+  ]),
+)
+
 //  Verifies: her test tipi SADECE su gereksinim tipini dogrular.
 export const VERIFIES_TARGET_TYPES = {
   [TEST_TYPE.ACCEPTANCE]: [REQ_TYPE.USER],

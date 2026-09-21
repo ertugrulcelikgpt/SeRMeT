@@ -38,26 +38,12 @@ import {
   LINK_TYPE,
   REQ_TYPE,
   SATISFIES_ALLOWED_PARENTS,
+  SATISFIES_CHILD_TYPES,
   VERIFIES_TARGET_TYPES,
 } from '../../utils/constants.js'
 import { IconLink, IconUnlink, IconPlus } from '../common/Icons.jsx'
 import { TypeBadge, StatusBadge } from '../common/Badge.jsx'
 import { getDisplayLabel } from '../../utils/format.js'
-
-// Bir tipin SATISFIES_ALLOWED_PARENTS'ta HANGI cocuk tiplerine ust
-// olabildigi (ters bakis) — "asagi baslatma" (bunu karsilayan alt
-// gereksinim ekle) secenegi icin. Modul seviyesinde bir kez hesaplanir;
-// REQ_TYPE sabittir.
-const CHILD_TYPES_OF = Object.fromEntries(
-  Object.keys(REQ_TYPE)
-    .map((k) => REQ_TYPE[k])
-    .map((parentCandidate) => [
-      parentCandidate,
-      Object.entries(SATISFIES_ALLOWED_PARENTS)
-        .filter(([, parents]) => parents.includes(parentCandidate))
-        .map(([childType]) => childType),
-    ]),
-)
 
 // Software + Hardware, uygulamanin her yerinde tek bir kavram olarak
 // gruplanir ("Alt Sistem" / "Sub-system", bkz. REQ_PAGES['req-subsystem'] —
@@ -156,7 +142,7 @@ export default function LinkManager({ open, onClose, subject, subjectKind }) {
       // --- Asagi: subject UST taraf, onu karsilayacak mevcut bir ALT
       //     gereksinim secilir (orn. User Requirement'tan dogrudan bir
       //     System VEYA Software/Hardware secmek). ---
-      const childTypes = CHILD_TYPES_OF[subject.type] || []
+      const childTypes = SATISFIES_CHILD_TYPES[subject.type] || []
       if (childTypes.length > 0) {
         const alreadyChildren = new Set(
           links

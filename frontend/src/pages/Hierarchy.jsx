@@ -40,6 +40,7 @@ import { IconPlus } from '../components/common/Icons.jsx'
 import { REQ_PAGES } from '../utils/constants.js'
 import { suspectLinksForRequirement } from '../utils/suspect.js'
 import { buildVerificationIndex, verificationOf } from '../utils/verification.js'
+import { buildLinkIndex, linkCountOf, linkSummaryOf } from '../utils/linkIndex.js'
 import { getDisplayLabel } from '../utils/format.js'
 import { useBulkSelection } from '../hooks/useBulkSelection.js'
 import { useUndoableDelete } from '../hooks/useUndoableDelete.js'
@@ -75,6 +76,7 @@ export default function Hierarchy({
     requirements,
     testCases,
     links,
+    glossary,
     fields,
     attributeDefs,
     personnel,
@@ -95,6 +97,10 @@ export default function Hierarchy({
   const [bulkAssignOpen, setBulkAssignOpen] = useState(false)
   const [assignResult, setAssignResult] = useState(null)
   const [viewRow, setViewRow] = useState(null)
+  // Issue #123: genisletilmis satirdaki bir bag kodundan acilan HEDEF kayit
+  // (gereksinim ya da test senaryosu). Salt okunur gosterilir: buradaki
+  // kayit bu sayfanin listesinden olmayabilir (orn. bir test senaryosu).
+  const [linkedRow, setLinkedRow] = useState(null)
   // Kaynak dokumani acilacak gereksinim (ViewModal "Kaynak" satirindan).
   const [sourceRow, setSourceRow] = useState(null)
   const [impactRow, setImpactRow] = useState(null)
@@ -112,8 +118,8 @@ export default function Hierarchy({
   const tableColumns = useMemo(
     () =>
       effectiveCfg?.lockedType
-        ? ['field', 'status', 'links']
-        : ['type', 'field', 'status', 'links'],
+        ? ['field', 'status', 'links', 'linkTargets']
+        : ['type', 'field', 'status', 'links', 'linkTargets'],
     [effectiveCfg],
   )
   // Issue #105: Durum sutunu gereksinimin KENDI onayindan degil, onu
@@ -197,7 +203,15 @@ export default function Hierarchy({
   const visibleIds = useMemo(() => pageInfo.rows.map((r) => r.id), [pageInfo.rows])
   const sel = useBulkSelection(visibleIds)
 
-  const linkCountFor = (id) => links.filter((l) => l.fromId === id || l.toId === id).length
+  // Issue #123: TUM baglar TEK GECISTE indekslenir; hem "BAG" sayaci hem
+  // satir genisletmedeki ust/alt bag + test listesi bu indeksten okunur —
+  // satir basina ayri bir tarama (ya da istek) yapilmaz.
+  const linkIndex = useMemo(
+    () => buildLinkIndex({ links, requirements, testCases, glossary }),
+    [links, requirements, testCases, glossary],
+  )
+  const linkCountFor = (id) => linkCountOf(linkIndex, id)
+  const linkSummaryFor = (r) => linkSummaryOf(linkIndex, r)
 
   // Issue #57: satirin supheli (suspect) cikis bag sayisi — gosterge + yonlendirme.
   const suspectCountFor = (r) => suspectLinksForRequirement(links, r.id).length
@@ -320,6 +334,9 @@ export default function Hierarchy({
         columnKeys={vw.columnKeys}
         attributeEntityType="requirement"
         linkCountFor={linkCountFor}
+        expandable
+        linkSummaryFor={linkSummaryFor}
+        onOpenLinked={canRead ? (item) => setLinkedRow(item.node) : undefined}
         suspectCountFor={suspectCountFor}
         onOpenSuspect={onOpenSuspect}
         onView={canRead ? setViewRow : undefined}
@@ -390,6 +407,14 @@ export default function Hierarchy({
         onSaveDescription={saveDescription}
         onOpenSource={setSourceRow}
         commentEntityType="requirement"
+      />
+      {/* Issue #123: bag listesinden acilan HEDEF kayit — salt okunur. */}
+      <ViewModal
+        open={Boolean(linkedRow)}
+        row={linkedRow}
+        canWrite={false}
+        showStatus
+        onClose={() => setLinkedRow(null)}
       />
       {/* Kaynak izlenebilirligi: dokumani Metin modunda acip pasaji vurgular. */}
       <SourceDocumentModal

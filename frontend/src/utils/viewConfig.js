@@ -69,6 +69,14 @@ export function columnCatalog({
   if (has('status')) out.push({ key: 'status', label: statusLabel || t('tbl.th.status') })
   for (const d of attrDefs) out.push({ key: `${ATTR_PREFIX}${d.key}`, label: d.label })
   if (has('links')) out.push({ key: 'links', label: t('tbl.th.links') })
+  // Issue #123: "Üst Bağlar" / "Alt Bağlar" sutunlari — satir genisletmenin
+  // alternatifi. Sayfa bunlari katalogda SUNAR, ancak varsayilan duzende
+  // GIZLIDIR (bkz. defaultColumnLayout altindaki HIDDEN_BY_DEFAULT): kod
+  // listeleri satiri genisletir, isteyen Gorunum'den acar.
+  if (has('linkTargets')) {
+    out.push({ key: 'linksUp', label: t('tbl.th.linksUp') })
+    out.push({ key: 'linksDown', label: t('tbl.th.linksDown') })
+  }
   if (showApproval) {
     out.push({ key: 'approval', label: t('tbl.th.approval') })
     out.push({ key: 'approvalStatus', label: t('tbl.th.approvalStatus') })
@@ -77,9 +85,14 @@ export function columnCatalog({
   return out
 }
 
-/** Katalogdan varsayilan duzen: hepsi gorunur, katalog sirasinda. */
+// Katalogda BULUNAN ama varsayilan duzende KAPALI acilan sutunlar. Bunlar
+// opsiyonel okuma kolayliklaridir (Issue #123); acik gelselerdi her tabloyu
+// yatayda sisirirlerdi.
+const HIDDEN_BY_DEFAULT = new Set(['linksUp', 'linksDown'])
+
+/** Katalogdan varsayilan duzen: (gizli varsayilanlar disinda) hepsi gorunur. */
 export function defaultColumnLayout(catalog) {
-  return catalog.map((c) => ({ key: c.key, visible: true }))
+  return catalog.map((c) => ({ key: c.key, visible: !HIDDEN_BY_DEFAULT.has(c.key) }))
 }
 
 /**
@@ -102,7 +115,7 @@ export function mergeColumnLayout(catalog, saved) {
   }
   for (const c of catalog) {
     if (seen.has(c.key)) continue
-    out.push({ key: c.key, visible: true })
+    out.push({ key: c.key, visible: !HIDDEN_BY_DEFAULT.has(c.key) })
   }
   return out
 }
@@ -221,6 +234,8 @@ export function paginate(rows, pageSize, page = 1) {
  * 'code' sutunu text_id'ye, 'attr:<key>' oznitelik degerine karsilik gelir.
  */
 export function sortOptionsFromCatalog(catalog, t) {
+  // Bag sutunlari (linksUp / linksDown) bir LISTE gosterir; tek bir
+  // karsilastirilabilir degeri olmadigi icin siralama olcutu olamaz.
   const map = { code: 'text_id', title: 'title', type: 'type', field: 'field', status: 'status' }
   const out = []
   for (const c of catalog || []) {
