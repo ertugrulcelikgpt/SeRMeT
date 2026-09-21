@@ -14,6 +14,9 @@
 //        documents      (GET/POST/GET:id/download/DELETE:id)
 //        comments       (GET/POST/DELETE:id)  -> generic entityType+entityId
 //        audit          (GET/POST)
+//        snapshots      (GET/POST/GET:id/PATCH:id/DELETE:id,
+//                        :id/restore-preview, :id/restore)  -> #8, #128
+//        snapshots-diff (GET ?from=&to=)  -> baseline farki (#128)
 //        recompute      (POST)  -> tum durumlari yeniden hesaplar (cascade)
 // ============================================================================
 import express from 'express';
@@ -62,6 +65,14 @@ import {
   ensureMaterialized as ensureNavMaterialized,
 } from './nav.js';
 import { setProjectCodePrefix } from './textIdPrefix.js';
+import {
+  createSnapshot as createSnapshotRow,
+  buildRestorePlan,
+  restoreSnapshot,
+  diffSnapshots,
+  assertDeletable,
+  validateBaselineUpdate,
+} from './baselines.js';
 import { ensurePartNumbers, setPartNo, setPartNoBlock, checkPartNumbers } from './partNumbers.js';
 import { parsePartNoFormat, configOf as partNoConfigOf, allocatePartNo, PART_NO_AUDIT_FIELD } from './partNo.js';
 import { labelOf } from './label.js';
@@ -2581,97 +2592,125 @@ app.post(
   requirePM,
   wrap(async (req, res) => {
     const pid = req.params.pid;
-    const { name } = req.body || {};
-    if (!name || !name.trim()) throw bad('Snapshot adı zorunlu.');
-
-    // Mevcut tüm varlıkları topla. attributeDefs (modular öznitelik ŞEMASI —
-    // etiket/tip/sıra) ve nav düzeni (menü grupları/sayfaları) de dahil:
-    // ikisi de projeyle birlikte ZAMANLA değişebilir, snapshot'ın kendi
-    // başına (o anki şema/düzenle) yorumlanabilir kalması için an be an
-    // yakalanır — yalnızca CANLI şemaya bakılırsa eski snapshot'lar daha
-    // sonra silinen/yeniden adlandırılan öznitelikleri veya taşınan
-    // sayfaları doğru gösteremezdi.
-    const [requirements, testCases, glossary, links, attributeDefs, navLayout] = await Promise.all([
-      prisma.requirement.findMany({ where: { projectId: pid } }),
-      prisma.testCase.findMany({ where: { projectId: pid } }),
-      prisma.glossaryTerm.findMany({ where: { projectId: pid } }),
-      prisma.traceabilityLink.findMany({ where: { projectId: pid } }),
-      prisma.attributeDefinition.findMany({
-        where: { projectId: pid },
-        orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
-      }),
-      getNavLayout(prisma, pid),
-    ]);
-
-    // Link'ler için text_id'leri önceden çöz (fromId/toId -> text_id) - zaten çekilen verilerden
-    const reqMap = Object.fromEntries(requirements.map((r) => [r.id, r.text_id]));
-    const tcMap = Object.fromEntries(testCases.map((t) => [t.id, t.text_id]));
-    const gloMap = Object.fromEntries(glossary.map((g) => [g.id, g.text_id]));
-
-    // Snapshot + items tek transaction içinde.
-    const snapshot = await prisma.$transaction(async (tx) => {
-      const snap = await tx.projectSnapshot.create({
-        data: { projectId: pid, name: name.trim(), createdBy: req.auth?.userId || 'pm' },
-      });
-
-      const items = [];
-      for (const r of requirements) {
-        items.push({ snapshotId: snap.id, entityType: 'requirement', entityId: r.id, data: flatten(r) });
-      }
-      for (const t of testCases) {
-        items.push({ snapshotId: snap.id, entityType: 'testcase', entityId: t.id, data: flatten(t) });
-      }
-      for (const g of glossary) {
-        items.push({ snapshotId: snap.id, entityType: 'glossary', entityId: g.id, data: g });
-      }
-      for (const l of links) {
-        // Link verisinde fromTextId ve toTextId ekle (snapshot zamanındaki text_id'ler)
-        // Sadece gerekli alanları al (Prisma relation alanlarını exclude et)
-        const fromTextId = reqMap[l.fromId] || tcMap[l.fromId] || gloMap[l.fromId] || l.fromId;
-        const toTextId = reqMap[l.toId] || tcMap[l.toId] || gloMap[l.toId] || l.toId;
-        const linkData = {
-          id: l.id,
-          projectId: l.projectId,
-          fromId: l.fromId,
-          toId: l.toId,
-          type: l.type,
-          createdAt: l.createdAt,
-          createdBy: l.createdBy,
-          fromTextId,
-          toTextId,
-        };
-        items.push({ snapshotId: snap.id, entityType: 'link', entityId: l.id, data: linkData });
-      }
-      // Modular öznitelik ŞEMASI: her tanım kendi satırı — görüntüleyici,
-      // o anki gereksinim/test verisindeki 'attributes' torbasını (zaten
-      // flatten() ile spread edilmiş) bu tanımlarla eşleştirerek dinamik
-      // sütun üretir (bkz. frontend Snapshots.jsx).
-      for (const d of attributeDefs) {
-        items.push({ snapshotId: snap.id, entityType: 'attributeDef', entityId: d.id, data: d });
-      }
-      // Menü düzeni: TEK satır, tüm grup/sayfa ağacını tasır (gruplar
-      // arasinda FK gerektirmez, ic ice items[] zaten hiyerarsiyi tasir).
-      // entityId=pid: bu satir bir varlik degil, proje-genelinde TEK bir
-      // yapilandirma anlik goruntusudur.
-      items.push({ snapshotId: snap.id, entityType: 'navLayout', entityId: pid, data: navLayout });
-
-      if (items.length > 0) {
-        await tx.snapshotItem.createMany({ data: items });
-      }
-
-      return snap;
-    });
+    const b = req.body || {};
+    // Issue #128: ad yaninda SURUM ETIKETI (v1.0/SRR/PDR/CDR), aciklama ve
+    // "resmi baseline" isareti alinir. Baseline gerekce ZORUNLU (baselines.js).
+    const snapshot = await createSnapshotRow(
+      prisma,
+      pid,
+      {
+        name: b.name,
+        label: b.label,
+        description: b.description,
+        isBaseline: b.isBaseline,
+        reason: b.reason,
+      },
+      actorOf(req),
+      flatten,
+    );
 
     await audit(pid, {
-      action: 'SNAPSHOT_CREATE',
+      action: snapshot.isBaseline ? 'BASELINE_CREATE' : 'SNAPSHOT_CREATE',
       entityType: 'snapshot',
       entityId: snapshot.id,
-      textId: snapshot.name,
-      actor: req.auth?.userId || 'pm',
-      message: `Snapshot alındı: "${snapshot.name}".`,
+      textId: snapshot.label ? `${snapshot.name} (${snapshot.label})` : snapshot.name,
+      actor: actorOf(req),
+      reason: snapshot.reason,
+      message: snapshot.isBaseline
+        ? `Baseline olusturuldu: "${snapshot.name}"${snapshot.label ? ` [${snapshot.label}]` : ''}.`
+        : `Snapshot alindi: "${snapshot.name}".`,
     });
 
     res.status(201).json(snapshot);
+  }),
+);
+
+// Baseline ust verisi: ad / etiket / aciklama / "resmi baseline" isareti.
+// ICERIK (items) ASLA degismez — snapshot bir fotograftir, yalnizca uzerindeki
+// etiket duzenlenebilir.
+app.patch(
+  '/api/projects/:pid/snapshots/:snapshotId',
+  requirePM,
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const before = await prisma.projectSnapshot.findUnique({ where: { id: req.params.snapshotId } });
+    if (!before || before.projectId !== pid) throw bad('Snapshot bulunamadi.', 404);
+    const data = validateBaselineUpdate(before, req.body || {});
+    const snapshot = await prisma.projectSnapshot.update({ where: { id: before.id }, data });
+
+    const becameBaseline = data.isBaseline === true && !before.isBaseline;
+    const lostBaseline = data.isBaseline === false && before.isBaseline;
+    await audit(pid, {
+      action: becameBaseline || lostBaseline ? 'BASELINE_UPDATE' : 'SNAPSHOT_UPDATE',
+      entityType: 'snapshot',
+      entityId: snapshot.id,
+      textId: snapshot.label ? `${snapshot.name} (${snapshot.label})` : snapshot.name,
+      actor: actorOf(req),
+      reason: data.reason ?? snapshot.reason,
+      message: becameBaseline
+        ? `Baseline olarak isaretlendi: "${snapshot.name}"${snapshot.label ? ` [${snapshot.label}]` : ''}.`
+        : lostBaseline
+          ? `Baseline isareti kaldirildi: "${snapshot.name}".`
+          : `Snapshot ust verisi guncellendi: "${snapshot.name}".`,
+    });
+    res.json(snapshot);
+  }),
+);
+
+// Geri yukleme ONIZLEMESI — hicbir sey yazmaz. Kullanici kac kaydin
+// eklenecegini/guncellenecegini/silinecegini gormeden onay veremez.
+app.get(
+  '/api/projects/:pid/snapshots/:snapshotId/restore-preview',
+  requirePM,
+  wrap(async (req, res) => {
+    res.json(await buildRestorePlan(prisma, req.params.pid, req.params.snapshotId));
+  }),
+);
+
+// Geri yukleme. Gerekce ZORUNLU; oncesinde otomatik guvenlik kopyasi alinir;
+// uygulama TEK transaction icinde yurur (yarida kalirsa hicbir sey yazilmaz).
+app.post(
+  '/api/projects/:pid/snapshots/:snapshotId/restore',
+  requirePM,
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const reason = requireReason(req);
+    const snapshot = await prisma.projectSnapshot.findUnique({ where: { id: req.params.snapshotId } });
+    if (!snapshot || snapshot.projectId !== pid) throw bad('Snapshot bulunamadi.', 404);
+
+    const result = await restoreSnapshot(prisma, pid, snapshot.id, {
+      reason,
+      actor: actorOf(req),
+      flatten,
+    });
+
+    await audit(pid, {
+      action: 'SNAPSHOT_RESTORE',
+      entityType: 'snapshot',
+      entityId: snapshot.id,
+      textId: snapshot.label ? `${snapshot.name} (${snapshot.label})` : snapshot.name,
+      actor: actorOf(req),
+      reason,
+      message:
+        `"${snapshot.name}" anina geri donuldu ` +
+        `(+${result.plan.totals.added} / ~${result.plan.totals.updated} / -${result.plan.totals.deleted}). ` +
+        `Onay durumu ve kilitler de o anki haline dondu. ` +
+        `Guvenlik kopyasi: "${result.safetySnapshotName}".`,
+    });
+
+    res.json(result);
+  }),
+);
+
+// Fark raporu: iki snapshot ya da snapshot <-> canli durum.
+// ?from=<snapshotId|live>&to=<snapshotId|live>
+app.get(
+  '/api/projects/:pid/snapshots-diff',
+  wrap(async (req, res) => {
+    const from = String(req.query.from || '').trim();
+    const to = String(req.query.to || 'live').trim();
+    if (!from) throw bad('from parametresi zorunlu (snapshot id ya da "live").');
+    res.json(await diffSnapshots(prisma, req.params.pid, from, to, flatten));
   }),
 );
 
@@ -2702,6 +2741,9 @@ app.delete(
     const snapshot = await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } });
     if (!snapshot || snapshot.projectId !== pid) throw bad('Snapshot bulunamadi.', 404);
     const reason = requireReason(req);
+    // Issue #128: baseline DONDURULMUSTUR. Yalnizca acikca `force` isaretiyle
+    // (ozel izin) silinebilir; bu da audit'e ayrica yazilir.
+    assertDeletable(snapshot, { force: Boolean(req.body?.force) });
 
     await prisma.snapshotItem.deleteMany({ where: { snapshotId } });
     await prisma.projectSnapshot.delete({ where: { id: snapshotId } });
@@ -2713,7 +2755,9 @@ app.delete(
       textId: snapshot.name,
       actor: actorOf(req),
       reason,
-      message: `Snapshot silindi: "${snapshot.name}".`,
+      message: snapshot.isBaseline
+        ? `BASELINE silindi (ozel izin): "${snapshot.name}"${snapshot.label ? ` [${snapshot.label}]` : ''}.`
+        : `Snapshot silindi: "${snapshot.name}".`,
     });
 
     res.json({ ok: true });

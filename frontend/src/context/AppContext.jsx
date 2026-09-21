@@ -368,16 +368,33 @@ export function AppProvider({ children }) {
     },
 
     // Snapshots (Issue #8) ----------------------------------------------------
-    async createSnapshot(name) {
+    // payload: string (eski kullanim) ya da
+    // { name, label, description, isBaseline, reason } (Issue #128).
+    async createSnapshot(payload) {
       if (!pid) throw new Error('Aktif proje yok')
-      const s = await data.createSnapshot(pid, name)
+      const s = await data.createSnapshot(pid, payload)
       await refresh()
       return s
     },
-    async deleteSnapshot(snapshotId, reason) {
+    async deleteSnapshot(snapshotId, reason, force = false) {
       if (!pid) throw new Error('Aktif proje yok')
-      await data.deleteSnapshot(pid, snapshotId, reason)
+      await data.deleteSnapshot(pid, snapshotId, reason, force)
       await refresh()
+    },
+    // Issue #128: yalnizca UST VERI (etiket/aciklama/baseline isareti).
+    async updateSnapshot(snapshotId, payload) {
+      if (!pid) throw new Error('Aktif proje yok')
+      const s = await data.updateSnapshot(pid, snapshotId, payload)
+      await refresh()
+      return s
+    },
+    // Issue #128: geri yukleme TUM proje verisini degistirir — bu yuzden
+    // sonrasinda tam refresh sart (gereksinim/test/bag/sozluk/menu hepsi).
+    async restoreSnapshot(snapshotId, reason) {
+      if (!pid) throw new Error('Aktif proje yok')
+      const result = await data.restoreSnapshot(pid, snapshotId, reason)
+      await refresh()
+      return result
     },
 
     refresh,

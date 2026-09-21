@@ -205,13 +205,35 @@ export const importReqIF = (pid, file, importType) => {
 // tarayiciyi kilitlemeden agaci server-side kurar.
 export const getImpact = (pid, reqId) => api.get(`/projects/${pid}/impact`, { reqId })
 
-// --- Snapshots (Issue #8) ----------------------------------------------------
+// --- Snapshots / Baseline (Issue #8, #128) -----------------------------------
 // Sürüm / baseline altyapısı: snapshot olusturma, listeleme, detay, silme.
 export const listSnapshots = (pid) => api.get(`/projects/${pid}/snapshots`)
-export const createSnapshot = (pid, name) => api.post(`/projects/${pid}/snapshots`, { name })
+//  payload: { name, label, description, isBaseline, reason }
+//  Baseline icin gerekce ZORUNLUDUR (backend 400 doner).
+export const createSnapshot = (pid, payload) =>
+  api.post(`/projects/${pid}/snapshots`, typeof payload === 'string' ? { name: payload } : payload)
 export const getSnapshot = (pid, snapshotId) => api.get(`/projects/${pid}/snapshots/${snapshotId}`)
-export const deleteSnapshot = (pid, snapshotId, reason) =>
-  api.del(`/projects/${pid}/snapshots/${snapshotId}`, { reason })
+//  Yalnizca UST VERI (ad/etiket/aciklama/baseline isareti) degisir; snapshot
+//  ICERIGI asla degismez.
+export const updateSnapshot = (pid, snapshotId, payload) =>
+  api.patch(`/projects/${pid}/snapshots/${snapshotId}`, payload)
+//  Baseline dondurulmustur: silmek icin `force: true` (ozel izin) gerekir.
+export const deleteSnapshot = (pid, snapshotId, reason, force = false) =>
+  api.del(`/projects/${pid}/snapshots/${snapshotId}`, { reason, force })
+
+// --- Baseline geri yukleme (restore, Issue #128) -----------------------------
+//  Onizleme HICBIR SEY yazmaz: kac kayit eklenecek/guncellenecek/silinecek.
+export const getRestorePreview = (pid, snapshotId) =>
+  api.get(`/projects/${pid}/snapshots/${snapshotId}/restore-preview`)
+//  Uygulama: gerekce zorunlu, oncesinde otomatik guvenlik kopyasi alinir,
+//  tek transaction icinde yurur.
+export const restoreSnapshot = (pid, snapshotId, reason) =>
+  api.post(`/projects/${pid}/snapshots/${snapshotId}/restore`, { reason })
+
+// --- Fark raporu (diff, Issue #128) ------------------------------------------
+//  from/to: snapshot id ya da 'live' (canli durum).
+export const getSnapshotDiff = (pid, from, to) =>
+  api.get(`/projects/${pid}/snapshots-diff`, { from, to })
 
 // --- Dokuman Kutuphanesi (PDF / Excel) --------------------------------------
 //  Belgeler backend'de (PostgreSQL) saklanir; bir kez yuklenen belge silinene

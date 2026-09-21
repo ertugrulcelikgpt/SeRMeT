@@ -192,6 +192,26 @@ model ProjectSnapshot {
   id        String   @id @default(uuid())
   projectId String
   name      String
+  // --- Baseline etiketleme (Issue #128) -----------------------------------
+  //  label       : surum etiketi (v1.0, SRR, PDR, CDR...). Serbest metin —
+  //                proje/sirket sozlugu degisebilir, sabit liste dayatilmaz.
+  //  description : aciklama/gerekce ("neden bu noktada donduruldu").
+  //  isBaseline  : RESMI baseline mi? Isaretliyse kayit DONDURULUR:
+  //                duzenlenemez, normal yoldan silinemez (bkz. baselines.js).
+  //  kind        : 'manual'   — kullanicinin aldigi siradan snapshot
+  //                'baseline' — resmi baseline (isBaseline=true ile birlikte)
+  //                'safety'   — restore ONCESI otomatik alinan guvenlik
+  //                             kopyasi; islemin geri alinabilmesini saglar.
+  //  reason      : baseline/guvenlik kopyasi icin zorunlu gerekce metni.
+  //  restoredFromId: 'safety' kayitlarinda, hangi snapshot'a donulurken
+  //                alindigini gosterir (izlenebilirlik). FK DEGILDIR: kaynak
+  //                snapshot sonradan silinse de bu iz kalmalidir.
+  label          String?
+  description    String   @default("")
+  isBaseline     Boolean  @default(false)
+  kind           String   @default("manual")
+  reason         String?
+  restoredFromId String?
   createdBy String?
   createdAt DateTime @default(now())
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -200,6 +220,7 @@ model ProjectSnapshot {
   @@unique([projectId, name])
   @@index([projectId])
   @@index([projectId, createdAt])
+  @@index([projectId, isBaseline])
 }
 
 model SnapshotItem {

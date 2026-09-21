@@ -185,8 +185,19 @@ describe('dataService CRUD helperlari', () => {
 
   it('deleteSnapshot DELETE /projects/:pid/snapshots/:sid (reason govdede)', async () => {
     await deleteSnapshot('p-1', 's-1', 'yanlis girildi')
+    // Issue #128: baseline dondurulmustur; govdede ayrica `force` (ozel izin)
+    // tasinir ve varsayilani false'tur.
     expect(api.del).toHaveBeenCalledWith('/projects/p-1/snapshots/s-1', {
       reason: 'yanlis girildi',
+      force: false,
+    })
+  })
+
+  it('deleteSnapshot force=true ile baseline silme izni tasir', async () => {
+    await deleteSnapshot('p-1', 's-1', 'yanlis alindi', true)
+    expect(api.del).toHaveBeenCalledWith('/projects/p-1/snapshots/s-1', {
+      reason: 'yanlis alindi',
+      force: true,
     })
   })
 })
