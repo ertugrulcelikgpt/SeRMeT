@@ -43,6 +43,8 @@ FastAPI Bridge (ai-bridge:8008) ──► LM Studio + Gemma (:1234)
 │   │   ├── constants.js       # Taxonomy: REQ_TYPE, TEST_TYPE, LINK_TYPE, SATISFIES_PARENT_OF, VERIFIES_TARGET_TYPES
 │   │   ├── logic.js           # Hierarchy validation, coverage calc
 │   │   ├── impact.js          # Recursive CTE impact analysis (Issue #46)
+│   │   ├── components.js      # Bilesen (parca) agaci CRUD + tutarlilik kontrolu (#135)
+│   │   ├── partNo.js          # Parca No bicimi + blok bazli numara uretimi (#135)
 │   │   ├── traceability.js    # Traceability export/import (Excel + ReqIF/.reqifz/.xml)
 │   │   ├── reqifParser.js     # ReqIF XML -> model (standard + DOORS-style attribute heuristics)
 │   │   ├── zipUtil.js         # Dependency-free ZIP reader (.reqifz support; no npm install in this sandbox)
@@ -174,6 +176,8 @@ node scripts/seed-coffee-project.mjs  # Load optional Espresso demo (backend mus
 | `backend/src/auth.js` | JWT sign/verify, bcrypt, middleware (`requireAuth`, `requirePM`, `projectAccessGuard`) |
 | `backend/src/cascade.js` | Bulk status (`recomputeStatusesBulk`) & approval (`recomputeApprovalsBulk`) recomputation |
 | `backend/src/constants.js` | Single source of truth for taxonomy, hierarchy rules, link rules |
+| `backend/src/partNo.js` | Part No format parsing + branch-block allocation; lifetime-unique (audit blacklist) |
+| `backend/src/components.js` | `Component` CRUD, Part No conflicts (409), tree consistency report |
 | `backend/prisma/schema.prisma` | Full DB schema (User, SystemRole, Project, Requirement, TestCase, TraceabilityLink, GlossaryTerm, Approval, ProjectSnapshot, AuditLog, ProjectField, SavedView) — `Role`/`Personnel` removed in #97 |
 | `backend/src/seed.js` | Default Drone/IHA demo project (auto-runs on empty DB via Docker `migrate` service) |
 | `frontend/src/main.jsx` | Provider nesting order, font imports, `?reset` URL param clears localStorage |
@@ -229,6 +233,8 @@ node scripts/seed-coffee-project.mjs  # Load optional Espresso demo (backend mus
 | Add frontend page | `frontend/src/pages/`, register in `App.jsx` |
 | Change saved views (filters + columns + row layout) | `backend/src/views.js` + `frontend/src/utils/viewConfig.js`, `hooks/useEntityViews.js`, `components/common/ViewBar.jsx` |
 | Add new entity type | Prisma schema → backend routes → `dataService.js` → `AppContext.jsx` actions → UI |
+| Change Part No format / branch blocks | `backend/src/partNo.js` + `Project.partNoFormat` / `partNoBlockStep` |
+| Add a component tree consistency rule | `backend/src/components.js` `checkComponentTree` + `comptree.code.*` i18n |
 | Fix IDOR issue | `backend/src/auth.js` `projectAccessGuard` |
 | Update taxonomy | `backend/src/constants.js` + `frontend/src/utils/constants.js` (keep in sync) |
 | Debug AI bridge | `ai-bridge/api_server.py` `/health`, check LM Studio `:1234/v1` |
@@ -237,6 +243,6 @@ node scripts/seed-coffee-project.mjs  # Load optional Espresso demo (backend mus
 **Key invariants to preserve:**
 1. Project isolation — every query filters by `projectId`
 2. Backend owns cascade/approval recomputation — frontend only refreshes
-3. `text_id` never reused (audit log blacklist)
+3. `text_id` never reused (audit log blacklist) — same rule for `Component.partNo` (`partNo.js` `usedPartNos`)
 4. JWT_SECRET mandatory at startup
 5. Non-PM users can only access their assigned project (`User.projectId`)

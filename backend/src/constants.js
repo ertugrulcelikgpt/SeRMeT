@@ -19,6 +19,22 @@ export const TEST_TYPE = {
 };
 export const TEST_TYPES = Object.values(TEST_TYPE);
 
+// --- Bilesen / Parca tipleri (Issue #135) -------------------------------------
+//  PBS agacinin dugumleri gereksinim DEGIL, URUN'dur: montaj, alt montaj,
+//  donanim, gomulu yazilim. Tip listesi SABITTIR (frontend
+//  utils/constants.js COMPONENT_TYPES ile birebir ayni olmalidir).
+export const COMPONENT_TYPE = {
+  ASSEMBLY: 'assembly',
+  SUBASSEMBLY: 'subassembly',
+  HARDWARE: 'hardware',
+  SOFTWARE: 'software',
+};
+export const COMPONENT_TYPES = Object.values(COMPONENT_TYPE);
+
+// Bilesen agacinda izin verilen azami derinlik. Asilirsa tutarlilik raporu
+// MAX_DEPTH ihlali bildirir (tree.js MAX_DEPTH ile ayni koruma mantigi).
+export const MAX_COMPONENT_DEPTH = 20;
+
 // --- Roller -------------------------------------------------------------------
 //  PM rolü SERBEST METIN (User.role) icinde tutulur; isPM tespiti tum
 //  katmanlarda bu sabit uzerinden yapilir (login/refresh isPM, cascade,

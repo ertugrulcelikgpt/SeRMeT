@@ -6,6 +6,8 @@
 //    Proje alti (hepsi /api/projects/:pid/...):
 //        fields         (GET/POST/DELETE)
 //        requirements   (GET/POST/GET:id/PUT:id/DELETE:id)
+//        components     (GET/POST/GET:id/PATCH:id/DELETE:id, /check)  -> #135
+//        part-no-config (GET/PUT)  -> Parca No bicimi (PM)
 //        testcases      (GET/POST/GET:id/PUT:id/DELETE:id)
 //        glossary       (GET/POST/PUT:id/DELETE:id)
 //        links          (GET/POST/DELETE:id)
@@ -60,6 +62,15 @@ import {
   ensureMaterialized as ensureNavMaterialized,
 } from './nav.js';
 import { setProjectCodePrefix } from './textIdPrefix.js';
+import {
+  listComponents,
+  listComponentRequirements,
+  createComponent,
+  updateComponent,
+  deleteComponent,
+  checkComponentTree,
+} from './components.js';
+import { parsePartNoFormat, configOf as partNoConfigOf } from './partNo.js';
 import { labelOf } from './label.js';
 import {
   listDefs,
@@ -1333,6 +1344,107 @@ app.delete(
 );
 
 // ===========================================================================
+//  BILESENLER / PARCALAR (Issue #135) — urun agacinin KENDI kimligi.
+//  Parca No proje icinde tekildir; otomatik atanir ama elle degistirilebilir.
+//  Cakisma 409 ile reddedilir ve HICBIR SEY yazilmaz. Sabit path'ler
+//  ("/check") parametreli "/:id" route'undan ONCE tanimlanmalidir.
+// ===========================================================================
+app.get(
+  '/api/projects/:pid/components',
+  wrap(async (req, res) => {
+    res.json({ items: await listComponents(prisma, req.params.pid) });
+  }),
+);
+
+app.get(
+  '/api/projects/:pid/components/check',
+  wrap(async (req, res) => {
+    res.json(await checkComponentTree(prisma, req.params.pid));
+  }),
+);
+
+app.post(
+  '/api/projects/:pid/components',
+  wrap(async (req, res) => {
+    const row = await createComponent(prisma, req.params.pid, req.body || {}, actorOf(req));
+    res.status(201).json(row);
+  }),
+);
+
+app.get(
+  '/api/projects/:pid/components/:id/requirements',
+  wrap(async (req, res) => {
+    const items = await listComponentRequirements(prisma, req.params.pid, req.params.id);
+    res.json({ items: flattenAll(items) });
+  }),
+);
+
+app.get(
+  '/api/projects/:pid/components/:id',
+  wrap(async (req, res) => {
+    const row = await prisma.component.findUnique({ where: { id: req.params.id } });
+    if (!row || row.projectId !== req.params.pid) throw bad('Bilesen bulunamadi.', 404);
+    res.json(row);
+  }),
+);
+
+app.patch(
+  '/api/projects/:pid/components/:id',
+  wrap(async (req, res) => {
+    const row = await updateComponent(prisma, req.params.pid, req.params.id, req.body || {}, actorOf(req));
+    res.json(row);
+  }),
+);
+
+app.delete(
+  '/api/projects/:pid/components/:id',
+  wrap(async (req, res) => {
+    const reason = requireReason(req);
+    res.json(await deleteComponent(prisma, req.params.pid, req.params.id, reason, actorOf(req)));
+  }),
+);
+
+// Parca No bicimi + kok blok adimi — PROJE bazli yapilandirma. Yalnizca PM.
+app.get(
+  '/api/projects/:pid/part-no-config',
+  wrap(async (req, res) => {
+    const project = await prisma.project.findUnique({ where: { id: req.params.pid } });
+    if (!project) throw bad('Proje bulunamadi.', 404);
+    res.json(partNoConfigOf(project));
+  }),
+);
+
+app.put(
+  '/api/projects/:pid/part-no-config',
+  requirePM,
+  wrap(async (req, res) => {
+    const b = req.body || {};
+    const data = {};
+    if (b.format != null) {
+      parsePartNoFormat(b.format); // gecersiz bicim => 400, hicbir sey yazilmaz
+      data.partNoFormat = String(b.format).trim();
+    }
+    if (b.blockStep != null) {
+      const step = Number(b.blockStep);
+      if (!Number.isInteger(step) || step <= 0) throw bad('Blok adimi pozitif bir tam sayi olmalidir.');
+      data.partNoBlockStep = step;
+    }
+    if (Object.keys(data).length === 0) throw bad('Guncellenecek ayar yok.');
+    const project = await prisma.project.update({ where: { id: req.params.pid }, data });
+    await audit(req.params.pid, {
+      action: 'UPDATE',
+      entityType: 'project',
+      entityId: project.id,
+      field: 'partNoConfig',
+      newValue: `${project.partNoFormat} / ${project.partNoBlockStep}`,
+      message: `Parca No yapilandirmasi guncellendi: ${project.partNoFormat} (blok adimi ${project.partNoBlockStep}).`,
+      actor: actorOf(req),
+    });
+    res.json(partNoConfigOf(project));
+  }),
+);
+
+// ===========================================================================
 //  SOL MENU DUZENI (nav) — proje bazli gruplar + sayfa yerlesimi (Issue #9/6)
 //  Okuma herkese acik; degisiklikler yalnizca PM'e (requirePM). Kullanici
 //  YALNIZCA gruplama yapar — sayfa anahtarlari sabittir (navDefaults.js).
@@ -1658,6 +1770,18 @@ app.get(
   }),
 );
 
+// Issue #135: gereksinim <-> bilesen bagi. Bilesen AYRI bir tablodur; bag
+// kurulurken hedefin AYNI projede oldugu dogrulanir (IDOR + veri butunlugu).
+// undefined => alan gonderilmedi, dokunma. null/'' => bagi kaldir.
+async function resolveComponentId(pid, raw) {
+  if (raw === undefined) return undefined;
+  if (raw === null || String(raw).trim() === '') return null;
+  const id = String(raw).trim();
+  const comp = await prisma.component.findUnique({ where: { id } });
+  if (!comp || comp.projectId !== pid) throw bad('Bilesen bulunamadi.', 404);
+  return id;
+}
+
 app.post(
   '/api/projects/:pid/requirements',
   wrap(async (req, res) => {
@@ -1700,6 +1824,7 @@ app.post(
         relatedDocuments: normalizeDocuments(b.relatedDocuments),
         parentId,
         clearanceLevel,
+        componentId: (await resolveComponentId(pid, b.componentId)) ?? null,
         ...source,
       },
     });
@@ -1775,6 +1900,10 @@ app.put(
     }
     if (data.description != null) data.description = cleanRichText(data.description);
     if (b.relatedDocuments != null) data.relatedDocuments = normalizeDocuments(b.relatedDocuments);
+    // Bilesen bagi (#135/#129): icerik degisikligi SAYILMAZ — gereksinimin
+    // metni degismez, yalnizca hangi parcaya ait oldugu belirlenir.
+    const nextComponentId = await resolveComponentId(pid, b.componentId);
+    if (nextComponentId !== undefined) data.componentId = nextComponentId;
     const attrInput = extractAttributeInput(b);
     if (Object.keys(attrInput).length > 0) {
       const defs = await listDefs(prisma, pid, 'requirement');

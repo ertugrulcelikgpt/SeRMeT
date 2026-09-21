@@ -49,6 +49,10 @@ const TOP = [
   // Issue #129: Bilesen bazli gorunum — ayni urun kirilimine SEVIYE yerine
   // BILESEN uzerinden bakar (secilen bilesenin tum gereksinimleri tek liste).
   { key: 'components', labelKey: 'nav.components', icon: IconComponent },
+  // Issue #135: bilesenlerin KENDI kimligi (ad + Parca No + tip + revizyon).
+  // 'components' (#129) gereksinimleri bilesene gore GRUPLAR; bu sayfa
+  // parcalarin kendisini yonetir ve Parca No tutarliligini denetler.
+  { key: 'component-tree', labelKey: 'nav.componentTree', icon: IconComponent },
 ]
 const BOTTOM = [
   { key: 'coverage', labelKey: 'nav.coverage', icon: IconShield },

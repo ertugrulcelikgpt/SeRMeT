@@ -69,6 +69,27 @@ export const splitRequirement = (pid, id, newTitles) =>
 export const mergeRequirements = (pid, ids) =>
   api.post(`/projects/${pid}/requirements/merge`, { ids })
 
+// --- Bilesenler / Parcalar (Issue #135) ------------------------------------
+//  Urun agacinin dugumleri gereksinimden AYRI bir tabloda yasar: ad, Parca No,
+//  tip, revizyon, ust parca. Parca No proje icinde tekildir; yeni parcada
+//  otomatik atanir, elle degistirilebilir (cakisma => 409, kaydedilmez).
+export const listComponents = (pid) => api.get(`/projects/${pid}/components`)
+export const createComponent = (pid, data) => api.post(`/projects/${pid}/components`, data)
+export const updateComponent = (pid, id, data) =>
+  api.patch(`/projects/${pid}/components/${id}`, data)
+export const deleteComponent = (pid, id, reason) =>
+  api.del(`/projects/${pid}/components/${id}`, { reason })
+//  Bir bilesenin gereksinimleri (#129: "Su Pompasi -> su gereksinimler").
+export const listComponentRequirements = (pid, id) =>
+  api.get(`/projects/${pid}/components/${id}/requirements`)
+//  Agac tutarlilik kontrolu: cakisan/bicimsiz/blok disi numaralar, ayni adli
+//  kardesler, ustsuz-dongu-derinlik ihlalleri, gereksinimsiz bilesenler.
+export const checkComponentTree = (pid) => api.get(`/projects/${pid}/components/check`)
+//  Parca No bicimi + kok blok adimi (proje bazli; yazma yalnizca PM).
+export const getPartNoConfig = (pid) => api.get(`/projects/${pid}/part-no-config`)
+export const setPartNoConfig = (pid, format, blockStep) =>
+  api.put(`/projects/${pid}/part-no-config`, { format, blockStep })
+
 // --- Sol menu duzeni (gruplar + sayfa yerlesimi, Issue #9 / Adim 6) --------
 //  Okuma herkese acik; degisiklikler yalnizca PM'e (backend requirePM).
 //  Sayfa anahtarlari SABIT — kullanici yalnizca gruplama yapar.
