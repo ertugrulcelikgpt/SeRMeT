@@ -1,16 +1,25 @@
 // ============================================================================
-//  MindMap.jsx  —  "Zihin Haritasi": izlenebilirlik zincirinin agac gorunumu.
+//  RequirementMap.jsx  —  "Gereksinim Haritasi": izlenebilirlik zincirinin
+//  zihin haritasi tarzi agac gorunumu (Issue #122).
 //
 //  Matris (Traceability) ve liste (LinkManager) gorunumleri bir gereksinimin
 //  KOMSULARINI gosterir; burada amac ZINCIRIN TAMAMINI (User -> System ->
 //  Sub-system -> Test) tek ekranda kavramaktir.
 //
+//  * Dallanma YUKARIDAN ASAGIYA'dir: kok en ustte durur, alt seviyeler
+//    asagiya dogru acilir (referans Obsidian "Mind Map" eklentisidir, ancak
+//    soldan saga degil yukaridan asagiya). Cizim motoru (utils/mindMap.js +
+//    MindMapCanvas) iki yonu de destekler; bu sayfa `vertical` secer.
 //  * Veri kaynagi AppContext'tir: proje verisi tazelendiginde (refresh)
 //    harita da kendiliginden guncellenir — ayri bir "yenile" adimi yoktur.
 //  * Acik/kapali dal durumu sayfa icinde korunur; YOL anahtariyla tutulur
 //    (ayni kayit skip-level baglarla birden fazla dalda gorunebilir).
+//  * Arama bir kodu/basligi bulur, yolundaki kapali dallari acar ve dugumu
+//    ekranin ortasina alip vurgular.
 //  * "Bağlantı Ağacı" (PBS) sayfasi bundan BAGIMSIZDIR ve degismemistir:
 //    orasi tek-ebeveynli urun agaci, burasi izlenebilirlik bag grafigidir.
+//  * Bilesen bazli gereksinim listesi (Issue #129) AYRI bir sayfadir; ikisi
+//    birlikte var olur. Ortak cizim motorunu paylasirlar.
 // ============================================================================
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useApp } from '../context/AppContext.jsx'
@@ -26,9 +35,11 @@ import {
   buildMindMapGraph,
   buildMindMapSvg,
   collectExpandableKeys,
+  expandedWithPath,
+  findMindMapMatches,
   layoutMindMap,
 } from '../utils/mindMap.js'
-import { IconDownload, IconSparkle } from '../components/common/Icons.jsx'
+import { IconDownload, IconSearch, IconSparkle } from '../components/common/Icons.jsx'
 
 // Disa aktarim PNG'sinin piksel tavani (yaklasik 16 MP) — devasa haritalarda
 // tarayicinin canvas belleginin tukenmesini onler.
@@ -36,10 +47,10 @@ const PNG_MAX_PIXELS = 16_000_000
 
 function slugify(text) {
   return (
-    String(text || 'mind-map')
+    String(text || 'gereksinim-haritasi')
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
-      .replace(/(^-|-$)/g, '') || 'mind-map'
+      .replace(/(^-|-$)/g, '') || 'gereksinim-haritasi'
   )
 }
 
@@ -54,7 +65,7 @@ function download(blob, filename) {
   URL.revokeObjectURL(url)
 }
 
-export default function MindMap() {
+export default function RequirementMap() {
   const { requirements, testCases, links, theme, refresh } = useApp()
   const { can } = useAuth()
   const { activeProject } = useProject()
@@ -63,6 +74,13 @@ export default function MindMap() {
   const [expanded, setExpanded] = useState(() => new Set())
   const [viewRow, setViewRow] = useState(null) // { row, kind } | null
   const [exportError, setExportError] = useState('')
+  // Arama durumu: sorgu, kacinci eslesmede olundugu ve odaklanilan dugum.
+  // `focus.seq` ayni dugume ard arda odaklanmayi (kullanici haritayi
+  // kaydirdiktan sonra "Bul"a tekrar basmasi) mumkun kilar.
+  const [query, setQuery] = useState('')
+  const [hitIndex, setHitIndex] = useState(0)
+  const [focus, setFocus] = useState(null) // { key, seq, total } | null
+  const [searchMiss, setSearchMiss] = useState(false)
   // Ilk gorulduginde kendiliginden acilan kokler; kullanicinin sonradan
   // kapattigi bir kok TEKRAR acilmasin diye "gorulenler" ayri tutulur.
   const seenRoots = useRef(new Set())
@@ -95,7 +113,11 @@ export default function MindMap() {
     })
   }, [graph])
 
-  const mapLayout = useMemo(() => layoutMindMap(graph, expanded), [graph, expanded])
+  // Issue #122: dallanma YUKARIDAN ASAGIYA.
+  const mapLayout = useMemo(
+    () => layoutMindMap(graph, expanded, { orientation: 'vertical' }),
+    [graph, expanded],
+  )
 
   const toggle = useCallback((key) => {
     setExpanded((prev) => {
@@ -107,7 +129,37 @@ export default function MindMap() {
   }, [])
 
   const expandAll = () => setExpanded(collectExpandableKeys(graph).keys)
-  const collapseAll = () => setExpanded(new Set())
+  const collapseAll = () => {
+    setExpanded(new Set())
+    setFocus(null)
+  }
+
+  // --- Haritada arama -------------------------------------------------------
+  //  Eslesen dugume odaklanilir ve YOLU uzerindeki kapali dallar acilir.
+  //  Birden fazla eslesme varsa "Bul" her basista siradakine gecer.
+  const search = useCallback(
+    (index) => {
+      const hits = findMindMapMatches(graph, query)
+      if (hits.length === 0) {
+        setSearchMiss(true)
+        setFocus(null)
+        return
+      }
+      setSearchMiss(false)
+      const hit = hits[((index % hits.length) + hits.length) % hits.length]
+      setExpanded((prev) => expandedWithPath(prev, hit))
+      setFocus((prev) => ({ key: hit.key, seq: (prev?.seq || 0) + 1, total: hits.length }))
+    },
+    [graph, query],
+  )
+
+  const onSearchSubmit = (e) => {
+    e.preventDefault()
+    // Ayni sorguda tekrar "Bul": siradaki eslesmeye gec.
+    const next = focus ? hitIndex + 1 : 0
+    setHitIndex(next)
+    search(next)
+  }
 
   // --- Kayit detayi ---------------------------------------------------------
   const canOpenNode = useCallback(
@@ -122,12 +174,15 @@ export default function MindMap() {
   //  Ekranda cizilen harita SANALLASTIRILDIGI icin gorsel, canli DOM'dan
   //  degil ayni duzenden uretilen bagimsiz SVG metninden olusturulur.
   const baseName = () =>
-    `zihin-haritasi-${slugify(activeProject?.name)}-${new Date().toISOString().slice(0, 10)}`
+    `gereksinim-haritasi-${slugify(activeProject?.name)}-${new Date().toISOString().slice(0, 10)}`
 
   const exportSvg = () => {
     setExportError('')
     try {
-      const svg = buildMindMapSvg(mapLayout, { theme, title: activeProject?.name || 'Mind Map' })
+      const svg = buildMindMapSvg(mapLayout, {
+        theme,
+        title: activeProject?.name || t('page.requirementMap.title'),
+      })
       download(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }), `${baseName()}.svg`)
     } catch {
       setExportError(t('mindmap.exportError'))
@@ -137,7 +192,10 @@ export default function MindMap() {
   const exportPng = () => {
     setExportError('')
     try {
-      const svg = buildMindMapSvg(mapLayout, { theme, title: activeProject?.name || 'Mind Map' })
+      const svg = buildMindMapSvg(mapLayout, {
+        theme,
+        title: activeProject?.name || t('page.requirementMap.title'),
+      })
       const url = URL.createObjectURL(new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }))
       const img = new Image()
       img.onload = () => {
@@ -202,6 +260,34 @@ export default function MindMap() {
 
       {/* Arac cubugu */}
       <div className="flex flex-wrap items-center gap-2">
+        <form onSubmit={onSearchSubmit} className="flex items-center gap-1.5">
+          <div className="relative">
+            <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400">
+              <IconSearch size={14} />
+            </span>
+            <input
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value)
+                setSearchMiss(false)
+                setFocus(null)
+                setHitIndex(0)
+              }}
+              aria-label={t('mindmap.searchLabel')}
+              placeholder={t('mindmap.searchPlaceholder')}
+              data-testid="mindmap-search"
+              className="input h-8 w-52 pl-8 text-xs"
+            />
+          </div>
+          <button
+            type="submit"
+            data-testid="mindmap-search-submit"
+            className="btn-secondary btn-sm"
+            disabled={!query.trim()}
+          >
+            {focus ? t('mindmap.searchNext') : t('mindmap.searchFind')}
+          </button>
+        </form>
         <button
           type="button"
           onClick={expandAll}
@@ -247,6 +333,22 @@ export default function MindMap() {
         </button>
       </div>
 
+      {searchMiss && (
+        <div
+          data-testid="mindmap-search-miss"
+          className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+        >
+          {t('mindmap.searchMiss')}
+        </div>
+      )}
+      {focus && focus.total > 1 && (
+        <div
+          data-testid="mindmap-search-hits"
+          className="rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+        >
+          {t('mindmap.searchHits', { n: focus.total })}
+        </div>
+      )}
       {exportError && (
         <div className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
           {exportError}
@@ -269,6 +371,8 @@ export default function MindMap() {
         <MindMapCanvas
           mapLayout={mapLayout}
           theme={theme}
+          focusKey={focus?.key || null}
+          focusSeq={focus?.seq || 0}
           onToggle={toggle}
           onOpenNode={openNode}
           canOpenNode={canOpenNode}

@@ -1,8 +1,8 @@
 // ============================================================================
-//  mindMap.test.js — Zihin haritasi cekirdegi (Issue #122).
+//  mindMap.test.js — "Gereksinim Haritasi" cizim cekirdegi (Issue #122).
 //  Kapsam: graf kurulumu (kok secimi, yon, gurultu filtresi), kademeli
-//  yerlesim (kapali dal dolasilmaz), dongu/skip-level korumasi ve SVG
-//  disa aktarimi.
+//  yerlesim (kapali dal dolasilmaz), dongu/skip-level korumasi, haritada
+//  arama (odaklanma + yol acma) ve SVG disa aktarimi.
 // ============================================================================
 import { describe, it, expect } from 'vitest'
 import {
@@ -10,6 +10,9 @@ import {
   buildMindMapSvg,
   collectExpandableKeys,
   defaultExpandedKeys,
+  expandedWithPath,
+  findMindMapMatches,
+  foldForSearch,
   layoutMindMap,
   MIND_MAP_LAYOUT,
   mindMapEdgePath,
@@ -164,7 +167,7 @@ describe('layoutMindMap — dikey (yukarıdan aşağı) yön', () => {
     expect(byId.w1.x).not.toBe(byId.t1.x)
   })
 
-  it('yatay yonde ise derinlik SAGA buyur (Issue #122 davranisi korunur)', () => {
+  it('yatay yonde ise derinlik SAGA buyur (motor iki yonu de destekler)', () => {
     const { h } = opened()
     const byId = Object.fromEntries(h.nodes.map((n) => [n.id, n]))
     expect(h.orientation).toBe('horizontal')
@@ -184,10 +187,40 @@ describe('layoutMindMap — dikey (yukarıdan aşağı) yön', () => {
     const edge = v.edges[0]
     expect(edge.vertical).toBe(true)
     expect(edge.y2).toBeGreaterThan(edge.y1)
-    // Dikey kenar DIRSEK cizer (bezier degil): dikey/yatay parcalar.
-    const d = mindMapEdgePath(edge)
-    expect(d.startsWith('M ')).toBe(true)
-    expect(d).toMatch(/[VH]/)
+  })
+
+  it('dikey dal EGRISEL (bezier) cizilir', () => {
+    const { v } = opened()
+    const d = mindMapEdgePath(v.edges[0])
+    expect(d).toMatch(/^M [\d.-]+ [\d.-]+ C /)
+    // Dirsek (V/H parcali) cizgiye geri donulmedigini de bekler.
+    expect(d).not.toMatch(/[VH]/)
+  })
+
+  it('dalin uclari ac/kapa noktasi ve ok ucu icin iceri alinir', () => {
+    const { v } = opened()
+    const edge = v.edges[0]
+    const [, sy] = /^M ([\d.-]+) ([\d.-]+) /.exec(mindMapEdgePath(edge))
+    // Baslangic, ust dugumun alt kenarinin ALTINDA (nokta r=9'un disinda).
+    expect(Number(sy)).toBeGreaterThan(edge.y1 + 9)
+    // Bitis, cocugun ust kenarinin UZERINDE (ok ucuna yer kalir).
+    const endY = Number(
+      mindMapEdgePath(edge)
+        .trim()
+        .split(/[\s,]+/)
+        .pop(),
+    )
+    expect(endY).toBeLessThan(edge.y2)
+  })
+
+  it('seviyeler arasinda dalin okunacagi kadar bosluk birakilir', () => {
+    const { v } = opened()
+    const byId = Object.fromEntries(v.nodes.map((n) => [n.id, n]))
+    // Iki seviye arasindaki BOS dikey alan (kutular haric) en az bir kutu
+    // yuksekligi kadar olmali; aksi halde dal birkac piksellik bir cizgiye
+    // sikisir (kullanici geri bildirimi: "baglantilar ve oklar net degil").
+    const gap = byId.s1.y - byId.u1.y - MIND_MAP_LAYOUT.nodeHeight
+    expect(gap).toBeGreaterThanOrEqual(MIND_MAP_LAYOUT.nodeHeight)
   })
 
   it('dikey duzende genislik kardes eksenine, yukseklik derinlige baglidir', () => {
@@ -298,5 +331,107 @@ describe('buildMindMapSvg', () => {
     const svg = buildMindMapSvg(layoutMindMap(g, new Set()))
     expect(svg).toContain('A &amp; B &lt;script&gt;')
     expect(svg).not.toContain('<script>')
+  })
+})
+
+describe('foldForSearch — Türkçe i/ı eşleşmesi', () => {
+  it('noktali ve noktasiz "i" bicimlerini tek harfe indirger', () => {
+    expect(foldForSearch('SICAKLIK')).toBe('sicaklik')
+    expect(foldForSearch('Sıcaklık')).toBe('sicaklik')
+    expect(foldForSearch('İZLENEBİLİRLİK')).toBe('izlenebilirlik')
+    expect(foldForSearch('izlenebilirlik')).toBe('izlenebilirlik')
+  })
+
+  it('bos/tanimsiz girdide bos dize doner', () => {
+    expect(foldForSearch(null)).toBe('')
+    expect(foldForSearch(undefined)).toBe('')
+  })
+})
+
+describe('findMindMapMatches — haritada arama', () => {
+  const graph = () => buildMindMapGraph(REQS, TESTS, LINKS)
+
+  it('kod ile eslesir ve koke giden YOLU dondurur', () => {
+    const hits = findMindMapMatches(graph(), 'REQ-SW-001')
+    expect(hits).toHaveLength(1)
+    expect(hits[0].id).toBe('w1')
+    expect(hits[0].path).toEqual(['u1', 'u1>s1', 'u1>s1>w1'])
+  })
+
+  it('KAPALI dallardaki kayitlari da bulur (acik kumesinden bagimsizdir)', () => {
+    // Arama, yalnizca kokleri acik olan bir haritada da derindeki kaydi bulur.
+    expect(findMindMapMatches(graph(), 'TC-SYS-001')[0].id).toBe('t1')
+  })
+
+  it('baslikta ve buyuk/kucuk harf farkiyla eslesir', () => {
+    const reqs = [req('u1', 'REQ-USR-001', REQ_TYPE.USER, 'Sicaklik dongusu')]
+    const hits = findMindMapMatches(buildMindMapGraph(reqs, [], []), 'SICAKLIK')
+    expect(hits).toHaveLength(1)
+  })
+
+  it('bos sorgu hic sonuc dondurmez', () => {
+    expect(findMindMapMatches(graph(), '')).toEqual([])
+    expect(findMindMapMatches(graph(), '   ')).toEqual([])
+    expect(findMindMapMatches(graph(), null)).toEqual([])
+  })
+
+  it('eslesme yoksa bos dizi doner', () => {
+    expect(findMindMapMatches(graph(), 'yok-boyle')).toEqual([])
+  })
+
+  it('birden fazla eslesmeyi belge sirasinda dondurur', () => {
+    const hits = findMindMapMatches(graph(), 'REQ-')
+    expect(hits.map((h) => h.id)).toEqual(['u1', 's1', 'w1'])
+  })
+
+  it('ayni kayit iki dalda gorunuyorsa her gorunumu ayri sonuctur', () => {
+    // w1 hem s1 hem s2 tarafindan karsilanir (skip-level).
+    const reqs = [
+      req('s1', 'REQ-SYS-001', REQ_TYPE.SYSTEM),
+      req('s2', 'REQ-SYS-002', REQ_TYPE.SYSTEM),
+      req('w1', 'REQ-SW-001', REQ_TYPE.SOFTWARE),
+    ]
+    const hits = findMindMapMatches(
+      buildMindMapGraph(reqs, [], [link('s1', 'w1'), link('s2', 'w1')]),
+      'REQ-SW-001',
+    )
+    expect(hits.map((h) => h.key)).toEqual(['s1>w1', 's2>w1'])
+  })
+
+  it('dongulu bagda sonsuz dolasmaz', () => {
+    const reqs = [
+      req('a', 'REQ-SYS-001', REQ_TYPE.SYSTEM),
+      req('b', 'REQ-SW-001', REQ_TYPE.SOFTWARE),
+    ]
+    const hits = findMindMapMatches(
+      buildMindMapGraph(reqs, [], [link('a', 'b'), link('b', 'a')]),
+      'REQ-',
+    )
+    expect(hits.length).toBeLessThan(10)
+  })
+})
+
+describe('expandedWithPath — bulunan düğümün yolunu açar', () => {
+  it('hedefin ATALARINI acar, hedefin kendisini acmaz', () => {
+    const hit = findMindMapMatches(buildMindMapGraph(REQS, TESTS, LINKS), 'REQ-SW-001')[0]
+    const opened = expandedWithPath(new Set(), hit)
+    expect(opened.has('u1')).toBe(true)
+    expect(opened.has('u1>s1')).toBe(true)
+    expect(opened.has('u1>s1>w1')).toBe(false)
+  })
+
+  it('acilmis yol ile hedef gercekten duzene girer', () => {
+    const graph = buildMindMapGraph(REQS, TESTS, LINKS)
+    const hit = findMindMapMatches(graph, 'REQ-SW-001')[0]
+    const before = layoutMindMap(graph, defaultExpandedKeys(graph), { orientation: 'vertical' })
+    expect(before.nodes.some((n) => n.key === hit.key)).toBe(false)
+    const after = layoutMindMap(graph, expandedWithPath(defaultExpandedKeys(graph), hit), {
+      orientation: 'vertical',
+    })
+    expect(after.nodes.some((n) => n.key === hit.key)).toBe(true)
+  })
+
+  it('mevcut acik dallari korur ve gecersiz girdide cakilmaz', () => {
+    expect(expandedWithPath(new Set(['x']), null).has('x')).toBe(true)
   })
 })

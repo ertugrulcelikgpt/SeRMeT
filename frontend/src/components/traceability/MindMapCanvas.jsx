@@ -26,6 +26,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLang } from '../../context/LanguageContext.jsx'
 import {
+  ARROW_SIZE,
+  BRANCH_STROKE_OPACITY,
+  BRANCH_STROKE_WIDTH,
   MIND_MAP_BRANCH_COLORS,
   fitLabel,
   mindMapEdgePath,
@@ -42,6 +45,9 @@ const CULL_MARGIN = 320
 const CULL_BUCKET = 200
 // Bu yakinlastirma seviyesinin altinda etiket metni okunmaz; cizilmez de.
 const LABEL_MIN_ZOOM = 0.45
+// Aramada bulunan dugumun vurgu rengi (amber-500) — dal renklerinden
+// bilincli olarak ayrik, boylece seviye rengiyle karistirilmaz.
+const FOCUS_COLOR = '#f59e0b'
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
 const bucketize = (v) => Math.floor(v / CULL_BUCKET) * CULL_BUCKET
@@ -57,6 +63,15 @@ export default function MindMapCanvas({
   onNodeClick = null,
   // 'full' | 'label' — bkz. dosya basligi.
   nodeDetail = 'full',
+  // Issue #122 arama: verilen yol anahtarindaki dugum vurgulanir ve
+  // ekranin ORTASINA alinir. `focusSeq` her arama isteginde artirilir;
+  // boylece AYNI dugume tekrar odaklanmak (kullanici haritayi kaydirdiktan
+  // sonra yeniden "Bul" demesi) da gorusu geri getirir.
+  focusKey = null,
+  focusSeq = 0,
+  // Ekran okuyucu etiketi. Ayni motor iki farkli haritayi cizdigi icin
+  // (Gereksinim Haritasi #122, Bilesenler #129) adi sayfa belirler.
+  ariaLabel = null,
   className = '',
 }) {
   const { t } = useLang()
@@ -124,6 +139,26 @@ export default function MindMapCanvas({
     fittedRef.current = true
     fitView({ readable: true })
   }, [size.w, mapLayout.nodes.length, fitView])
+
+  // --- Aramadan gelen odaklanma --------------------------------------------
+  //  Hedef dugum gorus alaninin ortasina alinir; cok uzaklasilmissa okunur
+  //  bir olcege donulur. Duzen once yeniden hesaplandigi (kapali dallar
+  //  acildigi) icin bu etki mapLayout guncellendikten SONRA calisir.
+  useEffect(() => {
+    if (!focusKey || !size.w) return
+    const target = mapLayout.nodes.find((n) => n.key === focusKey)
+    if (!target) return
+    setView((v) => {
+      const k = v.k < LABEL_MIN_ZOOM ? 0.8 : v.k
+      return {
+        k,
+        x: size.w / 2 - (target.x + L.nodeWidth / 2) * k,
+        y: size.h / 2 - target.y * k,
+      }
+    })
+    // focusSeq bilerek bagimliliktir: ayni anahtara tekrar odaklanmak da
+    // gorusu hedefe geri getirmelidir.
+  }, [focusKey, focusSeq, mapLayout, size.w, size.h, L.nodeWidth])
 
   const zoomBy = useCallback(
     (factor, cx, cy) => {
@@ -246,7 +281,7 @@ export default function MindMapCanvas({
       <svg
         ref={svgRef}
         role="tree"
-        aria-label={t('mindmap.canvasLabel')}
+        aria-label={ariaLabel || t('mindmap.canvasLabel')}
         width="100%"
         height="100%"
         className={panning ? 'cursor-grabbing' : 'cursor-grab'}
@@ -265,11 +300,11 @@ export default function MindMapCanvas({
               viewBox="0 0 8 8"
               refX="7.5"
               refY="4"
-              markerWidth="5"
-              markerHeight="5"
+              markerWidth={ARROW_SIZE}
+              markerHeight={ARROW_SIZE}
               orient="auto-start-reverse"
             >
-              <path d="M0 0 L8 4 L0 8 Z" fill={color} opacity="0.85" />
+              <path d="M0 0 L8 4 L0 8 Z" fill={color} opacity={BRANCH_STROKE_OPACITY} />
             </marker>
           ))}
         </defs>
@@ -281,8 +316,8 @@ export default function MindMapCanvas({
                 d={mindMapEdgePath(e)}
                 fill="none"
                 stroke={e.color}
-                strokeWidth={2}
-                strokeOpacity={0.75}
+                strokeWidth={BRANCH_STROKE_WIDTH}
+                strokeOpacity={BRANCH_STROKE_OPACITY}
                 strokeLinecap="round"
                 markerEnd={e.level ? `url(#mm-arrow-${e.level})` : undefined}
               />
@@ -310,8 +345,8 @@ export default function MindMapCanvas({
                     height={L.nodeHeight}
                     rx={10}
                     fill={colors.nodeBg}
-                    stroke={n.color}
-                    strokeWidth={1.5}
+                    stroke={n.key === focusKey ? FOCUS_COLOR : n.color}
+                    strokeWidth={n.key === focusKey ? 3 : 1.5}
                     style={{ cursor: onNodeClick || openable ? 'pointer' : 'default' }}
                     onClick={() => {
                       if (onNodeClick) onNodeClick(n)

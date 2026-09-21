@@ -45,7 +45,7 @@ export const STRINGS = {
     'nav.dashboard': 'Gösterge Paneli',
     'nav.requirements': 'Gereksinimler',
     'nav.traceability': 'İzlenebilirlik Matrisi',
-    'nav.mindMap': 'Zihin Haritası',
+    'nav.requirementMap': 'Gereksinim Haritası',
     'nav.traceabilityExport': 'İzlenebilirlik Dışa Aktarımı',
     'nav.traceabilityImport': 'İzlenebilirlik İçe Aktarımı',
     'nav.coverage': 'Kapsam Raporu',
@@ -124,8 +124,8 @@ export const STRINGS = {
     'page.requirements.sub': 'Gereksinimleri oluştur, düzenle, filtrele ve bağla',
     'page.traceability.title': 'İzlenebilirlik Matrisi',
     'page.traceability.sub': 'Satisfies / Verifies ilişkilerinin kuş bakışı görünümü',
-    'page.mindMap.title': 'Zihin Haritası',
-    'page.mindMap.sub': 'İzlenebilirlik zinciri — dallar açıldıkça yüklenir',
+    'page.requirementMap.title': 'Gereksinim Haritası',
+    'page.requirementMap.sub': 'İzlenebilirlik zinciri — dallar açıldıkça yüklenir',
     'page.traceabilityExport.title': 'İzlenebilirlik Dışa Aktarımı',
     'page.traceabilityExport.sub': 'İzlenebilirlik verilerini dışa aktar',
     'page.traceabilityImport.title': 'İzlenebilirlik İçe Aktarımı',
@@ -536,10 +536,20 @@ export const STRINGS = {
     'trace.m2Title': '② Verifies Matrisi · System / Software / Hardware Requirement → Test Case',
     'trace.m2Desc':
       'Hangi test senaryosunun hangi gereksinimi doğruladığını gösterir. Boş satırlar kapsam dışıdır.',
+    'trace.openMap': 'Gereksinim Haritası',
 
-    // --- Zihin haritası (Issue #122) ---
+    // --- Gereksinim Haritası (Issue #122) ---
+    //  Anahtarlar `mindmap.*` olarak kalır: aynı çizim motorunu Bileşenler
+    //  sayfası (#129) da kullanır. Kullanıcıya görünen ad "Gereksinim
+    //  Haritası"dır.
     'mindmap.intro':
-      'İzlenebilirlik zincirini dallanan bir ağaç olarak gösterir. Dal ucundaki noktaya tıklayarak dalı açın/kapatın; düğüme tıklayınca kaydın detayı açılır.',
+      'İzlenebilirlik zincirini yukarıdan aşağıya dallanan bir harita olarak gösterir. Dal ucundaki noktaya tıklayarak dalı açın/kapatın; düğüme tıklayınca kaydın detayı açılır.',
+    'mindmap.searchLabel': 'Haritada ara',
+    'mindmap.searchPlaceholder': 'Kod veya başlık ara…',
+    'mindmap.searchFind': 'Bul',
+    'mindmap.searchNext': 'Sonraki',
+    'mindmap.searchMiss': 'Eşleşen kayıt bulunamadı.',
+    'mindmap.searchHits': '{n} eşleşme bulundu — "Sonraki" ile aralarında gezinebilirsiniz.',
     'mindmap.level.user': 'Kullanıcı',
     'mindmap.level.system': 'Sistem',
     'mindmap.level.subsystem': 'Alt Sistem',
@@ -551,7 +561,7 @@ export const STRINGS = {
     'mindmap.truncated':
       'Harita {n} düğümde kesildi. Okunabilirlik ve performans için bazı dalları kapatın.',
     'mindmap.exportError': 'Harita dışa aktarılamadı.',
-    'mindmap.canvasLabel': 'İzlenebilirlik zihin haritası',
+    'mindmap.canvasLabel': 'Gereksinim haritası',
     'mindmap.expandBranch': '{id} dalını aç ({n} alt kayıt)',
     'mindmap.collapseBranch': '{id} dalını kapat',
     'mindmap.zoomIn': 'Yakınlaştır',
@@ -563,6 +573,7 @@ export const STRINGS = {
     'comp.source': 'Bileşen kaynağı',
     'comp.view': 'Görünüm',
     'comp.view.map': 'Harita',
+    'comp.canvasLabel': 'Bileşen haritası',
     'comp.view.list': 'Liste',
     'comp.layout': 'Düzen',
     'comp.layout.tree': 'Ağaç',
@@ -1090,7 +1101,7 @@ export const STRINGS = {
     'nav.dashboard': 'Dashboard',
     'nav.requirements': 'Requirements',
     'nav.traceability': 'Traceability Matrix',
-    'nav.mindMap': 'Mind Map',
+    'nav.requirementMap': 'Requirement Map',
     'nav.traceabilityExport': 'Traceability Export',
     'nav.traceabilityImport': 'Traceability Import',
     'nav.coverage': 'Coverage Report',
@@ -1168,8 +1179,8 @@ export const STRINGS = {
     'page.requirements.sub': 'Create, edit, filter and link requirements',
     'page.traceability.title': 'Traceability Matrix',
     'page.traceability.sub': "Bird's-eye view of Satisfies / Verifies relations",
-    'page.mindMap.title': 'Mind Map',
-    'page.mindMap.sub': 'Traceability chain — branches load as you expand',
+    'page.requirementMap.title': 'Requirement Map',
+    'page.requirementMap.sub': 'Traceability chain — branches load as you expand',
     'page.traceabilityExport.title': 'Traceability Export',
     'page.traceabilityExport.sub': 'Export traceability data',
     'page.traceabilityImport.title': 'Traceability Import',
@@ -1531,10 +1542,19 @@ export const STRINGS = {
     'trace.m1Desc': 'Shows which software/hardware requirement satisfies which system requirement.',
     'trace.m2Title': '② Verifies Matrix · System / Software / Hardware Requirement → Test Case',
     'trace.m2Desc': 'Shows which test case verifies which requirement. Empty rows are uncovered.',
+    'trace.openMap': 'Requirement Map',
 
-    // --- Mind map (Issue #122) ---
+    // --- Requirement Map (Issue #122) ---
+    //  Keys stay `mindmap.*`: the Components page (#129) shares the same
+    //  drawing engine. The user-facing name is "Requirement Map".
     'mindmap.intro':
-      'Shows the traceability chain as a branching tree. Click the dot at the end of a branch to expand/collapse it; click a node to open the record detail.',
+      'Shows the traceability chain as a top-down branching map. Click the dot at the end of a branch to expand/collapse it; click a node to open the record detail.',
+    'mindmap.searchLabel': 'Search the map',
+    'mindmap.searchPlaceholder': 'Search code or title…',
+    'mindmap.searchFind': 'Find',
+    'mindmap.searchNext': 'Next',
+    'mindmap.searchMiss': 'No matching record found.',
+    'mindmap.searchHits': '{n} matches found — use "Next" to cycle through them.',
     'mindmap.level.user': 'User',
     'mindmap.level.system': 'System',
     'mindmap.level.subsystem': 'Sub-system',
@@ -1546,7 +1566,7 @@ export const STRINGS = {
     'mindmap.truncated':
       'The map was cut off at {n} nodes. Collapse some branches for readability and performance.',
     'mindmap.exportError': 'The map could not be exported.',
-    'mindmap.canvasLabel': 'Traceability mind map',
+    'mindmap.canvasLabel': 'Requirement map',
     'mindmap.expandBranch': 'Expand branch {id} ({n} children)',
     'mindmap.collapseBranch': 'Collapse branch {id}',
     'mindmap.zoomIn': 'Zoom in',
@@ -1558,6 +1578,7 @@ export const STRINGS = {
     'comp.source': 'Component source',
     'comp.view': 'View',
     'comp.view.map': 'Map',
+    'comp.canvasLabel': 'Component map',
     'comp.view.list': 'List',
     'comp.layout': 'Layout',
     'comp.layout.tree': 'Tree',

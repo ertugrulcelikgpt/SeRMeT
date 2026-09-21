@@ -5,7 +5,7 @@
 //    3) Aksi halde             -> Sidebar + Topbar + sayfa yonlendirmesi.
 //  Sayfa anahtarlari: dashboard, pbs-tree, components (bilesen bazli gorunum),
 //  req-user, req-system, req-subsystem, test-acceptance, test-system,
-//  test-subsystem, glossary, coverage, traceability, mind-map (zihin
+//  test-subsystem, glossary, coverage, traceability, requirement-map (gereksinim
 //  haritasi), documents (AI analizi), document-library (Dökümanlar), audit.
 // ============================================================================
 import { useState, useEffect, useMemo } from 'react'
@@ -23,7 +23,7 @@ import MyAssignments from './pages/MyAssignments.jsx'
 import TestCases from './pages/TestCases.jsx'
 import Glossary from './pages/Glossary.jsx'
 import Traceability from './pages/Traceability.jsx'
-import MindMap from './pages/MindMap.jsx'
+import RequirementMap from './pages/RequirementMap.jsx'
 import CoverageReport from './pages/CoverageReport.jsx'
 import DocumentAnalysis from './pages/DocumentAnalysis.jsx'
 import DocumentLibrary from './pages/DocumentLibrary.jsx'
@@ -138,8 +138,10 @@ export default function App() {
             />
           )}
           {pageKey === 'glossary' && <Glossary />}
-          {page === 'traceability' && <Traceability projectId={activeProjectId} />}
-          {page === 'mind-map' && <MindMap />}
+          {page === 'traceability' && (
+            <Traceability projectId={activeProjectId} onNavigate={setPage} />
+          )}
+          {page === 'requirement-map' && <RequirementMap />}
           {page === 'traceability-export' && <TraceabilityPage projectId={activeProjectId} />}
           {page === 'traceability-import' && <TraceabilityImportPage projectId={activeProjectId} />}
           {page === 'coverage' && <CoverageReport onNavigate={setPage} />}
