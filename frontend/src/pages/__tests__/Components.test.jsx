@@ -357,6 +357,7 @@ describe('Bileşenler — seçilen bileşenin gereksinimleri', () => {
     const headers = screen.getAllByRole('columnheader').map((th) => th.textContent)
     expect(headers).toEqual([
       'TİD No',
+      'Parça No',
       'Text ID',
       'Başlık',
       'Gereksinim Metni',
@@ -439,7 +440,8 @@ describe('Bileşenler — TİD tablosu (liste görünümü)', () => {
     renderPage()
     showList()
     const cellOf = (textId) =>
-      within(screen.getByTestId(`comp-row-${textId}`)).getAllByRole('cell')[2]
+      // 0: TİD No · 1: Parça No · 2: Text ID · 3: Başlık (girintili sutun)
+      within(screen.getByTestId(`comp-row-${textId}`)).getAllByRole('cell')[3]
     const pad = (el) => parseFloat(el.style.paddingLeft)
     expect(pad(cellOf('EH-TİD-HW-001'))).toBeGreaterThan(pad(cellOf('EH-TİD-SYS-002')))
     expect(pad(cellOf('EH-TİD-SYS-002'))).toBeGreaterThan(pad(cellOf('EH-TİD-1')))
@@ -483,7 +485,7 @@ describe('Bileşenler — dışa aktarım', () => {
     fireEvent.click(screen.getByTestId('comp-export-csv'))
 
     expect(blobs[0].type).toContain('text/csv')
-    expect(blobs[0].text).toContain('TİD No,Text ID,Başlık,Gereksinim Metni,Bağlı SGD')
+    expect(blobs[0].text).toContain('TİD No,Parça No,Text ID,Başlık,Gereksinim Metni,Bağlı SGD')
     expect(blobs[0].text).toContain('EH-TİD-HW-001')
     expect(clicks[0]).toMatch(/^bilesen-basinc-pompasi-unitesi-\d{4}-\d{2}-\d{2}\.csv$/)
   })

@@ -4,7 +4,6 @@
 //    2) Aktif proje secilmemis -> <ProjectSelect/>
 //    3) Aksi halde             -> Sidebar + Topbar + sayfa yonlendirmesi.
 //  Sayfa anahtarlari: dashboard, pbs-tree, components (bilesen bazli gorunum),
-//  component-tree (bilesenlerin kendisi + Parca No, Issue #135),
 //  req-user, req-system, req-subsystem, test-acceptance, test-system,
 //  test-subsystem, glossary, coverage, traceability, requirement-map (gereksinim
 //  haritasi), documents (AI analizi), document-library (Dökümanlar), audit.
@@ -20,7 +19,6 @@ import Dashboard from './pages/Dashboard.jsx'
 import Hierarchy from './pages/Hierarchy.jsx'
 import PbsTree from './pages/PbsTree.jsx'
 import Components from './pages/Components.jsx'
-import ComponentTree from './pages/ComponentTree.jsx'
 import MyAssignments from './pages/MyAssignments.jsx'
 import TestCases from './pages/TestCases.jsx'
 import Glossary from './pages/Glossary.jsx'
@@ -117,7 +115,6 @@ export default function App() {
           {page === 'dashboard' && <Dashboard onNavigate={setPage} />}
           {page === 'pbs-tree' && <PbsTree />}
           {page === 'components' && <Components />}
-          {page === 'component-tree' && <ComponentTree />}
           {page === 'my-work' && <MyAssignments />}
           {REQ_KEYS.includes(pageKey) && (
             <Hierarchy

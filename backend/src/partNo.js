@@ -10,8 +10,8 @@
 //
 //  ORTAK OLAN: OMUR BOYU BENZERSIZLIK (kara liste). idGen.js ile birebir ayni
 //  mantik — silinen bir parcanin numarasi ASLA yeniden kullanilmaz. Canli
-//  kayitlara ek olarak AuditLog'daki tum `component` izleri de taranir
-//  (silme/yeniden adlandirma kayitlari audit'te kalir). Boylece "son parcayi
+//  kayitlara ek olarak AuditLog'daki Parca No izleri de taranir (silme /
+//  yeniden numaralandirma kayitlari audit'te kalir). Boylece "son parcayi
 //  silip ayni numarayi tekrar uretme" acigi kapanir.
 //
 //  BICIM (Project.partNoFormat): 'N' = rakam, geri kalan her karakter AYIRAC
@@ -26,6 +26,10 @@
 
 export const DEFAULT_PART_NO_FORMAT = 'NNN.NN.NNN';
 export const DEFAULT_PART_NO_BLOCK_STEP = 10;
+
+// Parca No degisiklikleri AuditLog'a bu `field` ile yazilir; kara liste
+// (usedPartNos) taramasi da ayni degeri kullanir — tek dogruluk kaynagi.
+export const PART_NO_AUDIT_FIELD = 'partNo';
 
 // Ayirac olarak kabul edilen karakterler. Harf/rakam ayirac OLAMAZ: 'N'
 // disinda bir harf gorulurse bicim reddedilir (yazim hatasini sessizce
@@ -134,6 +138,8 @@ export function configOf(project) {
 
 /**
  * KULLANILMIS (canli + silinmis) tum Parca No'lari toplar — kara liste.
+ * Kaynak: canli Requirement.partNo degerleri + AuditLog'daki Parca No
+ * izleri (PARTNO action'lari; silinen kayitlarin numarasi orada kalir).
  * AuditLog.textId "320.00.001 -> 320.00.007" gibi birlesik de olabildigi
  * icin bosluk/ok'a gore parcalanip her parca degerlendirilir (idGen.js ile
  * ayni ayristirma).
@@ -141,9 +147,12 @@ export function configOf(project) {
  */
 export async function usedPartNos(prisma, projectId) {
   const [rows, auditRows] = await Promise.all([
-    prisma.component.findMany({ where: { projectId }, select: { partNo: true } }),
+    prisma.requirement.findMany({
+      where: { projectId, partNo: { not: null } },
+      select: { partNo: true },
+    }),
     prisma.auditLog.findMany({
-      where: { projectId, entityType: 'component' },
+      where: { projectId, field: PART_NO_AUDIT_FIELD },
       select: { textId: true, oldValue: true, newValue: true },
     }),
   ]);
@@ -214,19 +223,20 @@ export function nextPartNoInBlock(block, used, format) {
 }
 
 /**
- * Yeni bir bilesen icin Parca No ayirir.
- *   * Ustu varsa: ustunun blogundan (partNoBlock ya da kendi blogu) siradaki
- *     bos numarayi alir.
- *   * Ustu yoksa (kok dal): yeni bir blok ayirir ve o bloktan ilk numarayi
- *     verir.
+ * Tek bir dugum icin Parca No ayirir (ust dugumun blogundan siradaki bos
+ * numara; ust yoksa yeni bir kok blok). Toplu atama icin partNumbers.js
+ * `ensurePartNumbers` kullanilir — o, tum agaci TEK gecisde numaralar.
  * @returns {Promise<string>}
  */
 export async function allocatePartNo(prisma, projectId, parentId, project) {
   const cfg = configOf(project);
   const [used, parent, roots] = await Promise.all([
     usedPartNos(prisma, projectId),
-    parentId ? prisma.component.findUnique({ where: { id: parentId } }) : Promise.resolve(null),
-    prisma.component.findMany({ where: { projectId, parentId: null }, select: { partNo: true, partNoBlock: true } }),
+    parentId ? prisma.requirement.findUnique({ where: { id: parentId } }) : Promise.resolve(null),
+    prisma.requirement.findMany({
+      where: { projectId, parentId: null },
+      select: { partNo: true, partNoBlock: true },
+    }),
   ]);
   let block = childBlockOf(parent, cfg.format);
   if (!block) {

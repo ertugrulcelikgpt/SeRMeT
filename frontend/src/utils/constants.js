@@ -104,17 +104,6 @@ export const CATEGORIES = Object.values(CATEGORY)
 // Yapi: <codePrefix>-<TIP>-<NNN>   ornek: EH-KAHVE-TİD-USR-001
 export const DEFAULT_CODE_PREFIX = 'EH-KAHVE-TİD'
 
-// --- Bilesen / Parca tipleri (Issue #135) -----------------------------------
-//  Backend constants.js COMPONENT_TYPE ile BIREBIR ayni olmalidir. Etiketler
-//  i18n'den gelir: `comp.type.<key>`.
-export const COMPONENT_TYPE = {
-  ASSEMBLY: 'assembly',
-  SUBASSEMBLY: 'subassembly',
-  HARDWARE: 'hardware',
-  SOFTWARE: 'software',
-}
-export const COMPONENT_TYPES = Object.values(COMPONENT_TYPE)
-
 // Parca No varsayilan bicimi (backend partNo.js DEFAULT_PART_NO_FORMAT).
 export const DEFAULT_PART_NO_FORMAT = 'NNN.NN.NNN'
 

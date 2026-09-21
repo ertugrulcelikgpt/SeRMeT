@@ -350,58 +350,12 @@ export async function runSeed() {
     ),
   );
 
-  // 6e) Bilesen (parca) agaci — Issue #135. PBS'nin URUN tarafi: dugumler
-  // gereksinim degil PARCA'dir ve kimliklerini Parca No tasir. Ayni adli iki
-  // gomulu yazilim (AMTB/GY1 ve STC/GY1) FARKLI parcadir; issue'daki ornek
-  // agacin ta kendisi burada demo veri olarak kurulur.
-  const partTree = [
-    { key: 'sys', name: 'Sistem', type: 'assembly', partNo: '100.00.001', block: '100', parent: null },
-    { key: 'kkt', name: 'KKT', type: 'subassembly', partNo: '100.00.002', block: '310', parent: 'sys' },
-    { key: 'amtb', name: 'AMTB', type: 'subassembly', partNo: '100.00.003', block: '320', parent: 'sys' },
-    { key: 'stc', name: 'STC', type: 'subassembly', partNo: '100.00.004', block: '340', parent: 'sys' },
-    { key: 'amtb-gy1', name: 'GY1', type: 'software', partNo: '320.00.001', parent: 'amtb' },
-    { key: 'amtb-gy2', name: 'GY2', type: 'software', partNo: '320.00.002', parent: 'amtb' },
-    { key: 'stc-gy1', name: 'GY1', type: 'software', partNo: '340.00.001', parent: 'stc' },
-    { key: 'stc-gy2', name: 'GY2', type: 'software', partNo: '340.00.002', parent: 'stc' },
-    { key: 'stc-gy3', name: 'GY3', type: 'software', partNo: '340.00.003', parent: 'stc' },
-  ];
-  const componentIdOf = new Map();
-  for (const [i, node] of partTree.entries()) {
-    const created = await prisma.component.create({
-      data: {
-        projectId: pid,
-        name: node.name,
-        type: node.type,
-        partNo: node.partNo,
-        partNoBlock: node.block ?? null,
-        parentId: node.parent ? componentIdOf.get(node.parent) : null,
-        order: i,
-      },
-    });
-    componentIdOf.set(node.key, created.id);
-  }
-  // Gereksinimleri parcalara dagit (#129: "bir bilesenin gereksinimleri").
-  // Yazilim gereksinimleri gomulu yazilim birimlerine, donanim gereksinimleri
-  // alt montajlara sirayla baglanir — demo icin yeterli, kural degil.
-  const swComponents = ['amtb-gy1', 'amtb-gy2', 'stc-gy1', 'stc-gy2', 'stc-gy3'];
-  const hwComponents = ['kkt', 'amtb', 'stc'];
-  const assignComponent = async (type, keys) => {
-    const rows = reqs.filter((r) => r.type === type);
-    await prisma.$transaction(
-      rows.map((row, i) =>
-        prisma.requirement.update({
-          where: { id: row.id },
-          data: { componentId: componentIdOf.get(keys[i % keys.length]) },
-        }),
-      ),
-    );
-  };
-  await assignComponent(REQ_TYPE.SOFTWARE, swComponents);
-  await assignComponent(REQ_TYPE.HARDWARE, hwComponents);
-  await prisma.requirement.updateMany({
-    where: { projectId: pid, type: REQ_TYPE.SYSTEM },
-    data: { componentId: componentIdOf.get('sys') },
-  });
+  // 6e) Parca No — Issue #135. PBS agaci ayni zamanda URUN kirilimidir;
+  // "Bilesenler" sayfasi bu agactan turer, bu yuzden numara da dugumun
+  // kendisinde (Requirement.partNo) durur. Kok dallar blok alir, cocuklar o
+  // bloktan siralanir; demo proje numarali acilir.
+  const { ensurePartNumbers } = await import('./partNumbers.js');
+  const partNoResult = await ensurePartNumbers(prisma, pid, SEED_AUTHOR);
 
   // 7) Otomatik durum (cascade) hesapla ve gereksinimlere isle
   const changes = recomputeAllStatuses(reqs, tests, links);
@@ -412,7 +366,8 @@ export async function runSeed() {
   // 8) Ozet
   console.log(
     `[seed] Tamamlandi -> Proje: "${project.name}" | Gereksinim: ${reqData.length} | ` +
-      `Test: ${testData.length} | Bag: ${links.length} | Durum guncellemesi: ${changes.length}`,
+      `Test: ${testData.length} | Bag: ${links.length} | Parca No: ${partNoResult.assigned} | ` +
+      `Durum guncellemesi: ${changes.length}`,
   );
   if (reqData.length !== 72 || testData.length !== 16 || links.length !== 58) {
     console.warn(`[seed] UYARI: beklenen 72/16/58 ile uyumsuz -> ${reqData.length}/${testData.length}/${links.length}`);

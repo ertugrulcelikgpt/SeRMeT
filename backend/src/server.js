@@ -6,7 +6,7 @@
 //    Proje alti (hepsi /api/projects/:pid/...):
 //        fields         (GET/POST/DELETE)
 //        requirements   (GET/POST/GET:id/PUT:id/DELETE:id)
-//        components     (GET/POST/GET:id/PATCH:id/DELETE:id, /check)  -> #135
+//        part-numbers   (POST /ensure, GET /check)  -> Parca No (#135)
 //        part-no-config (GET/PUT)  -> Parca No bicimi (PM)
 //        testcases      (GET/POST/GET:id/PUT:id/DELETE:id)
 //        glossary       (GET/POST/PUT:id/DELETE:id)
@@ -62,15 +62,8 @@ import {
   ensureMaterialized as ensureNavMaterialized,
 } from './nav.js';
 import { setProjectCodePrefix } from './textIdPrefix.js';
-import {
-  listComponents,
-  listComponentRequirements,
-  createComponent,
-  updateComponent,
-  deleteComponent,
-  checkComponentTree,
-} from './components.js';
-import { parsePartNoFormat, configOf as partNoConfigOf } from './partNo.js';
+import { ensurePartNumbers, setPartNo, setPartNoBlock, checkPartNumbers } from './partNumbers.js';
+import { parsePartNoFormat, configOf as partNoConfigOf, allocatePartNo } from './partNo.js';
 import { labelOf } from './label.js';
 import {
   listDefs,
@@ -1344,67 +1337,51 @@ app.delete(
 );
 
 // ===========================================================================
-//  BILESENLER / PARCALAR (Issue #135) — urun agacinin KENDI kimligi.
-//  Parca No proje icinde tekildir; otomatik atanir ama elle degistirilebilir.
-//  Cakisma 409 ile reddedilir ve HICBIR SEY yazilmaz. Sabit path'ler
-//  ("/check") parametreli "/:id" route'undan ONCE tanimlanmalidir.
+//  PARCA NO (Issue #135) — "Bilesenler" sayfasinin (#129) urun kimligi.
+//  Bilesenler PBS agacindan turetildigi icin numara da o dugumun uzerinde
+//  (Requirement.partNo) yasar; ayri bir tablo/ekran yoktur.
 // ===========================================================================
-app.get(
-  '/api/projects/:pid/components',
-  wrap(async (req, res) => {
-    res.json({ items: await listComponents(prisma, req.params.pid) });
-  }),
-);
 
-app.get(
-  '/api/projects/:pid/components/check',
-  wrap(async (req, res) => {
-    res.json(await checkComponentTree(prisma, req.params.pid));
-  }),
-);
-
+// Parca No'su olmayan dugumlere numara atar (idempotent). Bilesenler sayfasi
+// acildiginda cagirilir: "her bilesene bir numara" kendiliginden saglanir.
 app.post(
-  '/api/projects/:pid/components',
+  '/api/projects/:pid/part-numbers/ensure',
   wrap(async (req, res) => {
-    const row = await createComponent(prisma, req.params.pid, req.body || {}, actorOf(req));
-    res.status(201).json(row);
+    res.json(await ensurePartNumbers(prisma, req.params.pid, actorOf(req)));
   }),
 );
 
+// Agac tutarliligi: cakisan/bicimsiz/blok disi numaralar, ayni adli kardesler,
+// ustsuz dugum, dongu, derinlik asimi, Parca No'su olmayan bilesen.
 app.get(
-  '/api/projects/:pid/components/:id/requirements',
+  '/api/projects/:pid/part-numbers/check',
   wrap(async (req, res) => {
-    const items = await listComponentRequirements(prisma, req.params.pid, req.params.id);
-    res.json({ items: flattenAll(items) });
+    res.json(await checkPartNumbers(prisma, req.params.pid));
   }),
 );
 
-app.get(
-  '/api/projects/:pid/components/:id',
-  wrap(async (req, res) => {
-    const row = await prisma.component.findUnique({ where: { id: req.params.id } });
-    if (!row || row.projectId !== req.params.pid) throw bad('Bilesen bulunamadi.', 404);
-    res.json(row);
-  }),
-);
-
+// Elle duzenleme. Cakisma veya bicim ihlalinde HICBIR SEY yazilmaz (409/400).
 app.patch(
-  '/api/projects/:pid/components/:id',
+  '/api/projects/:pid/requirements/:id/part-no',
   wrap(async (req, res) => {
-    const row = await updateComponent(prisma, req.params.pid, req.params.id, req.body || {}, actorOf(req));
-    res.json(row);
+    const pid = req.params.pid;
+    const before = await prisma.requirement.findUnique({ where: { id: req.params.id } });
+    if (!before || before.projectId !== pid) throw bad('Gereksinim bulunamadi.', 404);
+    assertRequirementVisible(req, before);
+    // NOT: `locked` KONTROLU YOK. Parca No gereksinim METNI degil URUN
+    // kimligidir; onaylanmis bir kaydin parca numarasi da duzeltilebilmeli
+    // ve otomatik atama (ensurePartNumbers) kilitli kayitlari da kapsar.
+    const b = req.body || {};
+    let row = before;
+    if (b.partNo !== undefined) row = await setPartNo(prisma, pid, req.params.id, b.partNo, actorOf(req));
+    if (b.partNoBlock !== undefined) {
+      row = await setPartNoBlock(prisma, pid, req.params.id, b.partNoBlock, actorOf(req));
+    }
+    res.json(withAssigneeIds(flatten(row), await getAssigneeIds(prisma, 'requirement', row.id)));
   }),
 );
 
-app.delete(
-  '/api/projects/:pid/components/:id',
-  wrap(async (req, res) => {
-    const reason = requireReason(req);
-    res.json(await deleteComponent(prisma, req.params.pid, req.params.id, reason, actorOf(req)));
-  }),
-);
-
-// Parca No bicimi + kok blok adimi — PROJE bazli yapilandirma. Yalnizca PM.
+// Parca No bicimi + kok blok adimi — PROJE bazli yapilandirma.
 app.get(
   '/api/projects/:pid/part-no-config',
   wrap(async (req, res) => {
@@ -1770,18 +1747,6 @@ app.get(
   }),
 );
 
-// Issue #135: gereksinim <-> bilesen bagi. Bilesen AYRI bir tablodur; bag
-// kurulurken hedefin AYNI projede oldugu dogrulanir (IDOR + veri butunlugu).
-// undefined => alan gonderilmedi, dokunma. null/'' => bagi kaldir.
-async function resolveComponentId(pid, raw) {
-  if (raw === undefined) return undefined;
-  if (raw === null || String(raw).trim() === '') return null;
-  const id = String(raw).trim();
-  const comp = await prisma.component.findUnique({ where: { id } });
-  if (!comp || comp.projectId !== pid) throw bad('Bilesen bulunamadi.', 404);
-  return id;
-}
-
 app.post(
   '/api/projects/:pid/requirements',
   wrap(async (req, res) => {
@@ -1810,10 +1775,22 @@ app.post(
     // Issue #102: gereksinim seviyesi de 1..5 araliginda olmali (miras dahil).
     if (!isValidClearanceLevel(clearanceLevel)) throw bad('clearanceLevel 1-5 arasinda olmali.');
     if (clearanceLevel > userLevel) throw bad('Bu seviyede gereksinim olusturamazsiniz.', 403);
+    // Issue #135: yeni dugum eklenir eklenmez Parca No alir (ustun blogundan
+    // siradaki bos numara). Numara uretilemezse (blok dolu / bicim bozuk)
+    // gereksinim yine de olusur — numarasi sonra `part-numbers/ensure` ile
+    // tamamlanir; urun kimligi yuzunden gereksinim kaybedilmez.
+    const project = await prisma.project.findUnique({ where: { id: pid } });
+    let partNo;
+    try {
+      partNo = await allocatePartNo(prisma, pid, parentId, project);
+    } catch {
+      partNo = null;
+    }
     const created = await prisma.requirement.create({
       data: {
         projectId: pid,
         text_id,
+        partNo,
         title: (b.title || '').trim(),
         description: cleanRichText((b.description || '').trim()),
         type: b.type,
@@ -1824,7 +1801,6 @@ app.post(
         relatedDocuments: normalizeDocuments(b.relatedDocuments),
         parentId,
         clearanceLevel,
-        componentId: (await resolveComponentId(pid, b.componentId)) ?? null,
         ...source,
       },
     });
@@ -1900,10 +1876,6 @@ app.put(
     }
     if (data.description != null) data.description = cleanRichText(data.description);
     if (b.relatedDocuments != null) data.relatedDocuments = normalizeDocuments(b.relatedDocuments);
-    // Bilesen bagi (#135/#129): icerik degisikligi SAYILMAZ — gereksinimin
-    // metni degismez, yalnizca hangi parcaya ait oldugu belirlenir.
-    const nextComponentId = await resolveComponentId(pid, b.componentId);
-    if (nextComponentId !== undefined) data.componentId = nextComponentId;
     const attrInput = extractAttributeInput(b);
     if (Object.keys(attrInput).length > 0) {
       const defs = await listDefs(prisma, pid, 'requirement');

@@ -69,22 +69,19 @@ export const splitRequirement = (pid, id, newTitles) =>
 export const mergeRequirements = (pid, ids) =>
   api.post(`/projects/${pid}/requirements/merge`, { ids })
 
-// --- Bilesenler / Parcalar (Issue #135) ------------------------------------
-//  Urun agacinin dugumleri gereksinimden AYRI bir tabloda yasar: ad, Parca No,
-//  tip, revizyon, ust parca. Parca No proje icinde tekildir; yeni parcada
-//  otomatik atanir, elle degistirilebilir (cakisma => 409, kaydedilmez).
-export const listComponents = (pid) => api.get(`/projects/${pid}/components`)
-export const createComponent = (pid, data) => api.post(`/projects/${pid}/components`, data)
-export const updateComponent = (pid, id, data) =>
-  api.patch(`/projects/${pid}/components/${id}`, data)
-export const deleteComponent = (pid, id, reason) =>
-  api.del(`/projects/${pid}/components/${id}`, { reason })
-//  Bir bilesenin gereksinimleri (#129: "Su Pompasi -> su gereksinimler").
-export const listComponentRequirements = (pid, id) =>
-  api.get(`/projects/${pid}/components/${id}/requirements`)
-//  Agac tutarlilik kontrolu: cakisan/bicimsiz/blok disi numaralar, ayni adli
-//  kardesler, ustsuz-dongu-derinlik ihlalleri, gereksinimsiz bilesenler.
-export const checkComponentTree = (pid) => api.get(`/projects/${pid}/components/check`)
+// --- Parca No (Issue #135) --------------------------------------------------
+//  Bilesenler PBS agacindan turetildigi icin (#129) parca kimligi de o
+//  dugumun uzerinde yasar (Requirement.partNo). Ayri bir sayfa/tablo yoktur;
+//  her sey "Bilesenler" sayfasinda gerceklesir.
+//  Numarasiz dugumlere numara atar (idempotent) — sayfa acilisinda cagirilir.
+export const ensurePartNumbers = (pid) => api.post(`/projects/${pid}/part-numbers/ensure`)
+//  Tutarlilik kontrolu: cakisan/bicimsiz/blok disi numaralar, ayni adli
+//  kardesler, ustsuz dugum, dongu, derinlik asimi, numarasiz bilesen.
+export const checkPartNumbers = (pid) => api.get(`/projects/${pid}/part-numbers/check`)
+//  Elle duzenleme. Cakisma => 409, bicim ihlali => 400 (hicbir sey yazilmaz).
+//  `partNoBlock`: bu dalin cocuklarina verecegi onek (orn. AMTB -> "320").
+export const setPartNo = (pid, id, payload) =>
+  api.patch(`/projects/${pid}/requirements/${id}/part-no`, payload)
 //  Parca No bicimi + kok blok adimi (proje bazli; yazma yalnizca PM).
 export const getPartNoConfig = (pid) => api.get(`/projects/${pid}/part-no-config`)
 export const setPartNoConfig = (pid, format, blockStep) =>

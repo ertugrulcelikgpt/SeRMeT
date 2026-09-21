@@ -261,6 +261,8 @@ export function buildComponents(requirements, { source = COMPONENT_SOURCE.PBS, t
           key: node.id,
           label: getDisplayLabel(node).text || node.text_id,
           outline: info?.outline || '',
+          // Issue #135: bilesenin Parca No'su (PBS dugumunun kendisinden).
+          partNo: node.partNo || '',
           depth: info?.depth ?? 0,
           node,
           rows: subtreeRows(t, node.id),
@@ -279,7 +281,7 @@ function fieldComponents(requirements, tree) {
     const name = String(r.field || '').trim()
     const key = name || FIELD_NONE_KEY
     if (!groups.has(key))
-      groups.set(key, { key, label: name, outline: '', depth: 0, node: null, rows: [] })
+      groups.set(key, { key, label: name, outline: '', partNo: '', depth: 0, node: null, rows: [] })
     groups.get(key).rows.push(r)
   }
   const outlineOf = (r) => tree.infoById.get(r.id)?.outline || ''
@@ -383,6 +385,9 @@ export function buildComponentGraph(
       level: levelOfType(r.type),
       typeSuffix: TYPE_SUFFIX[r.type] || '',
       outline: t.infoById.get(r.id)?.outline || '',
+      // Issue #135: urun kimligi. Harita kutusunda isimle birlikte yazilir;
+      // ayni adli iki dugumu (AMTB/GY1 vs STC/GY1) ayiran sey budur.
+      partNo: r.partNo || '',
       meta: metaOf ? metaOf(r, { childCount }) : '',
       row: r,
     }
@@ -538,6 +543,8 @@ export function buildComponentViewRows(rows, ctx) {
       row: r,
       outline: tree.infoById.get(r.id)?.outline || '',
       text_id: r.text_id || '',
+      // Issue #135: TID tablosunun urun kimligi sutunu.
+      partNo: r.partNo || '',
       title: label.isFallback ? '' : label.text,
       titleIsFallback: label.isFallback,
       text: plain,
@@ -578,7 +585,15 @@ export function componentRowsToCsv(viewRows, { headers } = {}) {
   const lines = [headers.map(csvCell).join(CSV_SEPARATOR)]
   for (const v of viewRows || []) {
     lines.push(
-      [v.outline, v.text_id, v.title, v.text, v.linkedText, v.method ? v.method.label : '']
+      [
+        v.outline,
+        v.partNo,
+        v.text_id,
+        v.title,
+        v.text,
+        v.linkedText,
+        v.method ? v.method.label : '',
+      ]
         .map(csvCell)
         .join(CSV_SEPARATOR),
     )
@@ -617,6 +632,7 @@ export function buildComponentPrintHtml({
       return (
         `<tr class="${v.isComponent ? 'comp' : ''}">` +
         `<td class="num">${escapeHtml(v.outline)}</td>` +
+        `<td class="mono">${escapeHtml(v.partNo)}</td>` +
         `<td class="mono">${escapeHtml(v.text_id)}</td>` +
         `<td style="${indent}">${escapeHtml(v.title)}</td>` +
         `<td>${escapeHtml(v.text)}</td>` +
