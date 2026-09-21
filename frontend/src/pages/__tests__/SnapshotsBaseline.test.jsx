@@ -250,9 +250,11 @@ describe('Baseline — geri yukleme', () => {
     fireEvent.click(screen.getByText('Sil'))
 
     await waitFor(() =>
+      // Ucuncu arguman KISMI restore secimi; tam restore'da null gecer (#128).
       expect(appMock.restoreSnapshot).toHaveBeenCalledWith(
         BASELINE.id,
         'v1.0 teslim noktasina donuluyor',
+        null,
       ),
     )
   })

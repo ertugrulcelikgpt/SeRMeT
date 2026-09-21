@@ -9,6 +9,12 @@
 //  (normal yoldan silinemez), GERİ YÜKLENEBİLİR (önizleme + zorunlu gerekçe +
 //  otomatik güvenlik kopyası) ve KARŞILAŞTIRILABİLİR (baseline ↔ baseline ya
 //  da baseline ↔ canlı; CSV/PDF olarak dışa aktarılır).
+//
+//  KAPSAM: baseline tüm projeyi ya da yalnızca seçili MODÜLLERİ (sol menü
+//  sayfaları) dondurabilir. Birden fazla modül seçilirse her modül için ayrı
+//  bir baseline alınır ve hepsi tek bir BASELINE SET altında toplanır
+//  (DOORS davranışı). Geri yükleme yalnızca baseline'ın kapsamına dokunur;
+//  önizlemeden seçilen kayıtlarla KISMİ geri yükleme de yapılabilir.
 // ============================================================================
 import { useState, useMemo } from 'react'
 import { useApp } from '../context/AppContext.jsx'
@@ -39,7 +45,7 @@ import {
   formatDiffValue,
   slugifyLabel,
 } from '../utils/baselineDiff.js'
-import { REQ_PAGES, TEST_PAGES, TYPE_SUFFIX } from '../utils/constants.js'
+import { REQ_PAGES, TEST_PAGES, TYPE_SUFFIX, BASELINE_MODULES } from '../utils/constants.js'
 
 const dash = <span className="text-slate-300 dark:text-slate-600">—</span>
 
@@ -460,7 +466,134 @@ function SnapshotDetailModal({ open, snapshot, onClose }) {
   )
 }
 
-const EMPTY_FORM = { name: '', label: '', description: '', isBaseline: false, reason: '' }
+// `modules` bos dizi = TUM PROJE kapsami (backend de `modules` verilmemis
+// istegi proje kapsami sayar). Tek modul -> modul baseline'i; birden fazla
+// modul -> modul basina bir baseline + hepsini toplayan BASELINE SET.
+const EMPTY_FORM = {
+  name: '',
+  label: '',
+  description: '',
+  isBaseline: false,
+  reason: '',
+  modules: [],
+}
+
+/**
+ * Kapsam secimi: tum proje ya da secili moduller. Modul = sol menu sayfasi
+ * (BASELINE_MODULES); anahtarlar backend'e AYNEN gonderilir.
+ */
+function ScopePicker({ modules, onChange, t }) {
+  const projectWide = modules.length === 0
+  const toggle = (key) =>
+    onChange(modules.includes(key) ? modules.filter((m) => m !== key) : [...modules, key])
+
+  return (
+    <div data-testid="snapshot-scope">
+      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+        {t('snapshot.scopeLabel')}
+      </label>
+      <div className="space-y-2 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+        <label className="flex items-start gap-2.5">
+          <input
+            type="radio"
+            className="mt-0.5"
+            checked={projectWide}
+            onChange={() => onChange([])}
+            data-testid="scope-project"
+          />
+          <span>
+            <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">
+              {t('snapshot.scopeProject')}
+            </span>
+            <span className="block text-xs text-slate-500 dark:text-slate-400">
+              {t('snapshot.scopeProjectHint')}
+            </span>
+          </span>
+        </label>
+
+        <label className="flex items-start gap-2.5">
+          <input
+            type="radio"
+            className="mt-0.5"
+            checked={!projectWide}
+            // Modul kapsamina gecerken bos birakmak anlamsiz olurdu: ilk
+            // modul otomatik secilir, kullanici degistirir.
+            onChange={() => onChange([BASELINE_MODULES[0].key])}
+            data-testid="scope-module"
+          />
+          <span>
+            <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">
+              {t('snapshot.scopeModule')}
+            </span>
+            <span className="block text-xs text-slate-500 dark:text-slate-400">
+              {t('snapshot.scopeModuleHint')}
+            </span>
+          </span>
+        </label>
+
+        {!projectWide && (
+          <div className="ml-6 grid gap-1 sm:grid-cols-2" data-testid="scope-module-list">
+            {BASELINE_MODULES.map((m) => (
+              <label key={m.key} className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={modules.includes(m.key)}
+                  onChange={() => toggle(m.key)}
+                  data-testid={`scope-module-${m.key}`}
+                />
+                <span className="text-slate-700 dark:text-slate-200">{t(`module.${m.key}`)}</span>
+              </label>
+            ))}
+          </div>
+        )}
+
+        {/* Birden fazla modul, DOORS'taki "baseline set" demektir. */}
+        {modules.length > 1 && (
+          <p
+            className="ml-6 rounded-md bg-brand-50 px-2 py-1 text-xs font-semibold text-brand-700 dark:bg-brand-900/30 dark:text-brand-300"
+            data-testid="scope-set-note"
+          >
+            {t('snapshot.scopeSetNote', { n: modules.length })}
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** Listedeki kapsam / sürüm / set rozetleri. */
+function ScopeBadges({ snap, t }) {
+  const modules = Array.isArray(snap.modules) ? snap.modules : null
+  return (
+    <>
+      <span
+        data-testid={`snapshot-scope-${snap.id}`}
+        className="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+      >
+        {modules
+          ? modules.map((m) => t(`module.${m}`)).join(', ')
+          : t('snapshot.scopeProjectBadge')}
+      </span>
+      {/* Surum numarasi modul bazlidir: her modulun sayaci ayri ilerler. */}
+      {snap.version != null && (
+        <span
+          data-testid={`snapshot-version-${snap.id}`}
+          className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+        >
+          {t('snapshot.versionBadge', { n: snap.version })}
+        </span>
+      )}
+      {snap.set?.name && (
+        <span
+          data-testid={`snapshot-set-${snap.id}`}
+          className="rounded-md bg-indigo-50 px-1.5 py-0.5 text-[10px] font-bold text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300"
+        >
+          {snap.set.name}
+        </span>
+      )}
+    </>
+  )
+}
 
 export default function SnapshotsPage() {
   const {
@@ -510,6 +643,9 @@ export default function SnapshotsPage() {
         description: form.description.trim(),
         isBaseline: form.isBaseline,
         reason: form.reason.trim() || undefined,
+        // Bos liste = tum proje: backend `modules` verilmemis istegi proje
+        // kapsami sayar.
+        modules: form.modules.length > 0 ? form.modules : undefined,
       })
       closeForm()
     } catch (e) {
@@ -531,6 +667,7 @@ export default function SnapshotsPage() {
   const openRestore = async (snap) => {
     setBusy(true)
     try {
+      // Onizleme SALT OKUNURDUR; kismi secim de bu listeden (entries) yapilir.
       const plan = await getRestorePreview(projectId, snap.id)
       setRestorePlan({ snap, plan })
     } catch (e) {
@@ -540,9 +677,10 @@ export default function SnapshotsPage() {
     }
   }
 
+  // Kismi geri yukleme: onizlemede secilen kayitlar. null = TAM restore.
   const confirmRestore = async (reason) => {
-    const snap = restoreReasonFor
-    const result = await restoreSnapshot(snap.id, reason)
+    const { snap, selection } = restoreReasonFor
+    const result = await restoreSnapshot(snap.id, reason, selection)
     setRestoreReasonFor(null)
     setRestorePlan(null)
     setRestoreResult({ snap, result })
@@ -655,6 +793,8 @@ export default function SnapshotsPage() {
                             {t('snapshot.safetyBadge')}
                           </span>
                         )}
+                        {/* Kapsam / modül sürümü / baseline seti (#128) */}
+                        <ScopeBadges snap={snap} t={t} />
                       </div>
                       {snap.description && (
                         <div className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
@@ -814,6 +954,12 @@ export default function SnapshotsPage() {
             />
           </div>
 
+          <ScopePicker
+            modules={form.modules}
+            onChange={(modules) => setForm((f) => ({ ...f, modules }))}
+            t={t}
+          />
+
           <label className="flex items-start gap-2.5 rounded-lg border border-slate-200 p-3 dark:border-slate-700">
             <input
               type="checkbox"
@@ -879,7 +1025,7 @@ export default function SnapshotsPage() {
         open={Boolean(restorePlan)}
         data={restorePlan}
         onClose={() => setRestorePlan(null)}
-        onConfirm={() => setRestoreReasonFor(restorePlan.snap)}
+        onConfirm={(selection) => setRestoreReasonFor({ snap: restorePlan.snap, selection })}
         t={t}
       />
 
@@ -931,8 +1077,12 @@ export default function SnapshotsPage() {
         onClose={() => setRestoreReasonFor(null)}
         onConfirm={confirmRestore}
         title={t('snapshot.restoreReasonTitle')}
-        itemLabel={restoreReasonFor?.name}
-        warning={t('snapshot.restoreWarning')}
+        itemLabel={restoreReasonFor?.snap?.name}
+        warning={
+          restoreReasonFor?.selection
+            ? t('snapshot.restorePartialWarning', { n: restoreReasonFor.selection.length })
+            : t('snapshot.restoreWarning')
+        }
       />
     </div>
   )
@@ -1105,9 +1255,30 @@ const PREVIEW_ROWS = [
   { key: 'attributeDef', labelKey: 'diff.entity.attributeDef' },
 ]
 
+// Onizleme SALT OKUNURDUR: kullanici onaylamadan hicbir sey yazilmaz.
+// "Yalnizca secili kayitlar" secenegi KISMI geri yuklemedir — o durumda
+// HICBIR SEY SILINMEZ (bkz. backend buildRestorePlan).
 function RestorePreviewModal({ open, data, onClose, onConfirm, t }) {
+  const [partial, setPartial] = useState(false)
+  const [picked, setPicked] = useState([])
+  const [loadedId, setLoadedId] = useState(null)
+
+  // Modal her yeni snapshot icin sifirdan acilir.
+  if (open && data && loadedId !== data.snap.id) {
+    setLoadedId(data.snap.id)
+    setPartial(false)
+    setPicked([])
+  }
+
   if (!open || !data) return null
   const { snap, plan } = data
+  // Kismi restore yalnizca GERI YUKLENEBILIR kayitlar icindir; silinecekler
+  // secilemez (kismi restore silmez).
+  const selectable = (plan.entries || []).filter((e) => e.action !== 'delete')
+  const toggle = (id) => setPicked((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]))
+  const totals = partial ? { added: 0, updated: picked.length, deleted: 0 } : plan.totals
+  const confirmDisabled = partial && picked.length === 0
+
   return (
     <Modal
       open={open}
@@ -1120,7 +1291,12 @@ function RestorePreviewModal({ open, data, onClose, onConfirm, t }) {
           <button onClick={onClose} className="btn-secondary">
             {t('common.cancel')}
           </button>
-          <button onClick={onConfirm} className="btn-primary" data-testid="restore-confirm">
+          <button
+            onClick={() => onConfirm(partial ? picked : null)}
+            className="btn-primary disabled:opacity-60"
+            disabled={confirmDisabled}
+            data-testid="restore-confirm"
+          >
             {t('snapshot.restoreContinue')}
           </button>
         </div>
@@ -1129,10 +1305,24 @@ function RestorePreviewModal({ open, data, onClose, onConfirm, t }) {
       <div className="space-y-4">
         <p className="text-sm text-slate-600 dark:text-slate-300">{t('snapshot.restoreExplain')}</p>
 
+        {/* KAPSAM: modül baseline'ı yalnızca kendi modülüne dokunur. */}
+        <div
+          className="rounded-lg bg-slate-50 px-3 py-2 text-xs text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+          data-testid="restore-scope"
+        >
+          {Array.isArray(plan.modules)
+            ? t('snapshot.restoreScopeModule', {
+                modules: plan.modules.map((m) => t(`module.${m}`)).join(', '),
+              })
+            : t('snapshot.restoreScopeProject')}
+          {plan.externalLinks > 0 &&
+            ` · ${t('snapshot.restoreExternalLinks', { n: plan.externalLinks })}`}
+        </div>
+
         <div className="grid grid-cols-3 gap-2 text-center" data-testid="restore-totals">
           <div className="rounded-lg bg-emerald-50 px-3 py-2 dark:bg-emerald-900/30">
             <div className="text-lg font-bold text-emerald-700 dark:text-emerald-300">
-              +{plan.totals.added}
+              +{totals.added}
             </div>
             <div className="text-[11px] font-semibold uppercase text-emerald-600 dark:text-emerald-400">
               {t('snapshot.willAdd')}
@@ -1140,7 +1330,7 @@ function RestorePreviewModal({ open, data, onClose, onConfirm, t }) {
           </div>
           <div className="rounded-lg bg-amber-50 px-3 py-2 dark:bg-amber-900/30">
             <div className="text-lg font-bold text-amber-700 dark:text-amber-300">
-              ~{plan.totals.updated}
+              ~{totals.updated}
             </div>
             <div className="text-[11px] font-semibold uppercase text-amber-600 dark:text-amber-400">
               {t('snapshot.willUpdate')}
@@ -1148,7 +1338,7 @@ function RestorePreviewModal({ open, data, onClose, onConfirm, t }) {
           </div>
           <div className="rounded-lg bg-rose-50 px-3 py-2 dark:bg-rose-900/30">
             <div className="text-lg font-bold text-rose-700 dark:text-rose-300">
-              -{plan.totals.deleted}
+              -{totals.deleted}
             </div>
             <div className="text-[11px] font-semibold uppercase text-rose-600 dark:text-rose-400">
               {t('snapshot.willDelete')}
@@ -1182,6 +1372,63 @@ function RestorePreviewModal({ open, data, onClose, onConfirm, t }) {
               })}
             </tbody>
           </table>
+        </div>
+
+        {/* KISMI geri yukleme: baseline icinden yalnizca secili kayitlar. */}
+        <div className="rounded-lg border border-slate-200 p-3 dark:border-slate-700">
+          <label className="flex items-start gap-2.5">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={partial}
+              onChange={(e) => setPartial(e.target.checked)}
+              data-testid="restore-partial-toggle"
+            />
+            <span>
+              <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">
+                {t('snapshot.restorePartial')}
+              </span>
+              <span className="block text-xs text-slate-500 dark:text-slate-400">
+                {t('snapshot.restorePartialHint')}
+              </span>
+            </span>
+          </label>
+
+          {partial && (
+            <div
+              className="mt-2 max-h-56 space-y-0.5 overflow-y-auto rounded-md bg-slate-50 p-2 dark:bg-slate-800/60"
+              data-testid="restore-partial-list"
+            >
+              {selectable.length === 0 ? (
+                <p className="px-1 py-2 text-xs text-slate-500">
+                  {t('snapshot.restoreNothingToPick')}
+                </p>
+              ) : (
+                selectable.map((entry) => (
+                  <label
+                    key={`${entry.entityType}-${entry.entityId}`}
+                    className="flex items-center gap-2 rounded px-1 py-0.5 text-sm hover:bg-white dark:hover:bg-slate-700/50"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={picked.includes(entry.entityId)}
+                      onChange={() => toggle(entry.entityId)}
+                      data-testid={`restore-pick-${entry.entityId}`}
+                    />
+                    <span className="font-mono text-xs font-semibold text-slate-500 dark:text-slate-400">
+                      {t(`diff.entity.${entry.entityType}`)}
+                    </span>
+                    <span className="min-w-0 truncate text-slate-700 dark:text-slate-200">
+                      {entry.label}
+                    </span>
+                    <span className="ml-auto shrink-0 text-[11px] uppercase text-slate-400">
+                      {t(`snapshot.action.${entry.action}`)}
+                    </span>
+                  </label>
+                ))
+              )}
+            </div>
+          )}
         </div>
 
         <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 dark:bg-amber-900/30 dark:text-amber-300">

@@ -367,5 +367,20 @@ export const TEST_PAGES = {
   },
 }
 
+// ---------------------------------------------------------------------------
+//  BASELINE MODULLERI (Issue #128)
+//  DOORS'ta baseline MODUL (dokuman) seviyesinde alinir. Buradaki karsiligi
+//  sol menu sayfasidir: REQ_PAGES + TEST_PAGES + Sozluk. Liste backend'deki
+//  src/modules.js MODULE_KEYS ile BIREBIR AYNI SIRADA olmalidir — kapsam
+//  secimi aynen bu anahtarlarla gonderilir.
+// ---------------------------------------------------------------------------
+export const BASELINE_MODULES = [
+  ...Object.values(REQ_PAGES).map((p) => ({ key: p.key, navLabel: p.navLabel, group: 'req' })),
+  ...Object.values(TEST_PAGES).map((p) => ({ key: p.key, navLabel: p.navLabel, group: 'test' })),
+  { key: 'glossary', navLabel: 'Sözlük', group: 'other' },
+]
+
+export const BASELINE_MODULE_KEYS = BASELINE_MODULES.map((m) => m.key)
+
 // Oturum acan kullanici (auth katmani MVP'de yok; tek kullanici simulasyonu).
 export const CURRENT_USER = 'ehsim.user'

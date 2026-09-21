@@ -20,6 +20,9 @@ export const DIFF_ENTITY_TYPES = [
   { key: 'requirement', labelKey: 'diff.entity.requirement' },
   { key: 'testcase', labelKey: 'diff.entity.testcase' },
   { key: 'link', labelKey: 'diff.entity.link' },
+  // Bir ucu baseline KAPSAMI DISINDA kalan bag (#128): geri yuklenmez ama
+  // izlenebilirlik zinciri icin farkta ve raporda yer alir.
+  { key: 'externalLink', labelKey: 'diff.entity.externalLink' },
   { key: 'glossary', labelKey: 'diff.entity.glossary' },
   { key: 'attributeDef', labelKey: 'diff.entity.attributeDef' },
 ]

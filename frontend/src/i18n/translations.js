@@ -592,6 +592,56 @@ export const STRINGS = {
     'diff.entity.link': 'Bağ',
     'diff.entity.glossary': 'Sözlük',
     'diff.entity.attributeDef': 'Öznitelik',
+    'diff.entity.externalLink': 'Kapsam dışı bağ',
+
+    // --- Baseline kapsamı: modül / set / kısmi restore (Issue #128) --------
+    // Modül = sol menü sayfası; backend src/modules.js ile aynı anahtarlar.
+    'module.req-user': 'Kullanıcı Gereksinimleri',
+    'module.req-system': 'Sistem Gereksinimleri',
+    'module.req-subsystem': 'Alt Sistem Gereksinimleri',
+    'module.test-acceptance': 'Kabul Testleri',
+    'module.test-system': 'Sistem Testleri',
+    'module.test-subsystem': 'Alt Sistem Testleri',
+    'module.glossary': 'Sözlük',
+    'snapshot.scopeLabel': 'Kapsam',
+    'snapshot.scopeProject': 'Tüm proje',
+    'snapshot.scopeProjectHint':
+      'Projedeki bütün modüller tek bir sürüm noktası olarak dondurulur.',
+    'snapshot.scopeModule': 'Seçili modüller',
+    'snapshot.scopeModuleHint':
+      'Yalnızca seçtiğiniz modüller dondurulur. Her modülün sürüm numarası kendi başına ilerler.',
+    'snapshot.scopeSetNote':
+      '{n} modül seçildi: her modül için ayrı bir baseline alınır ve hepsi tek bir baseline seti altında toplanır.',
+    'snapshot.scopeProjectBadge': 'Tüm proje',
+    'snapshot.versionBadge': 'v{n}',
+    'snapshot.restoreScopeProject': 'Kapsam: tüm proje.',
+    'snapshot.restoreScopeModule': 'Kapsam: {modules}. Diğer modüllere dokunulmaz.',
+    'snapshot.restoreExternalLinks':
+      'Kapsam dışına giden {n} bağ referans olarak saklandı; geri yüklenmez.',
+    'snapshot.restorePartial': 'Yalnızca seçili kayıtları geri yükle',
+    'snapshot.restorePartialHint':
+      'Kısmi geri yüklemede hiçbir kayıt silinmez; yalnızca seçtikleriniz bu sürümdeki haline döner.',
+    'snapshot.restorePartialWarning':
+      'Seçilen {n} kayıt bu sürümdeki haline döner. Başka hiçbir kayda dokunulmaz.',
+    'snapshot.restoreNothingToPick': 'Geri yüklenecek kayıt yok.',
+    'snapshot.action.add': 'Eklenecek',
+    'snapshot.action.update': 'Güncellenecek',
+    'snapshot.action.delete': 'Silinecek',
+
+    // --- Kayıt üzerinde baseline görünürlüğü (Issue #128, madde 5) ---------
+    'view.tab.baselines': 'Baseline’lar',
+    'baselines.loading': 'Baseline’lar yükleniyor…',
+    'baselines.error': 'Baseline listesi yüklenemedi.',
+    'baselines.detailError': 'Bu baseline’daki hal yüklenemedi.',
+    'baselines.intro':
+      'Bu kayıt {n} sürüm noktasında yer alıyor. Detayı görmek için birine tıklayın.',
+    'baselines.emptyTitle': 'Bu kayıt hiçbir baseline’da yer almıyor',
+    'baselines.emptyDesc':
+      'Henüz hiçbir sürüme girmemiş yeni bir kayıt. Modülü dondurulduğunda burada listelenecek.',
+    'baselines.diffTitle': 'Bu sürümden bu yana değişenler',
+    'baselines.unchanged': 'Bu sürümden bu yana değişmedi.',
+    'baselines.liveDeleted': 'Bu kayıt canlı projede silinmiş; aşağıda dondurulmuş hali görünüyor.',
+    'baselines.empty': '—',
     'snapshot.newTitle': 'Yeni Snapshot Oluştur',
     'snapshot.newSub': 'Mevcut proje durumunun bir kopyasını (baseline) oluşturun.',
     'snapshot.nameLabel': 'Snapshot Adı',
@@ -2349,6 +2399,54 @@ export const STRINGS = {
     'diff.entity.link': 'Link',
     'diff.entity.glossary': 'Glossary',
     'diff.entity.attributeDef': 'Attribute',
+    'diff.entity.externalLink': 'Out-of-scope link',
+
+    // --- Baseline scope: module / set / partial restore (Issue #128) -------
+    'module.req-user': 'User Requirements',
+    'module.req-system': 'System Requirements',
+    'module.req-subsystem': 'Sub-system Requirements',
+    'module.test-acceptance': 'Acceptance Tests',
+    'module.test-system': 'System Tests',
+    'module.test-subsystem': 'Sub-system Tests',
+    'module.glossary': 'Glossary',
+    'snapshot.scopeLabel': 'Scope',
+    'snapshot.scopeProject': 'Whole project',
+    'snapshot.scopeProjectHint': 'Every module in the project is frozen as a single version point.',
+    'snapshot.scopeModule': 'Selected modules',
+    'snapshot.scopeModuleHint':
+      'Only the modules you select are frozen. Each module has its own version counter.',
+    'snapshot.scopeSetNote':
+      '{n} modules selected: one baseline per module, all grouped under a single baseline set.',
+    'snapshot.scopeProjectBadge': 'Whole project',
+    'snapshot.versionBadge': 'v{n}',
+    'snapshot.restoreScopeProject': 'Scope: whole project.',
+    'snapshot.restoreScopeModule': 'Scope: {modules}. Other modules are left untouched.',
+    'snapshot.restoreExternalLinks':
+      '{n} out-of-scope links were stored as references; they are not restored.',
+    'snapshot.restorePartial': 'Restore only the selected records',
+    'snapshot.restorePartialHint':
+      'A partial restore deletes nothing; only the records you pick revert to this version.',
+    'snapshot.restorePartialWarning':
+      'The {n} selected records revert to this version. Nothing else is touched.',
+    'snapshot.restoreNothingToPick': 'Nothing to restore.',
+    'snapshot.action.add': 'Will add',
+    'snapshot.action.update': 'Will update',
+    'snapshot.action.delete': 'Will delete',
+
+    // --- Baseline visibility on a record (Issue #128, item 5) -------------
+    'view.tab.baselines': 'Baselines',
+    'baselines.loading': 'Loading baselines…',
+    'baselines.error': 'Could not load the baseline list.',
+    'baselines.detailError': 'Could not load this record’s state in that baseline.',
+    'baselines.intro': 'This record appears in {n} version points. Click one for details.',
+    'baselines.emptyTitle': 'This record is not in any baseline',
+    'baselines.emptyDesc':
+      'A new record that has not entered any version yet. It will appear here once its module is frozen.',
+    'baselines.diffTitle': 'Changed since this version',
+    'baselines.unchanged': 'Unchanged since this version.',
+    'baselines.liveDeleted':
+      'This record was deleted from the live project; its frozen state is shown below.',
+    'baselines.empty': '—',
     'snapshot.newTitle': 'Create New Snapshot',
     'snapshot.newSub': 'Create a baseline copy of the current project state.',
     'snapshot.nameLabel': 'Snapshot Name',

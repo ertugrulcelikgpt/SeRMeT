@@ -160,6 +160,7 @@ model Project {
   members      ProjectMember[]
   approvals    Approval[]
   snapshots    ProjectSnapshot[]
+  baselineSets BaselineSet[]
   navGroups    NavGroup[]
   navItems     NavItem[]
   history      RequirementHistory[]
@@ -212,21 +213,71 @@ model ProjectSnapshot {
   kind           String   @default("manual")
   reason         String?
   restoredFromId String?
+  // --- Baseline KAPSAMI (Issue #128) --------------------------------------
+  //  DOORS'ta baseline MODUL (dokuman) seviyesinde alinir. Burada modul =
+  //  sol menu sayfasi (pageKey; bkz. src/modules.js).
+  //
+  //  scope     : 'project' — tum proje (modules = null)
+  //              'module'  — yalnizca `modules` listesindeki modul(ler)
+  //  modules   : kapsamdaki pageKey listesi; proje kapsaminda NULL.
+  //  moduleKey : kapsam TEK modulse o modul. Surum gecmisi bu alana gore
+  //              ayrilir: her modulun sayaci bagimsiz ilerler.
+  //  version   : ayni kapsam icindeki kacinci BASELINE (1'den baslar).
+  //              Siradan snapshot/guvenlik kopyasi surum almaz -> null.
+  //  setId     : birden cok modul baseline'i tek bir SET altinda toplandiysa
+  //              (orn. "CDR paketi" = SRS v1.0 + SDD v1.2), o set.
+  scope     String   @default("project")
+  modules   Json?
+  moduleKey String?
+  version   Int?
+  setId     String?
   createdBy String?
   createdAt DateTime @default(now())
   project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // Set silinirse iceri̇ndeki̇ modul baseline'lari KALIR (SetNull): baseline
+  // dondurulmus bir kayittir, bir gruplamanin kaldirilmasi onu yok etmez.
+  set       BaselineSet? @relation(fields: [setId], references: [id], onDelete: SetNull)
   items     SnapshotItem[]
 
   @@unique([projectId, name])
   @@index([projectId])
   @@index([projectId, createdAt])
   @@index([projectId, isBaseline])
+  @@index([projectId, moduleKey])
+  @@index([setId])
+}
+
+// --- Baseline SET (proje baseline'i) ---------------------------------------
+//  Birden cok MODUL baseline'ini tek bir teslim noktasi altinda toplar:
+//  "CDR paketi" = SRS v1.0 + SDD v1.2 + Test Plani v1.0. Setin kendisi de ad
+//  ve surum etiketi alir. Icerdigi baseline'lar ayri ProjectSnapshot
+//  satirlaridir; her biri KENDI modul surum gecmisinde ilerler.
+model BaselineSet {
+  id          String   @id @default(uuid())
+  projectId   String
+  name        String
+  label       String?
+  description String   @default("")
+  reason      String?
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  snapshots   ProjectSnapshot[]
+
+  @@unique([projectId, name])
+  @@index([projectId])
 }
 
 model SnapshotItem {
   id           String   @id @default(uuid())
   snapshotId   String
-  entityType   String // 'requirement' | 'testcase' | 'glossary' | 'link'
+  // 'requirement' | 'testcase' | 'glossary' | 'link' | 'attributeDef' |
+  // 'navLayout' | 'externalLink'.
+  //   externalLink (Issue #128): bir ucu KAPSAM DISINDA kalan bag. Geri
+  //   yuklenmez (hedef bu baseline'in parcasi degildir) ama hedefin o anki
+  //   text_id'si ve SURUMU ile birlikte saklanir, boylece izlenebilirlik
+  //   zinciri modul baseline'inda da kopmaz.
+  entityType   String
   entityId     String
   data         Json   // o anki kaydın tam kopyası (field-by-field)
   createdAt    DateTime @default(now())

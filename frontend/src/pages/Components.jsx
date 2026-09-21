@@ -974,6 +974,7 @@ export default function Components() {
         showStatus={false}
         showVerification
         commentEntityType="requirement"
+        baselineEntityType="requirement"
         approvalEntityType="requirement"
         onClose={() => setViewRow(null)}
       />

@@ -16,7 +16,11 @@
 //        audit          (GET/POST)
 //        snapshots      (GET/POST/GET:id/PATCH:id/DELETE:id,
 //                        :id/restore-preview, :id/restore)  -> #8, #128
+//                        POST gövdesi `modules` ile MODUL baseline'i alir.
+//        baseline-sets  (GET)  -> modul baseline'larini toplayan setler (#128)
 //        snapshots-diff (GET ?from=&to=)  -> baseline farki (#128)
+//        entity-baselines (GET :entityType/:entityId[/:snapshotId])
+//                        -> kaydin icinde oldugu baseline'lar + alan farki (#128)
 //        recompute      (POST)  -> tum durumlari yeniden hesaplar (cascade)
 // ============================================================================
 import express from 'express';
@@ -66,13 +70,17 @@ import {
 } from './nav.js';
 import { setProjectCodePrefix } from './textIdPrefix.js';
 import {
-  createSnapshot as createSnapshotRow,
+  createSnapshotForScope,
   buildRestorePlan,
   restoreSnapshot,
   diffSnapshots,
   assertDeletable,
   validateBaselineUpdate,
+  listRecordBaselines,
+  recordBaselineDetail,
+  listBaselineSets,
 } from './baselines.js';
+import { scopeSummary } from './modules.js';
 import { ensurePartNumbers, setPartNo, setPartNoBlock, checkPartNumbers } from './partNumbers.js';
 import { parsePartNoFormat, configOf as partNoConfigOf, allocatePartNo, PART_NO_AUDIT_FIELD } from './partNo.js';
 import { labelOf } from './label.js';
@@ -2579,7 +2587,9 @@ app.get(
         orderBy: { createdAt: 'desc' },
         take,
         skip,
-        include: { items: false },
+        // Baseline SETI (Issue #128): listede "hangi paketin parcasi"
+        // gorunsun diye ust veri birlikte gelir; items yine gelmez (agir).
+        include: { items: false, set: { select: { id: true, name: true, label: true } } },
       }),
       prisma.projectSnapshot.count({ where: { projectId: pid } }),
     ]);
@@ -2595,7 +2605,12 @@ app.post(
     const b = req.body || {};
     // Issue #128: ad yaninda SURUM ETIKETI (v1.0/SRR/PDR/CDR), aciklama ve
     // "resmi baseline" isareti alinir. Baseline gerekce ZORUNLU (baselines.js).
-    const snapshot = await createSnapshotRow(
+    //
+    // KAPSAM: `scope: 'project'` tum projeyi dondurur; `modules: [...]`
+    // yalnizca secili modulleri (sol menu sayfalari). Birden cok modul
+    // secilirse her modul icin AYRI bir baseline alinir ve hepsi tek bir
+    // BASELINE SET altinda toplanir (bkz. baselines.js createBaselineSet).
+    const { set, snapshots, snapshot } = await createSnapshotForScope(
       prisma,
       pid,
       {
@@ -2604,24 +2619,41 @@ app.post(
         description: b.description,
         isBaseline: b.isBaseline,
         reason: b.reason,
+        scope: b.scope,
+        modules: b.modules,
       },
       actorOf(req),
       flatten,
     );
 
-    await audit(pid, {
-      action: snapshot.isBaseline ? 'BASELINE_CREATE' : 'SNAPSHOT_CREATE',
-      entityType: 'snapshot',
-      entityId: snapshot.id,
-      textId: snapshot.label ? `${snapshot.name} (${snapshot.label})` : snapshot.name,
-      actor: actorOf(req),
-      reason: snapshot.reason,
-      message: snapshot.isBaseline
-        ? `Baseline olusturuldu: "${snapshot.name}"${snapshot.label ? ` [${snapshot.label}]` : ''}.`
-        : `Snapshot alindi: "${snapshot.name}".`,
-    });
+    for (const row of snapshots) {
+      await audit(pid, {
+        action: row.isBaseline ? 'BASELINE_CREATE' : 'SNAPSHOT_CREATE',
+        entityType: 'snapshot',
+        entityId: row.id,
+        textId: row.label ? `${row.name} (${row.label})` : row.name,
+        actor: actorOf(req),
+        reason: row.reason,
+        message: row.isBaseline
+          ? `Baseline olusturuldu: "${row.name}"${row.label ? ` [${row.label}]` : ''} ` +
+            `— kapsam: ${scopeSummary(row.scope, row.modules)}` +
+            `${row.version ? `, surum ${row.version}` : ''}` +
+            `${set ? `, "${set.name}" seti icinde` : ''}.`
+          : `Snapshot alindi: "${row.name}" — kapsam: ${scopeSummary(row.scope, row.modules)}.`,
+      });
+    }
 
-    res.status(201).json(snapshot);
+    // Tek snapshot alindiysa (eski davranis) satirin kendisi doner; set
+    // olustuysa set + icindeki baseline'lar birlikte doner.
+    res.status(201).json(set ? { ...snapshot, set, snapshots } : snapshot);
+  }),
+);
+
+// Baseline SETLERI: her set, icerdigi modul baseline'lariyla birlikte.
+app.get(
+  '/api/projects/:pid/baseline-sets',
+  wrap(async (req, res) => {
+    res.json(await listBaselineSets(prisma, req.params.pid));
   }),
 );
 
@@ -2659,11 +2691,20 @@ app.patch(
 
 // Geri yukleme ONIZLEMESI — hicbir sey yazmaz. Kullanici kac kaydin
 // eklenecegini/guncellenecegini/silinecegini gormeden onay veremez.
+// KISMI restore icin `?selection=id1,id2`: yalnizca secili kayitlar sayilir
+// ve o durumda HICBIR SEY SILINMEZ (bkz. baselines.js buildRestorePlan).
 app.get(
   '/api/projects/:pid/snapshots/:snapshotId/restore-preview',
   requirePM,
   wrap(async (req, res) => {
-    res.json(await buildRestorePlan(prisma, req.params.pid, req.params.snapshotId));
+    const raw = String(req.query.selection || '').trim();
+    const selection = raw
+      ? raw
+          .split(',')
+          .map((id) => id.trim())
+          .filter(Boolean)
+      : null;
+    res.json(await buildRestorePlan(prisma, req.params.pid, req.params.snapshotId, { selection }));
   }),
 );
 
@@ -2678,10 +2719,13 @@ app.post(
     const snapshot = await prisma.projectSnapshot.findUnique({ where: { id: req.params.snapshotId } });
     if (!snapshot || snapshot.projectId !== pid) throw bad('Snapshot bulunamadi.', 404);
 
+    // Issue #128: `selection` verilirse KISMI restore — yalnizca secili
+    // kayitlar geri yuklenir, hicbir sey silinmez.
     const result = await restoreSnapshot(prisma, pid, snapshot.id, {
       reason,
       actor: actorOf(req),
       flatten,
+      selection: Array.isArray(req.body?.selection) ? req.body.selection : null,
     });
 
     await audit(pid, {
@@ -2694,6 +2738,8 @@ app.post(
       message:
         `"${snapshot.name}" anina geri donuldu ` +
         `(+${result.plan.totals.added} / ~${result.plan.totals.updated} / -${result.plan.totals.deleted}). ` +
+        `Kapsam: ${scopeSummary(result.scope, result.modules)}` +
+        `${result.partial ? ' (yalnizca secili kayitlar)' : ''}. ` +
         `Onay durumu ve kilitler de o anki haline dondu. ` +
         `Guvenlik kopyasi: "${result.safetySnapshotName}".`,
     });
@@ -2714,6 +2760,28 @@ app.get(
   }),
 );
 
+// ---------------------------------------------------------------------------
+//  Kayit uzerinde baseline gorunurlugu (Issue #128, madde 5)
+//  "Bu gereksinim/test hangi baseline'larin icinde kaldi?" Kayda bir sey
+//  yazilmaz; cevap SnapshotItem'dan okunur. Okuma yetkisi yeterlidir.
+// ---------------------------------------------------------------------------
+app.get(
+  '/api/projects/:pid/entity-baselines/:entityType/:entityId',
+  wrap(async (req, res) => {
+    const { pid, entityType, entityId } = req.params;
+    res.json(await listRecordBaselines(prisma, pid, entityType, entityId));
+  }),
+);
+
+// Kaydin SECILEN baseline'daki hali + canli halle ALAN BAZINDA farki.
+app.get(
+  '/api/projects/:pid/entity-baselines/:entityType/:entityId/:snapshotId',
+  wrap(async (req, res) => {
+    const { pid, entityType, entityId, snapshotId } = req.params;
+    res.json(await recordBaselineDetail(prisma, pid, entityType, entityId, snapshotId, flatten));
+  }),
+);
+
 app.get(
   '/api/projects/:pid/snapshots/:snapshotId',
   wrap(async (req, res) => {
@@ -2722,7 +2790,7 @@ app.get(
 
     const snapshot = await prisma.projectSnapshot.findUnique({
       where: { id: snapshotId },
-      include: { items: true },
+      include: { items: true, set: true },
     });
 
     if (!snapshot || snapshot.projectId !== pid) throw bad('Snapshot bulunamadi.', 404);

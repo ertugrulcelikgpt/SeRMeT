@@ -369,7 +369,9 @@ export function AppProvider({ children }) {
 
     // Snapshots (Issue #8) ----------------------------------------------------
     // payload: string (eski kullanim) ya da
-    // { name, label, description, isBaseline, reason } (Issue #128).
+    // { name, label, description, isBaseline, reason, modules } (Issue #128).
+    // `modules` KAPSAMDIR: verilmezse tum proje, tek modul -> modul
+    // baseline'i, birden cok modul -> baseline seti.
     async createSnapshot(payload) {
       if (!pid) throw new Error('Aktif proje yok')
       const s = await data.createSnapshot(pid, payload)
@@ -390,9 +392,11 @@ export function AppProvider({ children }) {
     },
     // Issue #128: geri yukleme TUM proje verisini degistirir — bu yuzden
     // sonrasinda tam refresh sart (gereksinim/test/bag/sozluk/menu hepsi).
-    async restoreSnapshot(snapshotId, reason) {
+    // `selection` verilirse KISMI restore: yalnizca secili kayitlar geri
+    // yuklenir, hicbir sey silinmez.
+    async restoreSnapshot(snapshotId, reason, selection = null) {
       if (!pid) throw new Error('Aktif proje yok')
-      const result = await data.restoreSnapshot(pid, snapshotId, reason)
+      const result = await data.restoreSnapshot(pid, snapshotId, reason, selection)
       await refresh()
       return result
     },
