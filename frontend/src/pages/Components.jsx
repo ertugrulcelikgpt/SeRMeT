@@ -7,9 +7,13 @@
 //
 //  IKI GORUNUM, TEK SECIM:
 //    HARITA (varsayilan) — urun kirilimi zaten bir agac oldugu icin akis
-//      semasi dogal sunumdur. YUKARIDAN ASAGI dallanir: kokten disa acilan
-//      yelpaze, yaprak yiginlari ise ust kutunun altinda ayni hizada bir
-//      zincir (bkz. layoutMindMap `compact`).
+//      semasi dogal sunumdur. YUKARIDAN ASAGI dallanir; iki duzen secilebilir
+//      ("Duzen" secimi, bkz. MAP_STYLE):
+//        Agac (varsayilan) — klasik "feature tree": ust kutu, altinda
+//          kardesler YAN YANA (sistem -> KKT / AMTB / STC / UTC; AMTB ->
+//          Donanim -> Kentel / ATM). Kirilimin SEKLINI gosterir.
+//        Sikisik — yaprak yiginlari ust kutunun altinda ayni hizada zincir
+//          olur (bkz. layoutMindMap `compact`): harita daralir, asagi uzar.
 //      Kutuda YALNIZCA ISIM yazar; KUTUYA TIKLAYINCA kaydin detayi (ID,
 //      aciklama, oznitelikler) acilir ve secim oraya tasinir, dal ucundaki
 //      NOKTA dali acar/kapatir. Harita tek bir proje dugumuyle acilir ve
@@ -73,6 +77,14 @@ const MAP_LAYOUT = { nodeWidth: 176, nodeHeight: 36, rowGap: 30, columnGap: 18 }
 
 const VIEW = { MAP: 'map', LIST: 'list' }
 
+// Harita duzeni:
+//   TREE    — klasik "feature tree": ust kutu, altinda kardesler YAN YANA
+//             (sistem -> KKT / AMTB / STC / UTC -> Donanim -> Kentel / ATM).
+//             Kirilimin SEKLINI gosterir; genis seviyelerde yana uzar.
+//   COMPACT — yaprak yiginlarini ust kutunun altinda zincire cevirir; harita
+//             daralir, asagi uzar (cok kardesli projelerde gezinmesi kolay).
+const MAP_STYLE = { TREE: 'tree', COMPACT: 'compact' }
+
 function download(blob, filename) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -91,6 +103,10 @@ export default function Components() {
   const { t } = useLang()
 
   const [view, setView] = useState(VIEW.MAP)
+  // Varsayilan duzen klasik agac: kullanicinin bekledigi sey urun kiriliminin
+  // yukaridan asagi SEKLIDIR; sikisik duzen bunu zincire cevirdigi icin
+  // kardeslik iliskisi kayboluyordu (bkz. MAP_STYLE).
+  const [mapStyle, setMapStyle] = useState(MAP_STYLE.TREE)
   // Kaynak secimi: kullanici secmediyse (null) PBS varsayilandir; PBS hic
   // bilesen uretmiyorsa (agac kurulmamis) Alan kaynagina DUSULUR — ekran
   // bos bir liste yerine calisir halde acilir.
@@ -188,13 +204,13 @@ export default function Components() {
       layoutMindMap(graph, expanded, {
         layout: MAP_LAYOUT,
         orientation: 'vertical',
-        // Genis seviyeler (onlarca kardes) yan yana dizilince harita
-        // binlerce piksel genisliyor ve ekrana sigdirmak icin gereken
-        // yakinlastirmada etiketler okunmuyordu. Sikisik duzen bu
-        // seviyeleri girintili listeye cevirir: harita daralir, asagi uzar.
-        compact: true,
+        // Klasik agacta her yaprak kendi sutununu alir: kirilimin sekli
+        // dogru gorunur ama genis seviyelerde harita yana uzar. Sikisik
+        // duzen yaprak yiginlarini zincire cevirir; ikisi arasinda gecis
+        // ust seritteki "Duzen" secimidir.
+        compact: mapStyle === MAP_STYLE.COMPACT,
       }),
-    [graph, expanded],
+    [graph, expanded, mapStyle],
   )
 
   const toggle = useCallback((key, record) => {
@@ -369,6 +385,24 @@ export default function Components() {
     </button>
   )
 
+  const mapStyleBtn = (key, label, title) => (
+    <button
+      type="button"
+      onClick={() => setMapStyle(key)}
+      title={title}
+      data-testid={`comp-mapstyle-${key}`}
+      aria-pressed={mapStyle === key}
+      className={
+        'rounded-lg px-2.5 py-1.5 text-[11px] font-semibold transition-colors ' +
+        (mapStyle === key
+          ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300'
+          : 'text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800')
+      }
+    >
+      {label}
+    </button>
+  )
+
   return (
     <div className="flex h-full flex-col gap-4">
       {/* Baslik + gorunum secimi + disa aktarim */}
@@ -453,6 +487,18 @@ export default function Components() {
 
         {view === VIEW.MAP && !isEmpty && (
           <>
+            <div
+              className="flex items-center gap-1 rounded-xl border border-slate-200 p-1 dark:border-slate-800"
+              role="group"
+              aria-label={t('comp.layout')}
+            >
+              {mapStyleBtn(MAP_STYLE.TREE, t('comp.layout.tree'), t('comp.layout.treeHint'))}
+              {mapStyleBtn(
+                MAP_STYLE.COMPACT,
+                t('comp.layout.compact'),
+                t('comp.layout.compactHint'),
+              )}
+            </div>
             <button
               type="button"
               onClick={expandAll}

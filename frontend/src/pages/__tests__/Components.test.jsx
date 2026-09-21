@@ -232,6 +232,61 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
   })
 })
 
+describe('Bileşenler — harita düzeni (ürün ağacı / feature tree)', () => {
+  const expandPump = () => {
+    expandDot('EH-TİD-1')
+    expandDot('EH-TİD-SYS-002')
+  }
+
+  it('varsayilan duzen AGAC: kardesler ust kutunun altinda YAN YANA durur', () => {
+    renderPage()
+    expect(screen.getByTestId('comp-mapstyle-tree')).toHaveAttribute('aria-pressed', 'true')
+    expandPump()
+    const hw = mapNode('EH-TİD-HW-001')
+    const sw = mapNode('EH-TİD-SW-001')
+    // Ayni seviyedeki iki kardes ayni satirda (y esit), farkli sutunlarda.
+    expect(Number(hw.getAttribute('y'))).toBe(Number(sw.getAttribute('y')))
+    expect(Number(hw.getAttribute('x'))).not.toBe(Number(sw.getAttribute('x')))
+  })
+
+  it('agac duzeninde ust kutu cocuklarinin TAM ORTASINDA durur', () => {
+    renderPage()
+    expandPump()
+    const parent = Number(mapNode('EH-TİD-SYS-002').getAttribute('x'))
+    const left = Number(mapNode('EH-TİD-HW-001').getAttribute('x'))
+    const right = Number(mapNode('EH-TİD-SW-001').getAttribute('x'))
+    expect(parent).toBeCloseTo((Math.min(left, right) + Math.max(left, right)) / 2, 5)
+  })
+
+  it('SIKISIK duzene gecince ayni kardesler zincire doner (alt alta, ayni hizada)', () => {
+    renderPage()
+    fireEvent.click(screen.getByTestId('comp-mapstyle-compact'))
+    expect(screen.getByTestId('comp-mapstyle-compact')).toHaveAttribute('aria-pressed', 'true')
+    expandPump()
+    const hw = mapNode('EH-TİD-HW-001')
+    const sw = mapNode('EH-TİD-SW-001')
+    expect(Number(hw.getAttribute('x'))).toBe(Number(sw.getAttribute('x')))
+    expect(Number(hw.getAttribute('y'))).not.toBe(Number(sw.getAttribute('y')))
+  })
+
+  it('duzen secimi acik dallari korur; geri donulunce agac duzeni gelir', () => {
+    renderPage()
+    expandPump()
+    fireEvent.click(screen.getByTestId('comp-mapstyle-compact'))
+    expect(mapNode('EH-TİD-HW-001')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('comp-mapstyle-tree'))
+    const hw = mapNode('EH-TİD-HW-001')
+    const sw = mapNode('EH-TİD-SW-001')
+    expect(Number(hw.getAttribute('y'))).toBe(Number(sw.getAttribute('y')))
+  })
+
+  it('duzen secimi yalnizca haritada gorunur (Liste gorunumunde yok)', () => {
+    renderPage()
+    showList()
+    expect(screen.queryByTestId('comp-mapstyle-tree')).not.toBeInTheDocument()
+  })
+})
+
 describe('Bileşenler — bileşen listesi', () => {
   it('urun agacindaki alt kirilimli dugumler bilesen olarak listelenir', () => {
     renderPage()

@@ -564,6 +564,13 @@ export const STRINGS = {
     'comp.view': 'Görünüm',
     'comp.view.map': 'Harita',
     'comp.view.list': 'Liste',
+    'comp.layout': 'Düzen',
+    'comp.layout.tree': 'Ağaç',
+    'comp.layout.treeHint':
+      'Klasik ürün ağacı: üst kutunun altında kardeşler yan yana dallanır (yukarıdan aşağı).',
+    'comp.layout.compact': 'Sıkışık',
+    'comp.layout.compactHint':
+      'Alt kırılımı olmayan kardeşler üst kutunun altında zincir olur; harita daralır, aşağı uzar.',
     'comp.mapHint':
       'Kutuya tıkla: kayıt detayı (ID + açıklama) · dal ucundaki noktaya tıkla: aç / kapat · tekerlek veya sürükle: kaydır · Ctrl + tekerlek: yakınlaştır',
     'comp.mapCounts': '{visible} / {total} düğüm',
@@ -1552,6 +1559,13 @@ export const STRINGS = {
     'comp.view': 'View',
     'comp.view.map': 'Map',
     'comp.view.list': 'List',
+    'comp.layout': 'Layout',
+    'comp.layout.tree': 'Tree',
+    'comp.layout.treeHint':
+      'Classic product tree: siblings branch side by side beneath their parent (top-down).',
+    'comp.layout.compact': 'Compact',
+    'comp.layout.compactHint':
+      'Siblings with no breakdown chain below the parent box; the map narrows and grows downward.',
     'comp.mapHint':
       'Click a box: record details (ID + description) · click the dot at the branch end: expand / collapse · wheel or drag: pan · Ctrl + wheel: zoom',
     'comp.mapCounts': '{visible} / {total} nodes',
