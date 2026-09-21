@@ -133,6 +133,7 @@ export default function MyAssignments() {
         showStatus={viewTarget?.entityType !== 'requirement'}
         showVerification={viewTarget?.entityType === 'requirement'}
         commentEntityType={viewTarget?.entityType || null}
+        approvalEntityType={viewTarget?.entityType || null}
         onClose={() => setViewTarget(null)}
       />
     </div>

@@ -465,6 +465,26 @@ export const STRINGS = {
     'apm.unlocking': 'Açılıyor…',
     'apm.noVoters': 'Bu bileşen için onay yetkisi tanımlı personel yok; yalnızca PM onayı gerekir.',
 
+    // Issue #126: kayit detayindaki kalici "Onaylar" paneli (ApprovalPanel).
+    'apnl.title': 'Onaylar',
+    'apnl.approvers': 'Onaylayan',
+    'apnl.rejecters': 'Reddeden',
+    'apnl.waiting': 'Bekleniyor',
+    'apnl.approvedCount': 'Onaylandı',
+    'apnl.rejectedCount': 'Reddedildi',
+    'apnl.showAll': 'Tümünü göster',
+    'apnl.andMore': '… ve {n} kişi daha',
+    'apnl.withdraw': 'Oyu geri çek',
+    'apnl.addComment': 'Yorum Ekle',
+    'apnl.commentPlaceholder': 'Onay yorumu…',
+    'apnl.commentSave': 'Kaydet',
+    'apnl.invite': 'Onaya davet et',
+    'apnl.inviteNone': 'Davet edilebilecek yetkili yok',
+    'apnl.invitePick': 'Yetkili seçin…',
+    'apnl.inviteSubmit': 'Davet Et',
+    'apnl.invited': 'Davetli',
+    'apnl.departed': 'Ayrıldı',
+
     // --- StatCard / BreakdownBar / ScoreRing ---
     'stat.noData': 'Veri yok.',
     'stat.coverage': 'Kapsam',
@@ -1530,6 +1550,26 @@ export const STRINGS = {
     'apm.unlocking': 'Unlocking…',
     'apm.noVoters':
       'No personnel have approval rights for this component; only PM approval is required.',
+
+    // Issue #126: persistent "Approvals" panel inside the record detail.
+    'apnl.title': 'Approvals',
+    'apnl.approvers': 'Approved by',
+    'apnl.rejecters': 'Rejected by',
+    'apnl.waiting': 'Waiting on',
+    'apnl.approvedCount': 'Approved',
+    'apnl.rejectedCount': 'Rejected',
+    'apnl.showAll': 'Show all',
+    'apnl.andMore': '… and {n} more',
+    'apnl.withdraw': 'Withdraw vote',
+    'apnl.addComment': 'Add comment',
+    'apnl.commentPlaceholder': 'Approval comment…',
+    'apnl.commentSave': 'Save',
+    'apnl.invite': 'Invite to approve',
+    'apnl.inviteNone': 'No eligible approver to invite',
+    'apnl.invitePick': 'Pick an approver…',
+    'apnl.inviteSubmit': 'Invite',
+    'apnl.invited': 'Invited',
+    'apnl.departed': 'Departed',
 
     // --- StatCard / BreakdownBar / ScoreRing ---
     'stat.noData': 'No data.',

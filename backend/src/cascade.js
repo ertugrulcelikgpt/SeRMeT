@@ -195,7 +195,9 @@ export async function recomputeApprovalsBulk(prisma, pid) {
     const table = Prisma.raw(`"${comp.model}"`);
     // Oy veren havuzu bos olabilir (proje uyesi yok) -> hicbir kayit Approved olamaz.
     if (voterIds.length === 0) continue;
-    // Eksik oyu olanlar -> Pending (sadece su an farkli olanlara yazar)
+    // Eksik oyu / bloklayan satiri (reject veya bekleyen davet) olanlar ->
+    // Pending. Iki UPDATE birbirinin TAM TUMLEYENIDIR (approvals.js ile ayni
+    // kural): Approved  <=>  havuzun tamami 'approve' VE bloklayan satir yok.
     await prisma.$executeRaw`
       UPDATE ${table}
       SET "approvalStatus" = 'Pending', "locked" = false, "updatedAt" = now()
@@ -206,7 +208,14 @@ export async function recomputeApprovalsBulk(prisma, pid) {
           SELECT a."entityId" FROM "Approval" a
           WHERE a."projectId" = ${pid}
             AND a."entityType" = ${comp.entityType}
+            AND COALESCE(a."decision", 'approve') = 'approve'
             AND a."voterId" = ANY(${voterIds}::text[])
+            AND a."entityId" NOT IN (
+              SELECT b."entityId" FROM "Approval" b
+              WHERE b."projectId" = ${pid}
+                AND b."entityType" = ${comp.entityType}
+                AND COALESCE(b."decision", 'approve') <> 'approve'
+            )
           GROUP BY a."entityId"
           HAVING COUNT(DISTINCT a."voterId") = ${voterIds.length}
         )`;
@@ -221,9 +230,16 @@ export async function recomputeApprovalsBulk(prisma, pid) {
           SELECT a."entityId" FROM "Approval" a
           WHERE a."projectId" = ${pid}
             AND a."entityType" = ${comp.entityType}
+            AND COALESCE(a."decision", 'approve') = 'approve'
             AND a."voterId" = ANY(${voterIds}::text[])
           GROUP BY a."entityId"
           HAVING COUNT(DISTINCT a."voterId") = ${voterIds.length}
+        )
+        AND "id" NOT IN (
+          SELECT a."entityId" FROM "Approval" a
+          WHERE a."projectId" = ${pid}
+            AND a."entityType" = ${comp.entityType}
+            AND COALESCE(a."decision", 'approve') <> 'approve'
         )`;
   }
 }

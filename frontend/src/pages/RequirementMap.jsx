@@ -389,6 +389,7 @@ export default function RequirementMap() {
         showStatus={viewRow?.kind !== 'requirement'}
         showVerification={viewRow?.kind === 'requirement'}
         commentEntityType={viewRow?.kind === 'requirement' ? 'requirement' : 'testcase'}
+        approvalEntityType={viewRow?.kind === 'requirement' ? 'requirement' : 'testcase'}
         onClose={() => setViewRow(null)}
       />
     </div>

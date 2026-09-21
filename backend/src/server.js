@@ -21,6 +21,8 @@ import { PrismaClient } from '@prisma/client';
 import { STATUS, isValidClearanceLevel, componentKeyOf } from './constants.js';
 import { validateLink } from './logic.js';
 import { recomputeStatusesBulk, getRequiredVoters } from './cascade.js';
+// Issue #126: oylarin (approve/reject/pending davet) tek yorumlama noktasi.
+import { summarizeApprovals, DECISION, decisionOf } from './approvals.js';
 import {
   requireAuth,
   requirePM,
@@ -216,6 +218,16 @@ async function audit(projectId, entry) {
   } catch (e) {
     console.error('[audit] yazilamadi:', e?.message || e);
   }
+}
+
+// --- Onay yorumu temizleyici (Issue #126) ----------------------------------
+//  Onay yorumu DUZ METINDIR (zengin metin degil): kirpilir, uzunlugu sinirlanir,
+//  bos ise null'a duser (panelde "yorum yok" olarak gorunur).
+const APPROVAL_COMMENT_MAX = 1000;
+function cleanComment(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim().slice(0, APPROVAL_COMMENT_MAX);
+  return text === '' ? null : text;
 }
 
 // --- Sistem geneli (proje-bagimsiz) denetim (Issue #86) --------------------
@@ -426,7 +438,7 @@ async function recomputeApproval(pid, entityType, entityId) {
   const model = entityType === 'requirement' ? 'requirement' : 'testCase';
   const entity = await prisma[model].findUnique({ where: { id: entityId } });
   if (!entity || entity.projectId !== pid) throw bad('Varlik bulunamadi.', 404);
-  const { requiredVoterIds } = await requiredVotersFor(pid, entityType, entity);
+  const { requiredVoters, requiredVoterIds } = await requiredVotersFor(pid, entityType, entity);
   if (requiredVoterIds.length === 0) {
     await prisma[model].update({
       where: { id: entityId },
@@ -435,9 +447,9 @@ async function recomputeApproval(pid, entityType, entityId) {
     return { approvalStatus: 'Pending', locked: false };
   }
   const approvals = await prisma.approval.findMany({ where: { projectId: pid, entityType, entityId } });
-  const votedIds = new Set(approvals.map((a) => a.voterId));
-  const allVoted = requiredVoterIds.every((v) => votedIds.has(v));
-  const approved = allVoted;
+  // Issue #126: konsensus kurali approvals.js'te TEK yerde tanimli — panel
+  // sayaclari, bu hesap ve cascade.js'teki toplu SQL ayni ozeti uygular.
+  const approved = summarizeApprovals(requiredVoters, approvals).consensus;
   const data = { approvalStatus: approved ? 'Approved' : 'Pending', locked: approved };
   // Test SONUCU (Passed/Failed/In Review) artik elle duzenlenemez; yalnizca
   // onay/red aksiyonlarindan turetilir. Tam konsensus -> 'Approved' (Passed).
@@ -2640,45 +2652,118 @@ app.get(
   }),
 );
 
-// Oy ver / geri cek (toggle). Kilitliyken yalnizca PM degistirebilir.
+// --- Ortak yardimcilar (Issue #126) ----------------------------------------
+//  Onay uclarinin hepsi ayni varlik cozumlemesini yapar: tipi dogrula, kaydi
+//  bul, projeye ait oldugunu garanti et.
+async function loadApprovalEntity(pid, entityType, entityId) {
+  if (!entityType || !entityId) throw bad('entityType, entityId zorunlu.');
+  if (!['requirement', 'testcase'].includes(entityType)) throw bad('Gecersiz entityType.');
+  const model = entityType === 'requirement' ? 'requirement' : 'testCase';
+  const entity = await prisma[model].findUnique({ where: { id: String(entityId) } });
+  if (!entity || entity.projectId !== pid) throw bad('Varlik bulunamadi.', 404);
+  return entity;
+}
+
+//  Bir bilesen icin onay YETKISI olan TUM aktif kullanicilar (proje uyeligine
+//  BAKMADAN). getRequiredVoters havuzu yalnizca projenin uyelerini alir;
+//  "Onaya davet et" ise havuz disindaki yetkilileri de kapsar (spec: yetkili
+//  kullanicilar onay listesine eklenebilir).
+async function approveCapableUsers(componentKey) {
+  const [users, roles] = await Promise.all([
+    prisma.user.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true, roleKey: true, role: true },
+    }),
+    prisma.systemRole.findMany({ where: { isActive: true } }),
+  ]);
+  const roleByKey = new Map(roles.map((r) => [r.key, r]));
+  const out = [];
+  for (const u of users) {
+    if (isPMRole(u)) {
+      out.push({ id: u.id, name: u.name, roleName: u.roleKey || u.role });
+      continue;
+    }
+    const sr = u.roleKey ? roleByKey.get(u.roleKey) : null;
+    if (!sr) continue;
+    const perm = (sr.permissions || {}).approve || {};
+    if (perm.enabled && Array.isArray(perm.components) && perm.components.includes(componentKey))
+      out.push({ id: u.id, name: u.name, roleName: sr.name });
+  }
+  return out;
+}
+
+//  Oy verebilir mi? Issue #126: onaya DAVET EDILEN kullanici proje uyesi
+//  olmasa da oyunu kullanabilir — davetin amaci tam olarak budur.
+//  Aksi halde mevcut kural aynen isler: proje uyeligi + bilesen approve izni.
+//  DIKKAT: yalnizca davetten dogan satir (invitedById dolu) muafiyet saglar;
+//  projeden cikarilmis uyenin gecmis oy satiri yeniden oy hakki VERMEZ.
+async function assertCanVote(pid, entityType, entity, user, existingRow) {
+  const isPM = isPMRole(user);
+  if (isPM) return true;
+  if (existingRow?.invitedById) return true; // onaya davet edilmis
+  const membership = await prisma.projectMember.findUnique({
+    where: { projectId_userId: { projectId: pid, userId: user.id } },
+    select: { id: true },
+  });
+  if (!membership) throw bad('Bu projeye erisim yetkiniz yok.', 403);
+  const resolved = await resolveUserRole(prisma, user);
+  const perm = (resolved.permissions || {}).approve || {};
+  const compKey = componentKeyOf(entityType, entity.type);
+  if (!perm.enabled || !Array.isArray(perm.components) || !perm.components.includes(compKey))
+    throw bad('Bu bilesen icin onaylama yetkiniz yok.', 403);
+  return true;
+}
+
+//  Oturum kullanicisini (ve varsa mevcut oy satirini) getirir.
+async function currentVoter(req) {
+  const userId = req.auth?.userId;
+  if (!userId) throw bad('Gecersiz kimlik.', 401);
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) throw bad('Kullanici bulunamadi.', 401);
+  return user;
+}
+
+// Oy ver / degistir / geri cek. Kilitliyken yalnizca PM degistirebilir.
 // Issue #97: tamamen User tabanli — voterId her zaman User UUID.
+// Issue #126: body'ye `decision` ('approve' | 'reject') ve `comment` eklendi;
+// `action: 'withdraw'` oyu acikca geri ceker. Eski sozlesme (yalnizca
+// entityType+entityId) KORUNUR: tekrar cagri onay <-> geri cekme toggle'idir.
 app.post(
   '/api/projects/:pid/approvals/vote',
   wrap(async (req, res) => {
     const pid = req.params.pid;
-    const { entityType, entityId } = req.body || {};
-    if (!entityType || !entityId) throw bad('entityType, entityId zorunlu.');
-    if (!['requirement', 'testcase'].includes(entityType)) throw bad('Gecersiz entityType.');
-    const model = entityType === 'requirement' ? 'requirement' : 'testCase';
-    const entity = await prisma[model].findUnique({ where: { id: entityId } });
-    if (!entity || entity.projectId !== pid) throw bad('Varlik bulunamadi.', 404);
-    const userId = req.auth?.userId;
-    if (!userId) throw bad('Gecersiz kimlik.', 401);
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user) throw bad('Kullanici bulunamadi.', 401);
+    const { entityType, entityId, action, comment } = req.body || {};
+    const decision = req.body?.decision;
+    if (decision && ![DECISION.APPROVE, DECISION.REJECT].includes(decision))
+      throw bad('Gecersiz decision (approve | reject).');
+    const entity = await loadApprovalEntity(pid, entityType, entityId);
+    const user = await currentVoter(req);
     const isPM = isPMRole(user);
-    // Proje siniri: PM her projeye; normal kullanici yalnizca uyeyse (Issue #103).
-    if (!isPM) {
-      const membership = await prisma.projectMember.findUnique({
-        where: { projectId_userId: { projectId: pid, userId } },
-        select: { id: true },
-      });
-      if (!membership) throw bad('Bu projeye erisim yetkiniz yok.', 403);
-    }
     const voterId = user.id;
     const voterName = user.name;
+    const existing = await prisma.approval.findFirst({
+      where: { projectId: pid, entityType, entityId, voterId },
+    });
+    await assertCanVote(pid, entityType, entity, user, existing);
     if (entity.locked && !isPM)
       throw bad('Bu kayit onaylandi ve kilitli. Yalnizca Proje Yoneticisi kilidi acabilir.', 403);
-    if (!isPM) {
-      const resolved = await resolveUserRole(prisma, user);
-      const perm = (resolved.permissions || {}).approve || {};
-      const compKey = componentKeyOf(entityType, entity.type);
-      if (!perm.enabled || !Array.isArray(perm.components) || !perm.components.includes(compKey))
-        throw bad('Bu bilesen icin onaylama yetkiniz yok.', 403);
-    }
-    const existing = await prisma.approval.findFirst({ where: { projectId: pid, entityType, entityId, voterId } });
-    if (existing) {
-      await prisma.approval.delete({ where: { id: existing.id } });
+
+    // Hedef karar: acik `decision` > toggle (eski davranis).
+    // Toggle yalnizca fiilen OY VERILMIS satirda geri cekmeye doner; bekleyen
+    // davet ('pending') satiri bir oy DEGILDIR, toggle onu onaya cevirir.
+    const hasVote = existing && decisionOf(existing) !== DECISION.PENDING;
+    const withdraw = action === 'withdraw' || (!decision && hasVote);
+    if (withdraw) {
+      if (!existing) throw bad('Geri cekilecek oy yok.', 404);
+      if (existing.invitedById) {
+        // Davetten dogan satir SILINMEZ: davet korunsun diye 'pending'e doner.
+        await prisma.approval.update({
+          where: { id: existing.id },
+          data: { decision: DECISION.PENDING, comment: null },
+        });
+      } else {
+        await prisma.approval.delete({ where: { id: existing.id } });
+      }
       await audit(pid, {
         action: 'APPROVAL_WITHDRAW',
         entityType,
@@ -2688,24 +2773,110 @@ app.post(
         message: `Onay geri cekildi: ${voterName}.`,
       });
     } else {
-      await prisma.approval.create({
-        data: {
-          projectId: pid,
-          entityType,
-          entityId,
-          voterId,
-          voterName: voterName || voterId,
-        },
-      });
+      const target = decision || DECISION.APPROVE;
+      const data = {
+        decision: target,
+        // Yorum yalnizca acikca gonderildiyse yazilir; gonderilmezse mevcut
+        // yorum korunur (oy degistirmek yorumu silmesin).
+        ...(comment === undefined ? {} : { comment: cleanComment(comment) }),
+      };
+      if (existing) {
+        await prisma.approval.update({ where: { id: existing.id }, data });
+      } else {
+        await prisma.approval.create({
+          data: {
+            projectId: pid,
+            entityType,
+            entityId,
+            voterId,
+            voterName: voterName || voterId,
+            ...data,
+          },
+        });
+      }
       await audit(pid, {
-        action: 'APPROVAL_VOTE',
+        action: target === DECISION.REJECT ? 'APPROVAL_REJECT_VOTE' : 'APPROVAL_VOTE',
         entityType,
         entityId,
         textId: entity.text_id,
         actor: voterId,
-        message: `Onaylandi: ${voterName}.`,
+        message: target === DECISION.REJECT ? `Reddedildi: ${voterName}.` : `Onaylandi: ${voterName}.`,
       });
     }
+    const state = await recomputeApproval(pid, entityType, entityId);
+    res.json(state);
+  }),
+);
+
+// Onay yorumu ("Yorum Ekle"): yorum KENDI oy kaydina baglanir, boylece
+// panelde hangi oyla iliskili oldugu gorunur. Oyu/daveti olmayan kullanici
+// yorum ekleyemez — baglanacagi bir oy kaydi yoktur.
+app.post(
+  '/api/projects/:pid/approvals/comment',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const { entityType, entityId, comment } = req.body || {};
+    const entity = await loadApprovalEntity(pid, entityType, entityId);
+    const user = await currentVoter(req);
+    const existing = await prisma.approval.findFirst({
+      where: { projectId: pid, entityType, entityId, voterId: user.id },
+    });
+    if (!existing) throw bad('Yorum eklemek icin once onay listesinde olmalisiniz.', 403);
+    const text = cleanComment(comment);
+    await prisma.approval.update({ where: { id: existing.id }, data: { comment: text } });
+    await audit(pid, {
+      action: 'APPROVAL_COMMENT',
+      entityType,
+      entityId,
+      textId: entity.text_id,
+      actor: user.id,
+      message: text ? `Onay yorumu eklendi (${user.name}): "${text}".` : `Onay yorumu kaldirildi (${user.name}).`,
+    });
+    res.json({ ok: true, comment: text });
+  }),
+);
+
+// Onaya davet et: bilesende onay YETKISI olan bir kullaniciyi bu kaydin onay
+// listesine ekler ('pending' oy yuvasi). Bekleyen davet konsensusu BLOKLAR —
+// davet edilen oy verene kadar kayit kilitlenmez.
+app.post(
+  '/api/projects/:pid/approvals/invite',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const { entityType, entityId, userId } = req.body || {};
+    if (!userId) throw bad('userId zorunlu.');
+    const entity = await loadApprovalEntity(pid, entityType, entityId);
+    const inviter = await currentVoter(req);
+    // Davet edebilmek icin davet edenin de bu kayitta soz hakki olmali:
+    // PM veya bilesende onay yetkisi olan proje uyesi.
+    await assertCanVote(pid, entityType, entity, inviter, null);
+    const compKey = componentKeyOf(entityType, entity.type);
+    const capable = await approveCapableUsers(compKey);
+    const invitee = capable.find((u) => u.id === userId);
+    if (!invitee) throw bad('Bu kullanicinin bu bilesende onay yetkisi yok.', 400);
+    const existing = await prisma.approval.findFirst({
+      where: { projectId: pid, entityType, entityId, voterId: userId },
+    });
+    if (existing) throw bad('Bu kullanici zaten onay listesinde.', 409);
+    await prisma.approval.create({
+      data: {
+        projectId: pid,
+        entityType,
+        entityId,
+        voterId: userId,
+        voterName: invitee.name || userId,
+        decision: DECISION.PENDING,
+        invitedById: inviter.id,
+      },
+    });
+    await audit(pid, {
+      action: 'APPROVAL_INVITE',
+      entityType,
+      entityId,
+      textId: entity.text_id,
+      actor: inviter.id,
+      message: `Onaya davet edildi: ${invitee.name} (davet eden: ${inviter.name}).`,
+    });
     const state = await recomputeApproval(pid, entityType, entityId);
     res.json(state);
   }),
@@ -2731,6 +2902,35 @@ app.post(
       where: { id: entityId },
       data: { status: STATUS.REJECTED, approvalStatus: 'Pending', locked: true },
     });
+    // Issue #126: reddin KIMDEN geldigi kayitta gorunur olsun — reddeden kendi
+    // oy yuvasina 'reject' yazar. Durum/kilit mantigi DEGISMEZ (tek yetkili
+    // yeterli); satir yalnizca panelin "Reddeden" listesini besler ve konsensus
+    // yeniden hesaplandiginda kaydin kendiliginden onaylanmasini engeller.
+    const rejecter = await prisma.user.findUnique({ where: { id: actorOf(req) } });
+    if (rejecter) {
+      const own = await prisma.approval.findFirst({
+        where: { projectId: pid, entityType: 'testcase', entityId, voterId: rejecter.id },
+      });
+      const data = {
+        decision: DECISION.REJECT,
+        // Yorum yalnizca gonderildiyse yazilir; gonderilmezse onceki korunur.
+        ...(req.body?.comment === undefined ? {} : { comment: cleanComment(req.body.comment) }),
+      };
+      if (own) {
+        await prisma.approval.update({ where: { id: own.id }, data });
+      } else {
+        await prisma.approval.create({
+          data: {
+            projectId: pid,
+            entityType: 'testcase',
+            entityId,
+            voterId: rejecter.id,
+            voterName: rejecter.name || rejecter.id,
+            ...data,
+          },
+        });
+      }
+    }
     await audit(pid, {
       action: 'TEST_REJECT',
       entityType: 'testcase',
@@ -2769,54 +2969,68 @@ app.post(
   }),
 );
 
-// Onay detay matrisi (PM'e ozel): her gerekli oy verenin oy durumu.
+// Onay detayi: her gerekli oy verenin karari + bekleyenler + davet adaylari.
 // Issue #97: oy verenler User tabanli (PM'ler + approve izinli uyeler).
+// Issue #126: bu uc artik SADECE PM'in "Onay Detayi" modalini degil, kayit
+// detayindaki (ViewModal) kalici Onaylar panelini de besler — bu yuzden proje
+// kapsaminda okuyan HER kullaniciya aciktir. Eski alanlar (voters[].voted,
+// locked, approvalStatus) sozlesme geregi KORUNUR; yenileri eklenmistir.
 app.get(
   '/api/projects/:pid/approvals/matrix',
   wrap(async (req, res) => {
     const pid = req.params.pid;
     const { entityType, entityId } = req.query;
-    if (!entityType || !entityId) throw bad('entityType, entityId zorunlu.');
-    const model = entityType === 'requirement' ? 'requirement' : 'testCase';
-    const entity = await prisma[model].findUnique({ where: { id: String(entityId) } });
-    if (!entity || entity.projectId !== pid) throw bad('Varlik bulunamadi.', 404);
+    const entity = await loadApprovalEntity(pid, entityType, String(entityId || ''));
     const { requiredVoters } = await requiredVotersFor(pid, entityType, entity);
     const approvals = await prisma.approval.findMany({
       where: { projectId: pid, entityType, entityId: String(entityId) },
     });
-    const votedIds = new Set(approvals.map((a) => a.voterId));
-    const voters = requiredVoters.map((v) => ({
-      voterId: v.id,
-      name: v.name,
-      role: v.roleName || '-',
-      voted: votedIds.has(v.id),
-    }));
-    // Issue #103 (Karar #9): oy vermis AMA artik oy havuzunda olmayan
-    // kullanicilar (projeden cikarilan uyeler) 'departed' olarak listeye
-    // eklenir — gecmis gorunur kalir, konsensus sayacina katilmaz.
-    const activeVoterIds = new Set(requiredVoters.map((v) => v.id));
-    const departedVoterIds = [...votedIds].filter((id) => !activeVoterIds.has(id));
-    if (departedVoterIds.length > 0) {
-      const departedUsers = await prisma.user.findMany({
-        where: { id: { in: departedVoterIds } },
-        select: { id: true, name: true, roleKey: true, role: true },
-      });
-      for (const du of departedUsers) {
-        voters.push({
-          voterId: du.id,
-          name: du.name,
-          role: du.roleKey || du.role || '-',
-          voted: true,
-          departed: true,
-        });
-      }
-    }
+    // Havuz disindaki satirlarin (davet edilen / projeden ayrilmis) rolunu
+    // gosterebilmek icin adlari tek sorguda cozeriz (N+1 yok).
+    const poolIds = new Set(requiredVoters.map((v) => v.id));
+    const outsideIds = approvals.map((a) => a.voterId).filter((id) => !poolIds.has(id));
+    const outsideUsers = outsideIds.length
+      ? await prisma.user.findMany({
+          where: { id: { in: outsideIds } },
+          select: { id: true, name: true, roleKey: true, role: true },
+        })
+      : [];
+    const outsideById = new Map(outsideUsers.map((u) => [u.id, u]));
+    const enriched = approvals.map((a) => {
+      const u = outsideById.get(a.voterId);
+      return {
+        ...a,
+        voterName: a.voterName || u?.name || a.voterId,
+        voterRole: u ? u.roleKey || u.role : undefined,
+      };
+    });
+    const summary = summarizeApprovals(requiredVoters, enriched);
+    // Davet adaylari: bilesende onay yetkisi olan, listede HENUZ olmayanlar.
+    const compKey = componentKeyOf(entityType, entity.type);
+    const listed = new Set(summary.rows.map((r) => r.voterId));
+    const candidates = (await approveCapableUsers(compKey))
+      .filter((u) => !listed.has(u.id))
+      .map((u) => ({ id: u.id, name: u.name, role: u.roleName || '-' }));
     res.json({
       approvalStatus: entity.approvalStatus,
       locked: entity.locked,
       textId: entity.text_id,
       title: entity.title,
-      voters,
+      // Geriye donuk: ApprovalMatrixModal bu diziyi `voted` alaniyla okur.
+      voters: summary.rows,
+      approvers: summary.approvers,
+      rejecters: summary.rejecters,
+      waiting: summary.waiting,
+      counts: {
+        approved: summary.approvedCount,
+        rejected: summary.rejectedCount,
+        pending: summary.pendingCount,
+      },
+      consensus: summary.consensus,
+      candidates,
+      // Panelin "bu benim satirim mi" kararini sunucu verir (× ve yorum
+      // aksiyonlari yalnizca ilgili yetkili kullanici icin acilir).
+      currentUserId: req.auth?.userId || null,
     });
   }),
 );
