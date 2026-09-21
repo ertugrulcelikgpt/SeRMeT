@@ -69,6 +69,24 @@ export const splitRequirement = (pid, id, newTitles) =>
 export const mergeRequirements = (pid, ids) =>
   api.post(`/projects/${pid}/requirements/merge`, { ids })
 
+// --- Parca No (Issue #135) --------------------------------------------------
+//  Bilesenler PBS agacindan turetildigi icin (#129) parca kimligi de o
+//  dugumun uzerinde yasar (Requirement.partNo). Ayri bir sayfa/tablo yoktur;
+//  her sey "Bilesenler" sayfasinda gerceklesir.
+//  Numarasiz dugumlere numara atar (idempotent) — sayfa acilisinda cagirilir.
+export const ensurePartNumbers = (pid) => api.post(`/projects/${pid}/part-numbers/ensure`)
+//  Tutarlilik kontrolu: cakisan/bicimsiz/blok disi numaralar, ayni adli
+//  kardesler, ustsuz dugum, dongu, derinlik asimi, numarasiz bilesen.
+export const checkPartNumbers = (pid) => api.get(`/projects/${pid}/part-numbers/check`)
+//  Elle duzenleme. Cakisma => 409, bicim ihlali => 400 (hicbir sey yazilmaz).
+//  `partNoBlock`: bu dalin cocuklarina verecegi onek (orn. AMTB -> "320").
+export const setPartNo = (pid, id, payload) =>
+  api.patch(`/projects/${pid}/requirements/${id}/part-no`, payload)
+//  Parca No bicimi + kok blok adimi (proje bazli; yazma yalnizca PM).
+export const getPartNoConfig = (pid) => api.get(`/projects/${pid}/part-no-config`)
+export const setPartNoConfig = (pid, format, blockStep) =>
+  api.put(`/projects/${pid}/part-no-config`, { format, blockStep })
+
 // --- Sol menu duzeni (gruplar + sayfa yerlesimi, Issue #9 / Adim 6) --------
 //  Okuma herkese acik; degisiklikler yalnizca PM'e (backend requirePM).
 //  Sayfa anahtarlari SABIT — kullanici yalnizca gruplama yapar.

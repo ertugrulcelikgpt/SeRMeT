@@ -6,6 +6,8 @@
 //    Proje alti (hepsi /api/projects/:pid/...):
 //        fields         (GET/POST/DELETE)
 //        requirements   (GET/POST/GET:id/PUT:id/DELETE:id)
+//        part-numbers   (POST /ensure, GET /check)  -> Parca No (#135)
+//        part-no-config (GET/PUT)  -> Parca No bicimi (PM)
 //        testcases      (GET/POST/GET:id/PUT:id/DELETE:id)
 //        glossary       (GET/POST/PUT:id/DELETE:id)
 //        links          (GET/POST/DELETE:id)
@@ -60,6 +62,8 @@ import {
   ensureMaterialized as ensureNavMaterialized,
 } from './nav.js';
 import { setProjectCodePrefix } from './textIdPrefix.js';
+import { ensurePartNumbers, setPartNo, setPartNoBlock, checkPartNumbers } from './partNumbers.js';
+import { parsePartNoFormat, configOf as partNoConfigOf, allocatePartNo, PART_NO_AUDIT_FIELD } from './partNo.js';
 import { labelOf } from './label.js';
 import {
   listDefs,
@@ -1333,6 +1337,91 @@ app.delete(
 );
 
 // ===========================================================================
+//  PARCA NO (Issue #135) — "Bilesenler" sayfasinin (#129) urun kimligi.
+//  Bilesenler PBS agacindan turetildigi icin numara da o dugumun uzerinde
+//  (Requirement.partNo) yasar; ayri bir tablo/ekran yoktur.
+// ===========================================================================
+
+// Parca No'su olmayan dugumlere numara atar (idempotent). Bilesenler sayfasi
+// acildiginda cagirilir: "her bilesene bir numara" kendiliginden saglanir.
+app.post(
+  '/api/projects/:pid/part-numbers/ensure',
+  wrap(async (req, res) => {
+    res.json(await ensurePartNumbers(prisma, req.params.pid, actorOf(req)));
+  }),
+);
+
+// Agac tutarliligi: cakisan/bicimsiz/blok disi numaralar, ayni adli kardesler,
+// ustsuz dugum, dongu, derinlik asimi, Parca No'su olmayan bilesen.
+app.get(
+  '/api/projects/:pid/part-numbers/check',
+  wrap(async (req, res) => {
+    res.json(await checkPartNumbers(prisma, req.params.pid));
+  }),
+);
+
+// Elle duzenleme. Cakisma veya bicim ihlalinde HICBIR SEY yazilmaz (409/400).
+app.patch(
+  '/api/projects/:pid/requirements/:id/part-no',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const before = await prisma.requirement.findUnique({ where: { id: req.params.id } });
+    if (!before || before.projectId !== pid) throw bad('Gereksinim bulunamadi.', 404);
+    assertRequirementVisible(req, before);
+    // NOT: `locked` KONTROLU YOK. Parca No gereksinim METNI degil URUN
+    // kimligidir; onaylanmis bir kaydin parca numarasi da duzeltilebilmeli
+    // ve otomatik atama (ensurePartNumbers) kilitli kayitlari da kapsar.
+    const b = req.body || {};
+    let row = before;
+    if (b.partNo !== undefined) row = await setPartNo(prisma, pid, req.params.id, b.partNo, actorOf(req));
+    if (b.partNoBlock !== undefined) {
+      row = await setPartNoBlock(prisma, pid, req.params.id, b.partNoBlock, actorOf(req));
+    }
+    res.json(withAssigneeIds(flatten(row), await getAssigneeIds(prisma, 'requirement', row.id)));
+  }),
+);
+
+// Parca No bicimi + kok blok adimi — PROJE bazli yapilandirma.
+app.get(
+  '/api/projects/:pid/part-no-config',
+  wrap(async (req, res) => {
+    const project = await prisma.project.findUnique({ where: { id: req.params.pid } });
+    if (!project) throw bad('Proje bulunamadi.', 404);
+    res.json(partNoConfigOf(project));
+  }),
+);
+
+app.put(
+  '/api/projects/:pid/part-no-config',
+  requirePM,
+  wrap(async (req, res) => {
+    const b = req.body || {};
+    const data = {};
+    if (b.format != null) {
+      parsePartNoFormat(b.format); // gecersiz bicim => 400, hicbir sey yazilmaz
+      data.partNoFormat = String(b.format).trim();
+    }
+    if (b.blockStep != null) {
+      const step = Number(b.blockStep);
+      if (!Number.isInteger(step) || step <= 0) throw bad('Blok adimi pozitif bir tam sayi olmalidir.');
+      data.partNoBlockStep = step;
+    }
+    if (Object.keys(data).length === 0) throw bad('Guncellenecek ayar yok.');
+    const project = await prisma.project.update({ where: { id: req.params.pid }, data });
+    await audit(req.params.pid, {
+      action: 'UPDATE',
+      entityType: 'project',
+      entityId: project.id,
+      field: 'partNoConfig',
+      newValue: `${project.partNoFormat} / ${project.partNoBlockStep}`,
+      message: `Parca No yapilandirmasi guncellendi: ${project.partNoFormat} (blok adimi ${project.partNoBlockStep}).`,
+      actor: actorOf(req),
+    });
+    res.json(partNoConfigOf(project));
+  }),
+);
+
+// ===========================================================================
 //  SOL MENU DUZENI (nav) — proje bazli gruplar + sayfa yerlesimi (Issue #9/6)
 //  Okuma herkese acik; degisiklikler yalnizca PM'e (requirePM). Kullanici
 //  YALNIZCA gruplama yapar — sayfa anahtarlari sabittir (navDefaults.js).
@@ -1686,10 +1775,22 @@ app.post(
     // Issue #102: gereksinim seviyesi de 1..5 araliginda olmali (miras dahil).
     if (!isValidClearanceLevel(clearanceLevel)) throw bad('clearanceLevel 1-5 arasinda olmali.');
     if (clearanceLevel > userLevel) throw bad('Bu seviyede gereksinim olusturamazsiniz.', 403);
+    // Issue #135: yeni dugum eklenir eklenmez Parca No alir (ustun blogundan
+    // siradaki bos numara). Numara uretilemezse (blok dolu / bicim bozuk)
+    // gereksinim yine de olusur — numarasi sonra `part-numbers/ensure` ile
+    // tamamlanir; urun kimligi yuzunden gereksinim kaybedilmez.
+    const project = await prisma.project.findUnique({ where: { id: pid } });
+    let partNo;
+    try {
+      partNo = await allocatePartNo(prisma, pid, parentId, project);
+    } catch {
+      partNo = null;
+    }
     const created = await prisma.requirement.create({
       data: {
         projectId: pid,
         text_id,
+        partNo,
         title: (b.title || '').trim(),
         description: cleanRichText((b.description || '').trim()),
         type: b.type,
@@ -1713,6 +1814,22 @@ app.post(
         ? `Yeni gereksinim: "${labelOf(row)}" (${row.type}) — kaynak: "${source.sourceDocumentName}".`
         : `Yeni gereksinim: "${labelOf(row)}" (${row.type}).`,
     });
+    // Issue #135: atanan Parca No'nun audit izi. Kara liste (partNo.js
+    // usedPartNos) bu satiri okur — kayit SILINSE BILE numara audit'te kalir
+    // ve bir daha uretilmez. Iz birakilmazsa "son parcayi silip ayni numarayi
+    // tekrar alma" acigi olusur.
+    if (row.partNo) {
+      await audit(pid, {
+        action: 'PARTNO_ASSIGN',
+        entityType: 'requirement',
+        entityId: row.id,
+        textId: row.partNo,
+        field: PART_NO_AUDIT_FIELD,
+        newValue: row.partNo,
+        message: `Parca No atandi: ${row.partNo} (${row.text_id}).`,
+        actor: actorOf(req),
+      });
+    }
     await logAssignment(pid, {
       entity: 'requirement',
       row,

@@ -104,6 +104,9 @@ export const CATEGORIES = Object.values(CATEGORY)
 // Yapi: <codePrefix>-<TIP>-<NNN>   ornek: EH-KAHVE-TİD-USR-001
 export const DEFAULT_CODE_PREFIX = 'EH-KAHVE-TİD'
 
+// Parca No varsayilan bicimi (backend partNo.js DEFAULT_PART_NO_FORMAT).
+export const DEFAULT_PART_NO_FORMAT = 'NNN.NN.NNN'
+
 export const TYPE_SUFFIX = {
   [REQ_TYPE.USER]: 'USR',
   [REQ_TYPE.SYSTEM]: 'SYS',

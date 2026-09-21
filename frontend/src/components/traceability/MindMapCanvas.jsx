@@ -361,7 +361,9 @@ export default function MindMapCanvas({
                     {/* Kutuda yalnizca isim yazdiginda ID ve ozet ustune
                         gelince ipucu olarak gorunur. */}
                     <title>
-                      {[n.node.text_id, n.node.label, n.node.meta].filter(Boolean).join(' — ')}
+                      {[n.node.partNo, n.node.text_id, n.node.label, n.node.meta]
+                        .filter(Boolean)
+                        .join(' — ')}
                     </title>
                   </rect>
                   <rect
@@ -373,7 +375,7 @@ export default function MindMapCanvas({
                     fill={n.color}
                     pointerEvents="none"
                   />
-                  {showLabels && labelOnly && (
+                  {showLabels && labelOnly && !n.node.partNo && (
                     // YALNIZCA ISIM: tek satir, kutunun dikey ortasinda.
                     <text
                       x={n.x + 14}
@@ -385,6 +387,34 @@ export default function MindMapCanvas({
                     >
                       {fitLabel(n.node.label, L.nodeWidth)}
                     </text>
+                  )}
+                  {showLabels && labelOnly && n.node.partNo && (
+                    // Issue #135: PARCA NO + isim. Numara urun kimligidir —
+                    // ayni adli iki dugumu (AMTB/GY1 vs STC/GY1) ayiran sey
+                    // odur, bu yuzden isimle birlikte kutuda durur.
+                    <>
+                      <text
+                        x={n.x + 14}
+                        y={top + 15}
+                        fontSize={10}
+                        fontWeight={700}
+                        fill={n.color}
+                        className="font-mono"
+                        pointerEvents="none"
+                      >
+                        {n.node.partNo}
+                      </text>
+                      <text
+                        x={n.x + 14}
+                        y={top + 30}
+                        fontSize={11}
+                        fontWeight={600}
+                        fill={colors.nodeText}
+                        pointerEvents="none"
+                      >
+                        {fitLabel(n.node.label, L.nodeWidth)}
+                      </text>
+                    </>
                   )}
                   {showLabels && !labelOnly && (
                     <>

@@ -139,6 +139,14 @@ model Project {
   // text_id onegi: <codePrefix>-<TIP>-<NNN> (orn. EH-KAHVE-TID-USR-001).
   // Proje bazlidir; bos birakilirsa DEFAULT_CODE_PREFIX kullanilir.
   codePrefix   String             @default("EH-KAHVE-TİD")
+  // --- Parca No (Part No) yapilandirmasi (Issue #135) ---------------------
+  //  partNoFormat : bicim sablonu. 'N' = rakam, diger karakterler ayirac
+  //                 olarak aynen korunur (orn. "NNN.NN.NNN" -> 320.00.001).
+  //  partNoBlockStep : KOK seviyedeki dallara otomatik blok atanirken
+  //                 kullanilan adim (orn. 10 -> 010, 020, 030...). Dal kendi
+  //                 blogunu Component.partNoBlock ile elle de belirleyebilir.
+  partNoFormat    String          @default("NNN.NN.NNN")
+  partNoBlockStep Int             @default(10)
   createdAt    DateTime           @default(now())
   updatedAt    DateTime           @default(now()) @updatedAt
 
@@ -394,6 +402,19 @@ model Requirement {
   //  icin kullanicinin projede ProjectMember uyeligi olmalidir. Kullanici
   //  silinince gereksinim SILINMEZ, atama bosa duser (SetNull).
   assigneeId  String?
+  // --- Parca No (Part No) — Issue #135 -------------------------------------
+  //  PBS agacinin dugumleri ayni zamanda URUN kirilimidir (montaj / alt
+  //  montaj / donanim / gomulu yazilim). "Bilesenler" sayfasi (#129) bu
+  //  agactan turetildigi icin parca kimligi BURADA, dugumun kendisinde
+  //  yasar — ayri bir tablo (ve ayri bir ekran) gerekmez.
+  //
+  //  Numara DALA baglidir: ust dugum kendi blogunu belirler (partNoBlock,
+  //  orn. AMTB -> "320"), cocuk o bloktan siradaki bos numarayi alir. Boylece
+  //  ayni ADA sahip iki dugum (AMTB/GY1 ve STC/GY1) farkli numara alir ve
+  //  birbirinden ayirt edilir. Proje icinde TEKILDIR; silinen numara bir daha
+  //  kullanilmaz (audit kara listesi, bkz. src/partNo.js).
+  partNo      String?
+  partNoBlock String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @default(now()) @updatedAt
   project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -407,6 +428,7 @@ model Requirement {
   assignees   RequirementAssignee[]
 
   @@unique([projectId, text_id])
+  @@unique([projectId, partNo])
   @@index([projectId, type])
   @@index([projectId, parentId])
   @@index([sourceDocumentId])

@@ -309,7 +309,16 @@ describe('dışa aktarım', () => {
     verificationIndex: buildVerificationIndex(LINKS, TESTS),
     methodKeys: ['verification_method'],
   }
-  const headers = ['TİD No', 'Text ID', 'Başlık', 'Gereksinim Metni', 'Bağlı SGD', 'Doğrulama']
+  // Issue #135: TID duzenine "Parça No" sutunu TID No'dan hemen sonra girdi.
+  const headers = [
+    'TİD No',
+    'Parça No',
+    'Text ID',
+    'Başlık',
+    'Gereksinim Metni',
+    'Bağlı SGD',
+    'Doğrulama',
+  ]
   const rows = buildComponentViewRows(
     componentByLabel(
       buildComponents(REQS, { source: COMPONENT_SOURCE.PBS, tree }),
@@ -322,8 +331,11 @@ describe('dışa aktarım', () => {
     const csv = componentRowsToCsv(rows, { headers })
     const lines = csv.split('\r\n')
     expect(csv.startsWith('\ufeff')).toBe(true)
-    expect(lines[0]).toBe('\ufeffTİD No,Text ID,Başlık,Gereksinim Metni,Bağlı SGD,Doğrulama')
-    expect(lines[1]).toContain('1.2,EH-TİD-SYS-002,Basınç Pompası Ünitesi')
+    expect(lines[0]).toBe(
+      '\ufeffTİD No,Parça No,Text ID,Başlık,Gereksinim Metni,Bağlı SGD,Doğrulama',
+    )
+    // Fikstur kayitlarinin Parca No'su yok -> sutun bos kalir (ikinci alan).
+    expect(lines[1]).toContain('1.2,,EH-TİD-SYS-002,Basınç Pompası Ünitesi')
     expect(lines[2]).toContain('EH-TİD-HW-001')
   })
 

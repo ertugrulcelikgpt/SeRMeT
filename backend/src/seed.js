@@ -350,6 +350,13 @@ export async function runSeed() {
     ),
   );
 
+  // 6e) Parca No — Issue #135. PBS agaci ayni zamanda URUN kirilimidir;
+  // "Bilesenler" sayfasi bu agactan turer, bu yuzden numara da dugumun
+  // kendisinde (Requirement.partNo) durur. Kok dallar blok alir, cocuklar o
+  // bloktan siralanir; demo proje numarali acilir.
+  const { ensurePartNumbers } = await import('./partNumbers.js');
+  const partNoResult = await ensurePartNumbers(prisma, pid, SEED_AUTHOR);
+
   // 7) Otomatik durum (cascade) hesapla ve gereksinimlere isle
   const changes = recomputeAllStatuses(reqs, tests, links);
   for (const c of changes) {
@@ -359,7 +366,8 @@ export async function runSeed() {
   // 8) Ozet
   console.log(
     `[seed] Tamamlandi -> Proje: "${project.name}" | Gereksinim: ${reqData.length} | ` +
-      `Test: ${testData.length} | Bag: ${links.length} | Durum guncellemesi: ${changes.length}`,
+      `Test: ${testData.length} | Bag: ${links.length} | Parca No: ${partNoResult.assigned} | ` +
+      `Durum guncellemesi: ${changes.length}`,
   );
   if (reqData.length !== 72 || testData.length !== 16 || links.length !== 58) {
     console.warn(`[seed] UYARI: beklenen 72/16/58 ile uyumsuz -> ${reqData.length}/${testData.length}/${links.length}`);

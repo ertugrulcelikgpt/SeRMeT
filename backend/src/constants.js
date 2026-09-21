@@ -19,6 +19,12 @@ export const TEST_TYPE = {
 };
 export const TEST_TYPES = Object.values(TEST_TYPE);
 
+// --- Bilesen agaci derinligi (Issue #135) -------------------------------------
+//  PBS agacinin dugumleri ayni zamanda URUN kirilimidir (bkz. "Bilesenler"
+//  sayfasi, #129). Parca No tutarlilik raporu bu siniri asan dallari MAX_DEPTH
+//  ihlali olarak bildirir — tree.js MAX_DEPTH ile ayni koruma mantigi.
+export const MAX_COMPONENT_DEPTH = 20;
+
 // --- Roller -------------------------------------------------------------------
 //  PM rolü SERBEST METIN (User.role) icinde tutulur; isPM tespiti tum
 //  katmanlarda bu sabit uzerinden yapilir (login/refresh isPM, cascade,
