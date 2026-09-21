@@ -132,6 +132,9 @@ const selectPump = () => {
 const mapNode = (textId) => screen.queryByTestId(`mindmap-node-${textId}`)
 // Dal ucundaki nokta: dali acar/kapatir (kutu tiklamasi detayi acar).
 const expandDot = (textId) => fireEvent.click(screen.getByTestId(`mindmap-toggle-${textId}`))
+// Harita varsayilan olarak yalnizca BILESENLERI cizer; tek tek gereksinim
+// kayitlarini bekleyen testler once kapsami "Tüm gereksinimler"e alir.
+const showAllReqs = () => fireEvent.click(screen.getByTestId('comp-mapscope-all'))
 
 describe('Bileşenler — harita görünümü (varsayılan)', () => {
   it('harita TEK proje dugumuyle acilir; kirilim inerek acilir', () => {
@@ -148,7 +151,7 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
     renderPage()
     expandDot('EH-TİD-1')
     const parent = Number(mapNode('EH-TİD-1').getAttribute('y'))
-    const child = Number(mapNode('EH-TİD-SYS-001').getAttribute('y'))
+    const child = Number(mapNode('EH-TİD-SYS-002').getAttribute('y'))
     expect(child).toBeGreaterThan(parent)
   })
 
@@ -172,6 +175,7 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
 
   it('dal ucundaki nokta dali acar, tekrar tiklayinca kapatir', () => {
     renderPage()
+    showAllReqs()
     expandDot('EH-TİD-1')
     expandDot('EH-TİD-SYS-002')
     expect(mapNode('EH-TİD-HW-001')).toBeInTheDocument()
@@ -185,6 +189,7 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
 
   it('"Tümünü Aç" / "Tümünü Kapat" tum kirilimi yonetir', () => {
     renderPage()
+    showAllReqs()
     fireEvent.click(screen.getByTestId('comp-expand-all'))
     expect(mapNode('EH-TİD-HW-001')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('comp-collapse-all'))
@@ -215,6 +220,7 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
   it('okuma izni olmayan seviye haritada da cizilmez', () => {
     authMock.value = { can: (_perm, component) => component !== 'req-subsystem' }
     renderPage()
+    showAllReqs()
     fireEvent.click(screen.getByTestId('comp-expand-all'))
     expect(mapNode('EH-TİD-HW-001')).not.toBeInTheDocument()
     expect(mapNode('EH-TİD-SYS-002')).toBeInTheDocument()
@@ -232,8 +238,52 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
   })
 })
 
+describe('Bileşenler — harita kapsamı (feature map = bileşenler)', () => {
+  it('varsayilan olarak yalnizca BILESENLER cizilir; gereksinim metinleri kutu degildir', () => {
+    renderPage()
+    expect(screen.getByTestId('comp-mapscope-components')).toHaveAttribute('aria-pressed', 'true')
+    fireEvent.click(screen.getByTestId('comp-expand-all'))
+    // Alt kirilimi olan kayitlar kutudur...
+    expect(mapNode('EH-TİD-1')).toBeInTheDocument()
+    expect(mapNode('EH-TİD-SYS-002')).toBeInTheDocument()
+    // ...yaprak gereksinim metinleri degildir.
+    expect(mapNode('EH-TİD-HW-001')).not.toBeInTheDocument()
+    expect(mapNode('EH-TİD-SW-001')).not.toBeInTheDocument()
+    // Alt kirilimi olmayan kayit da bilesen sayilmaz (Bilesenler listesiyle
+    // ayni tanim): Su Deposu Alt Sistemi'nin kirilimi yok.
+    expect(mapNode('EH-TİD-SYS-001')).not.toBeInTheDocument()
+  })
+
+  it('bilesen kutusu haritada SECILIR ve gereksinimleri Liste gorunumune gecer', () => {
+    renderPage()
+    expandDot('EH-TİD-1')
+    fireEvent.click(mapNode('EH-TİD-SYS-002'))
+    expect(screen.getByTestId('comp-selection')).toHaveTextContent('Basınç Pompası Ünitesi')
+    showList()
+    expect(screen.getByTestId('comp-row-EH-TİD-HW-001')).toBeInTheDocument()
+    expect(screen.getByTestId('comp-row-EH-TİD-SW-001')).toBeInTheDocument()
+  })
+
+  it('"Tüm gereksinimler" kapsaminda urun agacinin tamami cizilir', () => {
+    renderPage()
+    showAllReqs()
+    fireEvent.click(screen.getByTestId('comp-expand-all'))
+    expect(mapNode('EH-TİD-HW-001')).toBeInTheDocument()
+    expect(mapNode('EH-TİD-SYS-001')).toBeInTheDocument()
+  })
+
+  it('kapsam secimi yalnizca haritada gorunur (Liste gorunumunde yok)', () => {
+    renderPage()
+    showList()
+    expect(screen.queryByTestId('comp-mapscope-components')).not.toBeInTheDocument()
+  })
+})
+
 describe('Bileşenler — harita düzeni (ürün ağacı / feature tree)', () => {
+  // Yan yana kardeslik, pompanin IKI alt kaydinda gorulur; bunlar gereksinim
+  // metni oldugu icin kapsam "Tüm gereksinimler" olmalidir.
   const expandPump = () => {
+    showAllReqs()
     expandDot('EH-TİD-1')
     expandDot('EH-TİD-SYS-002')
   }
