@@ -63,7 +63,7 @@ import {
 } from './nav.js';
 import { setProjectCodePrefix } from './textIdPrefix.js';
 import { ensurePartNumbers, setPartNo, setPartNoBlock, checkPartNumbers } from './partNumbers.js';
-import { parsePartNoFormat, configOf as partNoConfigOf, allocatePartNo } from './partNo.js';
+import { parsePartNoFormat, configOf as partNoConfigOf, allocatePartNo, PART_NO_AUDIT_FIELD } from './partNo.js';
 import { labelOf } from './label.js';
 import {
   listDefs,
@@ -1814,6 +1814,22 @@ app.post(
         ? `Yeni gereksinim: "${labelOf(row)}" (${row.type}) — kaynak: "${source.sourceDocumentName}".`
         : `Yeni gereksinim: "${labelOf(row)}" (${row.type}).`,
     });
+    // Issue #135: atanan Parca No'nun audit izi. Kara liste (partNo.js
+    // usedPartNos) bu satiri okur — kayit SILINSE BILE numara audit'te kalir
+    // ve bir daha uretilmez. Iz birakilmazsa "son parcayi silip ayni numarayi
+    // tekrar alma" acigi olusur.
+    if (row.partNo) {
+      await audit(pid, {
+        action: 'PARTNO_ASSIGN',
+        entityType: 'requirement',
+        entityId: row.id,
+        textId: row.partNo,
+        field: PART_NO_AUDIT_FIELD,
+        newValue: row.partNo,
+        message: `Parca No atandi: ${row.partNo} (${row.text_id}).`,
+        actor: actorOf(req),
+      });
+    }
     await logAssignment(pid, {
       entity: 'requirement',
       row,
