@@ -28,6 +28,7 @@ FastAPI Bridge (ai-bridge:8008) ──► LM Studio + Gemma (:1234)
 - **Backend-owned cascade**: Requirement status computed from linked test results (bulk SQL, not N+1)
 - **Consensus approvals**: PM + authorized members (approve permission via SystemRole) must all vote → `Approved` + `locked`. Fully user-based since Issue #97 (Personnel/passcode model removed). Since Issue #126 an `Approval` row is a *vote slot* (`decision`: `approve` / `reject` / `pending` invite); a rejection or an unanswered invite blocks consensus. The rule lives in one place (`backend/src/approvals.js`) and is applied by both `recomputeApproval` and the bulk SQL in `cascade.js`
 - **Text ID immutability**: Once generated, a `text_id` is never reused (audit log preserves deleted IDs)
+- **Baselines are frozen** (Issue #128): a snapshot marked `isBaseline` cannot be edited in content or deleted without an explicit `force` (special permission); restoring one takes an automatic safety snapshot first and applies in a single transaction, and restores the approval state (`locked`/`approvalStatus`) as it was at baseline time
 - **Two AI engines**: Offline (browser regex heuristics) vs Online (Gemma via FastAPI bridge)
 
 ## Key Directories
@@ -43,6 +44,8 @@ FastAPI Bridge (ai-bridge:8008) ──► LM Studio + Gemma (:1234)
 │   │   ├── constants.js       # Taxonomy: REQ_TYPE, TEST_TYPE, LINK_TYPE, SATISFIES_PARENT_OF, VERIFIES_TARGET_TYPES
 │   │   ├── logic.js           # Hierarchy validation, coverage calc
 │   │   ├── impact.js          # Recursive CTE impact analysis (Issue #46)
+│   │   ├── baselines.js       # Baseline etiketleme + restore (tek transaction) + diff (#128)
+│   │   ├── modules.js         # Baseline KAPSAMI: modul (sol menu sayfasi) tanimlari (#128)
 │   │   ├── partNumbers.js     # Parca No atama (PBS dugumleri) + tutarlilik kontrolu (#135)
 │   │   ├── partNo.js          # Parca No bicimi + blok bazli numara uretimi (#135)
 │   │   ├── traceability.js    # Traceability export/import (Excel + ReqIF/.reqifz/.xml)
@@ -176,6 +179,8 @@ node scripts/seed-coffee-project.mjs  # Load optional Espresso demo (backend mus
 | `backend/src/auth.js` | JWT sign/verify, bcrypt, middleware (`requireAuth`, `requirePM`, `projectAccessGuard`) |
 | `backend/src/cascade.js` | Bulk status (`recomputeStatusesBulk`) & approval (`recomputeApprovalsBulk`) recomputation |
 | `backend/src/constants.js` | Single source of truth for taxonomy, hierarchy rules, link rules |
+| `backend/src/baselines.js` | Baseline tagging/freezing, module-scoped capture, restore (safety snapshot + single transaction), snapshot/live diff |
+| `backend/src/modules.js` | Baseline scope: module (nav page) definitions; mirrors `frontend/src/utils/constants.js` `BASELINE_MODULES` |
 | `backend/src/partNo.js` | Part No format parsing + branch-block allocation; lifetime-unique (audit blacklist) |
 | `backend/src/partNumbers.js` | Assigns `Requirement.partNo` per branch block, conflict guard (409), consistency report |
 | `backend/prisma/schema.prisma` | Full DB schema (User, SystemRole, Project, Requirement, TestCase, TraceabilityLink, GlossaryTerm, Approval, ProjectSnapshot, AuditLog, ProjectField, SavedView) — `Role`/`Personnel` removed in #97 |
@@ -235,6 +240,10 @@ node scripts/seed-coffee-project.mjs  # Load optional Espresso demo (backend mus
 | Add new entity type | Prisma schema → backend routes → `dataService.js` → `AppContext.jsx` actions → UI |
 | Change Part No format / branch blocks | `backend/src/partNo.js` + `Project.partNoFormat` / `partNoBlockStep` |
 | Add a component tree consistency rule | `backend/src/partNumbers.js` `checkPartNumbers` + `partno.code.*` i18n |
+| Change what a snapshot/baseline captures | `backend/src/baselines.js` `collectProjectState` + the `*_COLUMNS` restore lists |
+| Change baseline restore or diff rules | `backend/src/baselines.js` (`restoreSnapshot`, `diffSnapshots`); UI in `frontend/src/pages/Snapshots.jsx` + `utils/baselineDiff.js` |
+| Change which modules a baseline can cover | `backend/src/modules.js` `MODULE_DEFS` + `frontend/src/utils/constants.js` `BASELINE_MODULES` + `module.*` i18n (keep in sync) |
+| Change where a record's baselines are shown | `frontend/src/components/common/BaselinesTab.jsx`; pass `baselineEntityType` to `ViewModal` |
 | Fix IDOR issue | `backend/src/auth.js` `projectAccessGuard` |
 | Update taxonomy | `backend/src/constants.js` + `frontend/src/utils/constants.js` (keep in sync) |
 | Debug AI bridge | `ai-bridge/api_server.py` `/health`, check LM Studio `:1234/v1` |

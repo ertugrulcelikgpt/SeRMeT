@@ -205,13 +205,59 @@ export const importReqIF = (pid, file, importType) => {
 // tarayiciyi kilitlemeden agaci server-side kurar.
 export const getImpact = (pid, reqId) => api.get(`/projects/${pid}/impact`, { reqId })
 
-// --- Snapshots (Issue #8) ----------------------------------------------------
+// --- Snapshots / Baseline (Issue #8, #128) -----------------------------------
 // Sürüm / baseline altyapısı: snapshot olusturma, listeleme, detay, silme.
 export const listSnapshots = (pid) => api.get(`/projects/${pid}/snapshots`)
-export const createSnapshot = (pid, name) => api.post(`/projects/${pid}/snapshots`, { name })
+//  payload: { name, label, description, isBaseline, reason, modules }
+//  Baseline icin gerekce ZORUNLUDUR (backend 400 doner).
+//  KAPSAM (#128): `modules` verilmezse tum proje dondurulur. Tek modul ->
+//  tek baseline; birden cok modul -> modul basina bir baseline ve hepsini
+//  toplayan bir BASELINE SET (yanitta `set` + `snapshots` doner).
+export const createSnapshot = (pid, payload) =>
+  api.post(`/projects/${pid}/snapshots`, typeof payload === 'string' ? { name: payload } : payload)
+//  Modul baseline'larini toplayan setler (orn. "CDR paketi").
+export const listBaselineSets = (pid) => api.get(`/projects/${pid}/baseline-sets`)
 export const getSnapshot = (pid, snapshotId) => api.get(`/projects/${pid}/snapshots/${snapshotId}`)
-export const deleteSnapshot = (pid, snapshotId, reason) =>
-  api.del(`/projects/${pid}/snapshots/${snapshotId}`, { reason })
+//  Yalnizca UST VERI (ad/etiket/aciklama/baseline isareti) degisir; snapshot
+//  ICERIGI asla degismez.
+export const updateSnapshot = (pid, snapshotId, payload) =>
+  api.patch(`/projects/${pid}/snapshots/${snapshotId}`, payload)
+//  Baseline dondurulmustur: silmek icin `force: true` (ozel izin) gerekir.
+export const deleteSnapshot = (pid, snapshotId, reason, force = false) =>
+  api.del(`/projects/${pid}/snapshots/${snapshotId}`, { reason, force })
+
+// --- Baseline geri yukleme (restore, Issue #128) -----------------------------
+//  Onizleme HICBIR SEY yazmaz: kac kayit eklenecek/guncellenecek/silinecek
+//  ve hangi kayitlar (entries) — kismi secim bu liste uzerinden yapilir.
+export const getRestorePreview = (pid, snapshotId, selection = null) =>
+  api.get(
+    `/projects/${pid}/snapshots/${snapshotId}/restore-preview`,
+    selection?.length ? { selection: selection.join(',') } : undefined,
+  )
+//  Uygulama: gerekce zorunlu, oncesinde otomatik guvenlik kopyasi alinir,
+//  tek transaction icinde yurur.
+//  KISMI restore (#128): `selection` verilirse yalnizca o kayitlar geri
+//  yuklenir ve HICBIR SEY SILINMEZ.
+export const restoreSnapshot = (pid, snapshotId, reason, selection = null) =>
+  api.post(`/projects/${pid}/snapshots/${snapshotId}/restore`, {
+    reason,
+    ...(selection?.length ? { selection } : {}),
+  })
+
+// --- Fark raporu (diff, Issue #128) ------------------------------------------
+//  from/to: snapshot id ya da 'live' (canli durum). Taraflardan biri MODUL
+//  kapsamliysa fark yalnizca o modul(ler) uzerinden okunur.
+export const getSnapshotDiff = (pid, from, to) =>
+  api.get(`/projects/${pid}/snapshots-diff`, { from, to })
+
+// --- Kayit uzerinde baseline gorunurlugu (Issue #128, madde 5) ---------------
+//  "Bu kayit hangi baseline'larin icinde kaldi?" Kayda bir sey yazilmaz;
+//  cevap snapshot iceriginden okunur.
+export const listEntityBaselines = (pid, entityType, entityId) =>
+  api.get(`/projects/${pid}/entity-baselines/${entityType}/${entityId}`)
+//  Kaydin o baseline'daki hali + canli halle ALAN BAZINDA farki.
+export const getEntityBaselineDetail = (pid, entityType, entityId, snapshotId) =>
+  api.get(`/projects/${pid}/entity-baselines/${entityType}/${entityId}/${snapshotId}`)
 
 // --- Dokuman Kutuphanesi (PDF / Excel) --------------------------------------
 //  Belgeler backend'de (PostgreSQL) saklanir; bir kez yuklenen belge silinene

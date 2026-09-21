@@ -12,6 +12,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Modal from './Modal.jsx'
 import RichTextEditor from './RichTextEditor.jsx'
 import HistoryTab from './HistoryTab.jsx'
+import BaselinesTab from './BaselinesTab.jsx'
 import CommentsTab from '../comments/CommentsTab.jsx'
 import ApprovalPanel from './ApprovalPanel.jsx'
 import { useComments } from '../../hooks/useComments.js'
@@ -49,6 +50,11 @@ export default function ViewModal({
   // PM'e ozel "Onay Detayi" modalinin ardinda degil, kaydi inceleyen HER
   // kullaniciya burada gorunur. Verilmezse panel hic cizilmez.
   approvalEntityType = null,
+  // Issue #128: "Baseline'lar" sekmesi — bu kaydin icinde bulundugu modul
+  // baseline'lari, o surumdeki hali ve canli halle alan bazinda farki.
+  // Deger kaydin tipidir: 'requirement' | 'testcase' | 'glossary'.
+  // Verilmezse sekme hic cizilmez.
+  baselineEntityType = null,
   onClose,
   onSaveDescription,
   statusLabel: _statusLabel,
@@ -67,7 +73,8 @@ export default function ViewModal({
     showComments ? commentEntityType : null,
     showComments ? row?.id : null,
   )
-  const showTabs = showHistory || showComments
+  const showBaselines = Boolean(baselineEntityType)
+  const showTabs = showHistory || showComments || showBaselines
 
   // Dogrulama ozeti yalnizca istendiginde (gereksinim sayfalari) hesaplanir.
   const verification = useMemo(() => {
@@ -139,6 +146,7 @@ export default function ViewModal({
                 : t('view.tab.comments'),
               show: showComments,
             },
+            { key: 'baselines', label: t('view.tab.baselines'), show: showBaselines },
           ]
             .filter((x) => x.show)
             .map((x) => (
@@ -170,6 +178,8 @@ export default function ViewModal({
         />
       ) : tab === 'history' && showHistory && row ? (
         <HistoryTab row={row} />
+      ) : tab === 'baselines' && showBaselines && row ? (
+        <BaselinesTab entityType={baselineEntityType} row={row} />
       ) : (
         <>
           {/* Meta bilgiler */}
