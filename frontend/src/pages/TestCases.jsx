@@ -390,6 +390,7 @@ export default function TestCases({
         onSaveDescription={saveDescription}
         statusLabel={t('tbl.th.testResult')}
         commentEntityType="testcase"
+        approvalEntityType="testcase"
       />
       {/* Issue #123: bag listesinden acilan HEDEF gereksinim — salt okunur. */}
       <ViewModal

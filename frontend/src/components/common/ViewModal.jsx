@@ -13,6 +13,7 @@ import Modal from './Modal.jsx'
 import RichTextEditor from './RichTextEditor.jsx'
 import HistoryTab from './HistoryTab.jsx'
 import CommentsTab from '../comments/CommentsTab.jsx'
+import ApprovalPanel from './ApprovalPanel.jsx'
 import { useComments } from '../../hooks/useComments.js'
 import { StatusBadge, PriorityBadge, TypeBadge, DalBadge, VerificationBadge } from './Badge.jsx'
 import { IconCheck } from './Icons.jsx'
@@ -43,6 +44,11 @@ export default function ViewModal({
   // (Verifies) test senaryolari, tek tek sonuclariyla listelenir. Boylece
   // "neden hala bekliyor / neden başarısız" sorusu modalda cevaplanir.
   showVerification = false,
+  // Issue #126: kalici "Onaylar" paneli — 'requirement' | 'testcase'.
+  // Onay bilgisi (kim onayladi / kim reddetti / kimin oyu bekleniyor) artik
+  // PM'e ozel "Onay Detayi" modalinin ardinda degil, kaydi inceleyen HER
+  // kullaniciya burada gorunur. Verilmezse panel hic cizilmez.
+  approvalEntityType = null,
   onClose,
   onSaveDescription,
   statusLabel: _statusLabel,
@@ -214,6 +220,10 @@ export default function ViewModal({
               </ol>
             </div>
           )}
+
+          {/* Onaylar (Issue #126): kim onayladi / reddetti / kimin oyu bekleniyor.
+              PM olmayan kullanicilara da gorunur. */}
+          {approvalEntityType && <ApprovalPanel entityType={approvalEntityType} row={row} />}
 
           {/* Dogrulama (Issue #105): bu gereksinimi dogrulayan test senaryolari
               ve tek tek sonuclari. Gereksinim kendi basina onaylanmaz. */}

@@ -26,7 +26,7 @@ FastAPI Bridge (ai-bridge:8008) ──► LM Studio + Gemma (:1234)
 **Key architectural decisions:**
 - **Project isolation**: All data scoped to `projectId`; cascading deletes on project removal
 - **Backend-owned cascade**: Requirement status computed from linked test results (bulk SQL, not N+1)
-- **Consensus approvals**: PM + authorized members (approve permission via SystemRole) must all vote → `Approved` + `locked`. Fully user-based since Issue #97 (Personnel/passcode model removed)
+- **Consensus approvals**: PM + authorized members (approve permission via SystemRole) must all vote → `Approved` + `locked`. Fully user-based since Issue #97 (Personnel/passcode model removed). Since Issue #126 an `Approval` row is a *vote slot* (`decision`: `approve` / `reject` / `pending` invite); a rejection or an unanswered invite blocks consensus. The rule lives in one place (`backend/src/approvals.js`) and is applied by both `recomputeApproval` and the bulk SQL in `cascade.js`
 - **Text ID immutability**: Once generated, a `text_id` is never reused (audit log preserves deleted IDs)
 - **Two AI engines**: Offline (browser regex heuristics) vs Online (Gemma via FastAPI bridge)
 
@@ -38,6 +38,7 @@ FastAPI Bridge (ai-bridge:8008) ──► LM Studio + Gemma (:1234)
 │   │   ├── server.js          # Main entry, route mounting, middleware
 │   │   ├── auth.js            # JWT, bcrypt, middleware (requireAuth, requirePM, projectAccessGuard)
 │   │   ├── assignees.js       # Multi-assignee (join tables + legacy assigneeId sync + ASSIGN audit)
+│   │   ├── approvals.js       # Vote-slot semantics + consensus/panel summary (Issue #126)
 │   │   ├── cascade.js         # Bulk status/approval recomputation (Issue #15)
 │   │   ├── constants.js       # Taxonomy: REQ_TYPE, TEST_TYPE, LINK_TYPE, SATISFIES_PARENT_OF, VERIFIES_TARGET_TYPES
 │   │   ├── logic.js           # Hierarchy validation, coverage calc

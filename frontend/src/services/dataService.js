@@ -147,6 +147,10 @@ export const unlockApproval = (pid, body) => api.post(`/projects/${pid}/approval
 export const rejectApproval = (pid, body) => api.post(`/projects/${pid}/approvals/reject`, body)
 export const approvalMatrix = (pid, entityType, entityId) =>
   api.get(`/projects/${pid}/approvals/matrix?entityType=${entityType}&entityId=${entityId}`)
+// Issue #126: onay listesine yetkili davet et — body: { entityType, entityId, userId }.
+export const inviteApproval = (pid, body) => api.post(`/projects/${pid}/approvals/invite`, body)
+// Issue #126: onay yorumu KENDI oy kaydina yazilir — body: { entityType, entityId, comment }.
+export const commentApproval = (pid, body) => api.post(`/projects/${pid}/approvals/comment`, body)
 
 // --- Audit ------------------------------------------------------------------
 export const listAudit = (pid) => api.get(`/projects/${pid}/audit`)

@@ -481,6 +481,7 @@ export default function PbsTree() {
         onSaveDescription={saveDescription}
         onOpenSource={setSourceRow}
         commentEntityType="requirement"
+        approvalEntityType="requirement"
       />
       {/* Kaynak izlenebilirligi: dokumani Metin modunda acip pasaji vurgular. */}
       <SourceDocumentModal

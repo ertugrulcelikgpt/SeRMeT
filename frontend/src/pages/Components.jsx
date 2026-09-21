@@ -797,6 +797,7 @@ export default function Components() {
         showStatus={false}
         showVerification
         commentEntityType="requirement"
+        approvalEntityType="requirement"
         onClose={() => setViewRow(null)}
       />
     </div>

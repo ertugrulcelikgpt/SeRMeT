@@ -281,7 +281,19 @@ model Approval {
   entityId    String
   voterId     String
   voterName   String
+  // Issue #126: satir artik bir "oy yuvasi"dir. Onay havuzu (getRequiredVoters)
+  // disindan gelen yetkililer de bu tabloya 'pending' ile davet edilir.
+  //   'approve' -> onayladi (konsensusa sayilir)
+  //   'reject'  -> reddetti (konsensusu bloklar)
+  //   'pending' -> onaya davet edildi, henuz oy vermedi (konsensusu bloklar)
+  decision    String   @default("approve")
+  // Oyun gerekcesi ("Yorum Ekle"). Oy kaydiyla birebir iliskilidir.
+  comment     String?
+  // Davet eden kullanici (User.id). Dolu ise satir bir davetten dogmustur;
+  // oy geri cekildiginde satir SILINMEZ, 'pending'e doner (davet korunur).
+  invitedById String?
   createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
   project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@unique([projectId, entityType, entityId, voterId])

@@ -326,6 +326,18 @@ export function AppProvider({ children }) {
     async getApprovalMatrix(entityType, entityId) {
       return data.approvalMatrix(pid, entityType, entityId)
     },
+    //  Issue #126: Onaylar paneli — davet + oy yorumu.
+    //  body: { entityType, entityId, userId }
+    async inviteApproval(body) {
+      const r = await data.inviteApproval(pid, body)
+      await refresh()
+      return r
+    },
+    //  body: { entityType, entityId, comment } — yorum yalnizca KENDI oyuna.
+    //  Kayit durumunu degistirmez, bu yuzden global refresh yapilmaz.
+    async commentApproval(body) {
+      return data.commentApproval(pid, body)
+    },
 
     // Manuel cascade tetigi (nadiren gerekir) -------------------------------
     async recompute() {

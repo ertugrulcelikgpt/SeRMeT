@@ -407,6 +407,7 @@ export default function Hierarchy({
         onSaveDescription={saveDescription}
         onOpenSource={setSourceRow}
         commentEntityType="requirement"
+        approvalEntityType="requirement"
       />
       {/* Issue #123: bag listesinden acilan HEDEF kayit — salt okunur. */}
       <ViewModal
