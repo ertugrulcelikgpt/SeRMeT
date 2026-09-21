@@ -548,6 +548,7 @@ export default function Components() {
       ) : view === VIEW.MAP ? (
         <>
           <MindMapCanvas
+            ariaLabel={t('comp.canvasLabel')}
             mapLayout={mapLayout}
             theme={theme}
             onToggle={toggle}

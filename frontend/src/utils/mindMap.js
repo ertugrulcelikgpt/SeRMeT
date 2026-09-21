@@ -181,6 +181,69 @@ export function defaultExpandedKeys(graph) {
 }
 
 /**
+ * Arama karsilastirmasi icin metni sadelestirir.
+ *
+ * Turkce'de nokta_li/noktasiz "i" tuzaktir: `'SICAKLIK'.toLocaleLowerCase('tr')`
+ * noktasiz "sıcaklık" uretir ve ASCII "sicaklik" ile eslesmez; tersine
+ * `'İZLEME'.toLowerCase()` birlesik nokta birakir. Kullanici hangi "i"yi
+ * yazarsa yazsin aradigini bulabilsin diye dort bicim (I / İ / ı / i) tek
+ * harfe indirgenir, sonra dilden bagimsiz kucultme yapilir.
+ */
+export function foldForSearch(text) {
+  return String(text ?? '')
+    .normalize('NFC')
+    .replace(/[İIı]/g, 'i')
+    .toLowerCase()
+}
+
+/**
+ * Haritada ARAMA (Issue #122): kod / baslik / etiket metni sorguyla eslesen
+ * dugumleri, koke giden YOLLARIYLA birlikte dondurur. Yol, cagiran tarafin
+ * hedefe giden kapali dallari acmasi icindir ("odaklan ve yolu ac").
+ *
+ * Arama KAPALI dallara da bakar: kullanici aradigi kaydin hangi dalda
+ * oldugunu zaten bilmiyordur. Dongu korumasi vardir; ayni kayit birden fazla
+ * dalda gorunuyorsa her gorunumu ayri bir sonuctur.
+ *
+ * @returns {Array<{ id, key, path: string[], node }>} belge sirasinda
+ */
+export function findMindMapMatches(graph, query, { maxNodes = MIND_MAP_MAX_NODES } = {}) {
+  const needle = foldForSearch(String(query || '').trim())
+  if (!needle) return []
+  const hits = []
+  let visited = 0
+  const walk = (id, parentKey, ancestors, trail) => {
+    if (visited >= maxNodes) return
+    visited += 1
+    const node = graph?.nodes?.get(id)
+    if (!node) return
+    const key = mindMapNodeKey(parentKey, id)
+    const path = [...trail, key]
+    const haystack = `${node.text_id || ''} ${node.title || ''} ${node.label || ''}`
+    if (foldForSearch(haystack).includes(needle)) hits.push({ id, key, path, node })
+    const next = new Set(ancestors)
+    next.add(id)
+    for (const cid of childIdsOf(graph, id)) {
+      if (ancestors.has(cid)) continue
+      walk(cid, key, next, path)
+    }
+  }
+  for (const rid of graph?.rootIds || []) walk(rid, null, new Set(), [])
+  return hits
+}
+
+/**
+ * Bir arama sonucunu gorunur kilan acik-dal kumesi: mevcut kumeye hedefin
+ * ATALARI eklenir. Hedefin KENDISI acilmaz — kullanici dalini kendi acar.
+ */
+export function expandedWithPath(expanded, hit) {
+  const next = new Set(expanded || [])
+  if (!hit?.path) return next
+  for (const k of hit.path.slice(0, -1)) next.add(k)
+  return next
+}
+
+/**
  * "Tumunu ac" icin acilabilir tum yol anahtarlari. Dongu koruması (ata
  * kumesi) ve dugum ust siniri uygulanir; sinir asilirsa `truncated` true
  * doner ve cagiran taraf kullaniciyi uyarir.

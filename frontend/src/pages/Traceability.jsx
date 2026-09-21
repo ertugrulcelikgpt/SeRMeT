@@ -1,15 +1,19 @@
 // ============================================================================
 //  Traceability.jsx  —  Izlenebilirlik Matrisi sayfasi.
 //  Iki matris: (1) System -> Software (Satisfies), (2) Req -> Test Case (Verifies).
+//
+//  Issue #122: matris ayni baglarin TABLO gorunumudur; ayni baglarin agac
+//  gorunumu icin buradan "Gereksinim Haritasi" sayfasina gecilir. Iki
+//  gorunum birbirinin yerine gecmez, birlikte var olur.
 // ============================================================================
 import { useMemo } from 'react'
 import { useApp } from '../context/AppContext.jsx'
 import { useLang } from '../context/LanguageContext.jsx'
 import TraceabilityMatrix from '../components/traceability/TraceabilityMatrix.jsx'
 import { LINK_TYPE, REQ_TYPE } from '../utils/constants.js'
-import { IconMatrix } from '../components/common/Icons.jsx'
+import { IconMatrix, IconMindMap } from '../components/common/Icons.jsx'
 
-export default function Traceability() {
+export default function Traceability({ onNavigate }) {
   const { requirements, testCases: allTestCases, links } = useApp()
   const { t } = useLang()
 
@@ -82,6 +86,17 @@ export default function Traceability() {
             {t('trace.intro', { req: t('nav.requirements') })}
           </p>
         </div>
+        {onNavigate && (
+          <button
+            type="button"
+            onClick={() => onNavigate('requirement-map')}
+            data-testid="trace-open-map"
+            className="btn-secondary btn-sm"
+          >
+            <IconMindMap size={15} />
+            {t('trace.openMap')}
+          </button>
+        )}
         <div className="flex gap-3 text-center">
           <div className="rounded-lg bg-violet-50 px-4 py-2 dark:bg-violet-900/20">
             <div className="text-xl font-extrabold text-violet-600 dark:text-violet-300">

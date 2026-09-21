@@ -53,10 +53,10 @@ const TOP = [
 const BOTTOM = [
   { key: 'coverage', labelKey: 'nav.coverage', icon: IconShield },
   { key: 'traceability', labelKey: 'nav.traceability', icon: IconMatrix },
-  // Issue #122: izlenebilirlik zincirinin zihin haritasi gorunumu. "Baglanti
-  // Agaci" (pbs-tree) AYRI ve DEGISMEMIS bir sayfadir; bu yeni sekme onun
-  // yerine gecmez, yanina eklenir.
-  { key: 'mind-map', labelKey: 'nav.mindMap', icon: IconMindMap },
+  // Issue #122: izlenebilirlik zincirinin zihin haritasi tarzi "Gereksinim
+  // Haritasi" gorunumu. "Baglanti Agaci" (pbs-tree) AYRI ve DEGISMEMIS bir
+  // sayfadir; bu sekme onun yerine gecmez, yanina eklenir.
+  { key: 'requirement-map', labelKey: 'nav.requirementMap', icon: IconMindMap },
   { key: 'traceability-export', labelKey: 'nav.traceabilityExport', icon: IconMatrix },
   { key: 'traceability-import', labelKey: 'nav.traceabilityImport', icon: IconMatrix },
   { key: 'suspect', labelKey: 'nav.suspect', icon: IconAlert },

@@ -1,12 +1,13 @@
 // ============================================================================
-//  MindMap.test.jsx — "Zihin Haritası" sayfasi (Issue #122).
+//  RequirementMap.test.jsx — "Gereksinim Haritası" sayfasi (Issue #122).
 //
 //  Kapsam (kabul kriterleri):
-//   - Harita zincir olarak cizilir; dallar TEK TEK acilip kapanir
+//   - Harita YUKARIDAN ASAGIYA dallanir; dallar TEK TEK acilip kapanir
 //   - Acik/kapali durum sayfa icinde korunur (veri tazelenince sifirlanmaz)
 //   - Yeni eklenen kayit/bag, sayfa yenilemeden haritada belirir
 //   - Dugumden kaydin detayina (ViewModal) gidilebilir
 //   - Haritayi PNG/SVG olarak disa aktarma
+//   - Haritada arama: eslesen dugume odaklanir, yolundaki kapali dallar acilir
 // ============================================================================
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
@@ -45,7 +46,7 @@ vi.mock('../../components/common/ViewModal.jsx', () => ({
     ) : null,
 }))
 
-import MindMap from '../MindMap.jsx'
+import RequirementMap from '../RequirementMap.jsx'
 
 const USER = { id: 'u1', text_id: 'REQ-USR-001', title: 'Kahve hazirla', type: 'User Requirement' }
 const SYS = { id: 's1', text_id: 'REQ-SYS-001', title: 'Isitici', type: 'System Requirement' }
@@ -63,7 +64,7 @@ const verifies = (fromId, toId) => ({ fromId, toId, type: 'Verifies' })
 const renderPage = () =>
   render(
     <LanguageProvider>
-      <MindMap />
+      <RequirementMap />
     </LanguageProvider>,
   )
 
@@ -83,7 +84,7 @@ afterEach(() => {
 const node = (textId) => screen.queryByTestId(`mindmap-node-${textId}`)
 const toggle = (textId) => screen.getByTestId(`mindmap-toggle-${textId}`)
 
-describe('MindMap — dallanma ve aç/kapa', () => {
+describe('Gereksinim Haritası — dallanma ve aç/kapa', () => {
   it('kok ve ilk seviye acik baslar, alt dallar kapalidir', () => {
     renderPage()
     expect(node('REQ-USR-001')).toBeInTheDocument()
@@ -119,7 +120,94 @@ describe('MindMap — dallanma ve aç/kapa', () => {
   })
 })
 
-describe('MindMap — canli gorunum', () => {
+describe('Gereksinim Haritası — yukarıdan aşağıya dallanma', () => {
+  // Issue #122: dallanma yonu top-down olmalidir — kok en ustte, alt
+  // seviyeler asagiya acilir (soldan saga DEGIL).
+  const topOf = (textId) => Number(node(textId).getAttribute('y'))
+  const leftOf = (textId) => Number(node(textId).getAttribute('x'))
+
+  it('alt seviye, ustunun ALTINDA cizilir', () => {
+    renderPage()
+    fireEvent.click(screen.getByTestId('mindmap-expand-all'))
+    expect(topOf('REQ-SYS-001')).toBeGreaterThan(topOf('REQ-USR-001'))
+    expect(topOf('REQ-SW-001')).toBeGreaterThan(topOf('REQ-SYS-001'))
+  })
+
+  it('kardes dugumler YAN YANA (ayni satirda) durur', () => {
+    renderPage()
+    fireEvent.click(screen.getByTestId('mindmap-expand-all'))
+    expect(topOf('REQ-SW-001')).toBe(topOf('TC-SYS-001'))
+    expect(leftOf('REQ-SW-001')).not.toBe(leftOf('TC-SYS-001'))
+  })
+
+  it('ust dugum cocuklarinin ORTASINA hizalanir', () => {
+    renderPage()
+    fireEvent.click(screen.getByTestId('mindmap-expand-all'))
+    const kids = [leftOf('REQ-SW-001'), leftOf('TC-SYS-001')].sort((a, b) => a - b)
+    expect(leftOf('REQ-SYS-001')).toBeCloseTo((kids[0] + kids[1]) / 2, 5)
+  })
+})
+
+describe('Gereksinim Haritası — haritada arama', () => {
+  it('kapali bir dalda kalan kaydi bulur, yolunu acar ve dugumu vurgular', () => {
+    renderPage()
+    // REQ-SW-001 baslangicta kapali bir dalin altindadir.
+    expect(node('REQ-SW-001')).not.toBeInTheDocument()
+
+    fireEvent.change(screen.getByTestId('mindmap-search'), {
+      target: { value: 'REQ-SW-001' },
+    })
+    fireEvent.click(screen.getByTestId('mindmap-search-submit'))
+
+    expect(node('REQ-SW-001')).toBeInTheDocument()
+    expect(node('REQ-SW-001')).toHaveAttribute('stroke', '#f59e0b')
+    // Yol uzerindeki kardes dallar da acilmis olur (ayni ust dugumun altinda).
+    expect(node('REQ-SYS-001')).toBeInTheDocument()
+  })
+
+  it('baslikla ve buyuk/kucuk harf farkiyla da bulur', () => {
+    renderPage()
+    fireEvent.change(screen.getByTestId('mindmap-search'), {
+      target: { value: 'SICAKLIK' },
+    })
+    fireEvent.click(screen.getByTestId('mindmap-search-submit'))
+    expect(node('REQ-SW-001')).toHaveAttribute('stroke', '#f59e0b')
+  })
+
+  it('eslesme yoksa kullaniciyi uyarir ve harita degismez', () => {
+    renderPage()
+    fireEvent.change(screen.getByTestId('mindmap-search'), { target: { value: 'yok-boyle' } })
+    fireEvent.click(screen.getByTestId('mindmap-search-submit'))
+    expect(screen.getByTestId('mindmap-search-miss')).toBeInTheDocument()
+    expect(node('REQ-SW-001')).not.toBeInTheDocument()
+  })
+
+  it('birden fazla eslesme varsa sayisini bildirir ve aralarinda gezinir', () => {
+    renderPage()
+    fireEvent.change(screen.getByTestId('mindmap-search'), { target: { value: 'REQ-' } })
+    fireEvent.click(screen.getByTestId('mindmap-search-submit'))
+    expect(screen.getByTestId('mindmap-search-hits')).toHaveTextContent('3')
+
+    const firstFocused = screen.getByTestId('mindmap-search-submit')
+    expect(firstFocused).toHaveTextContent('Sonraki')
+    const strokeOf = (id) => node(id)?.getAttribute('stroke')
+    const before = ['REQ-USR-001', 'REQ-SYS-001', 'REQ-SW-001'].find(
+      (id) => strokeOf(id) === '#f59e0b',
+    )
+    fireEvent.click(screen.getByTestId('mindmap-search-submit'))
+    const after = ['REQ-USR-001', 'REQ-SYS-001', 'REQ-SW-001'].find(
+      (id) => strokeOf(id) === '#f59e0b',
+    )
+    expect(after).not.toBe(before)
+  })
+
+  it('bos sorguda "Bul" devre disidir', () => {
+    renderPage()
+    expect(screen.getByTestId('mindmap-search-submit')).toBeDisabled()
+  })
+})
+
+describe('Gereksinim Haritası — canli gorunum', () => {
   it('yeni kayit/bag sayfa yenilemeden haritada belirir', () => {
     const { rerender } = renderPage()
     expect(node('REQ-SYS-002')).not.toBeInTheDocument()
@@ -129,7 +217,7 @@ describe('MindMap — canli gorunum', () => {
     appMock.links = [...appMock.links, satisfies('u1', 's2')]
     rerender(
       <LanguageProvider>
-        <MindMap />
+        <RequirementMap />
       </LanguageProvider>,
     )
     expect(node('REQ-SYS-002')).toBeInTheDocument()
@@ -144,7 +232,7 @@ describe('MindMap — canli gorunum', () => {
     appMock.links = [...appMock.links]
     rerender(
       <LanguageProvider>
-        <MindMap />
+        <RequirementMap />
       </LanguageProvider>,
     )
     expect(node('REQ-SW-001')).toBeInTheDocument()
@@ -157,7 +245,7 @@ describe('MindMap — canli gorunum', () => {
   })
 })
 
-describe('MindMap — kayit detayi', () => {
+describe('Gereksinim Haritası — kayit detayi', () => {
   it('dugume tiklayinca ilgili kaydin detayi acilir', () => {
     renderPage()
     fireEvent.click(node('REQ-SYS-001'))
@@ -183,7 +271,7 @@ describe('MindMap — kayit detayi', () => {
   })
 })
 
-describe('MindMap — dışa aktarım', () => {
+describe('Gereksinim Haritası — dışa aktarım', () => {
   it('SVG disa aktarimi tum ACIK dallari iceren dosya uretir', () => {
     const blobs = []
     const createUrl = vi.fn(() => 'blob:mock')
@@ -206,7 +294,7 @@ describe('MindMap — dışa aktarım', () => {
     expect(blobs[0].type).toContain('image/svg+xml')
     expect(blobs[0].text).toContain('<svg')
     expect(blobs[0].text).toContain('REQ-SW-001')
-    expect(clicks[0]).toMatch(/^zihin-haritasi-kahve-makinesi-\d{4}-\d{2}-\d{2}\.svg$/)
+    expect(clicks[0]).toMatch(/^gereksinim-haritasi-kahve-makinesi-\d{4}-\d{2}-\d{2}\.svg$/)
     expect(createUrl).toHaveBeenCalled()
   })
 
@@ -226,7 +314,7 @@ describe('MindMap — dışa aktarım', () => {
   })
 })
 
-describe('MindMap — boş proje', () => {
+describe('Gereksinim Haritası — boş proje', () => {
   it('kayit yoksa bilgilendirme gosterilir', () => {
     appMock.requirements = []
     appMock.testCases = []
