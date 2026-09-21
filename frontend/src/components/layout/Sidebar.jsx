@@ -19,6 +19,7 @@ import {
   IconPlus,
   IconTarget,
   IconMindMap,
+  IconComponent,
 } from '../common/Icons.jsx'
 import Logo from '../common/Logo.jsx'
 import NavManager from './NavManager.jsx'
@@ -45,6 +46,9 @@ const TOP = [
   { key: 'dashboard', labelKey: 'nav.dashboard', icon: IconDashboard },
   // Urun Agaci (PBS) — lazy-load hiyerarsi gorunumu (Issue #9).
   { key: 'pbs-tree', labelKey: 'nav.pbsTree', icon: IconList },
+  // Issue #129: Bilesen bazli gorunum — ayni urun kirilimine SEVIYE yerine
+  // BILESEN uzerinden bakar (secilen bilesenin tum gereksinimleri tek liste).
+  { key: 'components', labelKey: 'nav.components', icon: IconComponent },
 ]
 const BOTTOM = [
   { key: 'coverage', labelKey: 'nav.coverage', icon: IconShield },

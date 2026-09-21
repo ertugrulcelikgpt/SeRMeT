@@ -11,6 +11,8 @@ import {
   collectExpandableKeys,
   defaultExpandedKeys,
   layoutMindMap,
+  MIND_MAP_LAYOUT,
+  mindMapEdgePath,
   levelOfType,
   mindMapNodeKey,
 } from '../mindMap.js'
@@ -69,6 +71,131 @@ describe('buildMindMapGraph', () => {
     expect(levelOfType(REQ_TYPE.SOFTWARE)).toBe('subsystem')
     expect(levelOfType(REQ_TYPE.HARDWARE)).toBe('subsystem')
     expect(levelOfType(TEST_TYPE.ACCEPTANCE)).toBe('test')
+  })
+})
+
+describe('layoutMindMap — sıkışık (compact) dikey düzen', () => {
+  // Genis bir agac: tek kok, 8 dal; her dalin 2 YAPRAK cocugu.
+  const wideGraph = () => {
+    const reqs = [{ id: 'r', text_id: 'R-0', title: 'Kök', type: REQ_TYPE.USER }]
+    const links = []
+    for (let i = 1; i <= 8; i += 1) {
+      reqs.push({ id: 's' + i, text_id: 'S-' + i, title: 'Dal', type: REQ_TYPE.SYSTEM })
+      links.push(link('r', 's' + i))
+      for (let j = 1; j <= 2; j += 1) {
+        const wid = 'w' + i + '_' + j
+        reqs.push({ id: wid, text_id: 'W-' + i + j, title: 'Yaprak', type: REQ_TYPE.SOFTWARE })
+        links.push(link('s' + i, wid))
+      }
+    }
+    return buildMindMapGraph(reqs, [], links)
+  }
+  const openAll = (g, opts) => layoutMindMap(g, collectExpandableKeys(g).keys, opts)
+
+  it('yapraklar ust dugumun ALTINDA zincir olur; harita daralir', () => {
+    const g = wideGraph()
+    const classic = openAll(g, { orientation: 'vertical' })
+    const compact = openAll(g, { orientation: 'vertical', compact: true })
+    expect(compact.compact).toBe(true)
+    // Her yaprak kendi sutununu almadigi icin genislik yariya iner.
+    expect(compact.width).toBeLessThan(classic.width * 0.6)
+  })
+
+  it('zincirdeki kutular AYNI HIZADA ve ardisik durur', () => {
+    const compact = openAll(wideGraph(), { orientation: 'vertical', compact: true })
+    const byId = Object.fromEntries(compact.nodes.map((n) => [n.id, n]))
+    // Iki yaprak, dalin tam altinda, alt alta.
+    expect(byId.w1_1.x).toBe(byId.s1.x)
+    expect(byId.w1_2.x).toBe(byId.s1.x)
+    expect(byId.w1_1.y).toBeGreaterThan(byId.s1.y)
+    expect(byId.w1_2.y).toBeGreaterThan(byId.w1_1.y)
+  })
+
+  it('kirilimi olan cocuklar hala YAN YANA acilir (yelpaze)', () => {
+    const compact = openAll(wideGraph(), { orientation: 'vertical', compact: true })
+    const byId = Object.fromEntries(compact.nodes.map((n) => [n.id, n]))
+    expect(byId.s1.y).toBe(byId.s2.y) // ayni seviye
+    expect(byId.s1.x).not.toBe(byId.s2.x) // farkli sutun
+    // Kok, dallarinin ortasinda.
+    const mid = (byId.s1.x + byId.s8.x) / 2
+    expect(byId.r.x).toBeCloseTo(mid, 5)
+  })
+
+  it('zincir oku bir ONCEKI kutudan iner (kutudan kutuya)', () => {
+    const half = MIND_MAP_LAYOUT.nodeHeight / 2
+    const compact = openAll(wideGraph(), { orientation: 'vertical', compact: true })
+    const byId = Object.fromEntries(compact.nodes.map((n) => [n.id, n]))
+    const toSecond = compact.edges.find((e) => Math.abs(e.y2 - (byId.w1_2.y - half)) < 0.01)
+    expect(toSecond).toBeTruthy()
+    // Ikinci yaprak, ILK YAPRAGIN altindan baglanir (dogrudan daldan degil).
+    expect(toSecond.y1).toBeCloseTo(byId.w1_1.y + half, 5)
+  })
+
+  it('dugum ust siniri sikisik duzende de uygulanir', () => {
+    const g = wideGraph()
+    const compact = layoutMindMap(g, collectExpandableKeys(g).keys, {
+      orientation: 'vertical',
+      compact: true,
+      maxNodes: 3,
+    })
+    expect(compact.truncated).toBe(true)
+    expect(compact.nodes.length).toBeLessThanOrEqual(3)
+  })
+})
+
+describe('layoutMindMap — dikey (yukarıdan aşağı) yön', () => {
+  const opened = () => {
+    const g = buildMindMapGraph(REQS, TESTS, LINKS)
+    return {
+      g,
+      h: layoutMindMap(g, collectExpandableKeys(g).keys),
+      v: layoutMindMap(g, collectExpandableKeys(g).keys, { orientation: 'vertical' }),
+    }
+  }
+
+  it('derinlik ASAGI buyur; kardesler yana dizilir', () => {
+    const { v } = opened()
+    const byId = Object.fromEntries(v.nodes.map((n) => [n.id, n]))
+    expect(v.orientation).toBe('vertical')
+    expect(byId.u1.y).toBeLessThan(byId.s1.y)
+    expect(byId.s1.y).toBeLessThan(byId.w1.y)
+    // Ayni seviyedeki kardesler ayni satirda, farkli sutunlarda durur.
+    expect(byId.w1.y).toBe(byId.t1.y)
+    expect(byId.w1.x).not.toBe(byId.t1.x)
+  })
+
+  it('yatay yonde ise derinlik SAGA buyur (Issue #122 davranisi korunur)', () => {
+    const { h } = opened()
+    const byId = Object.fromEntries(h.nodes.map((n) => [n.id, n]))
+    expect(h.orientation).toBe('horizontal')
+    expect(byId.u1.x).toBeLessThan(byId.s1.x)
+    expect(byId.w1.x).toBe(byId.t1.x)
+  })
+
+  it('ust dugum cocuklarinin ORTASINA hizalanir', () => {
+    const { v } = opened()
+    const byId = Object.fromEntries(v.nodes.map((n) => [n.id, n]))
+    const mid = (byId.w1.x + byId.t1.x) / 2
+    expect(byId.s1.x).toBeCloseTo(mid, 5)
+  })
+
+  it('kenarlar alt kenardan cocugun ust kenarina baglanir', () => {
+    const { v } = opened()
+    const edge = v.edges[0]
+    expect(edge.vertical).toBe(true)
+    expect(edge.y2).toBeGreaterThan(edge.y1)
+    // Dikey kenar DIRSEK cizer (bezier degil): dikey/yatay parcalar.
+    const d = mindMapEdgePath(edge)
+    expect(d.startsWith('M ')).toBe(true)
+    expect(d).toMatch(/[VH]/)
+  })
+
+  it('dikey duzende genislik kardes eksenine, yukseklik derinlige baglidir', () => {
+    const { h, v } = opened()
+    expect(v.width).toBeGreaterThan(v.height)
+    expect(h.width).toBeGreaterThan(h.height)
+    // Ayni graf: yatayda genislik derinlikten, dikeyde yukseklik derinlikten.
+    expect(v.height).toBeGreaterThan(0)
   })
 })
 

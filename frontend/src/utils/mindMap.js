@@ -208,27 +208,236 @@ export function collectExpandableKeys(graph, { maxNodes = MIND_MAP_MAX_NODES } =
 }
 
 /**
- * Acik dallari klasik yatay mind map duzenine yerlestirir.
+ * Acik dallari mind map duzenine yerlestirir. Iki yon desteklenir:
  *
- *   x = derinlik * sutun adimi                     (soldan saga dallanma)
- *   y = yaprak ise sıradaki satir, degilse cocuklarinin ortasi
+ *   'horizontal' (varsayilan, Issue #122): derinlik SAGA buyur
+ *       derinlik ekseni = x, kardes ekseni = y
+ *   'vertical'   (Issue #129 Bilesenler): derinlik ASAGI buyur — klasik
+ *       organizasyon semasi / yukaridan asagi zihin haritasi
+ *       derinlik ekseni = y, kardes ekseni = x
+ *
+ * Her iki yonde de yaprak dugumler kardes ekseninde sirayla dizilir, ust
+ * dugum ise cocuklarinin ORTASINA hizalanir.
+ *
+ * Dugum konumu SOZLESMESI yonden bagimsizdir (cizim katmani buna guvenir):
+ *   x = dugumun SOL kenari, y = dugumun DIKEY MERKEZI.
  *
  * KAPALI dal hic dolasilmaz: maliyet toplam kayit sayisiyla degil GORUNEN
  * dugum sayisiyla artar.
  *
  * @param {object} graph        buildMindMapGraph ciktisi
  * @param {Set<string>} expandedKeys acik yol anahtarlari
- * @returns {{nodes: array, edges: array, width, height, minX, minY, truncated, leafRows}}
+ * @param {object} options      { layout, maxNodes, orientation }
+ * @returns {{nodes, edges, orientation, width, height, minX, minY, truncated, leafRows}}
  */
+/**
+ * SIKISIK (compact) DIKEY DUZEN — `{ orientation:'vertical', compact:true }`.
+ *
+ * Neden: klasik agac duzeninde her yaprak kendi sutununu aldigi icin genis
+ * bir proje (72 gereksinim, 24 kok) 5000+ piksel genisliyor; ekrana
+ * sigdirmak %15 yakinlastirma demek, o olcekte ise etiketler cizilmiyor ve
+ * kullanici bos kutulardan olusan bir serit goruyordu.
+ *
+ * Cozum, el cizimi akis semalarinin (Excalidraw / Obsidian canvas) duzeni:
+ *   - KIRILIMI OLAN cocuklar YAN YANA dizilir (kokten disa acilan yelpaze),
+ *   - HEPSI YAPRAK olan cocuklar ust dugumun ALTINDA, ayni hizada bir
+ *     ZINCIR olusturur (kutudan kutuya inen kisa oklar).
+ * Boylece her dal kendi sutununda asagi akar; harita genis ama ALCAK
+ * kalir ve okunabilir olcekte yatay kaydirilarak gezilir. Yapraklarin her
+ * birine ayri sutun ayirmak haritayi gereksiz yere kat kat genisletiyordu.
+ *
+ * Yerlesim, alt agaclari KUTU olarak paketler: her dal once kendi (0,0)
+ * merkezli kutusunu uretir, sonra ust dugum onlari yan yana ya da alt alta
+ * yerlestirip kendi konumunu belirler.
+ */
+/** Iki dugum arasinda dikey kenar: ust kutunun altindan alt kutunun ustune. */
+function edgeBetween(from, to, L) {
+  return {
+    key: `${from.key}=>${to.key}`,
+    vertical: true,
+    x1: from.x + L.nodeWidth / 2,
+    y1: from.y + L.nodeHeight / 2,
+    x2: to.x + L.nodeWidth / 2,
+    y2: to.y - L.nodeHeight / 2,
+    color: to.color,
+    level: to.node?.level,
+    depth: to.depth,
+  }
+}
+
+function layoutCompactVertical(graph, expandedKeys, L, maxNodes) {
+  const expanded = expandedKeys || new Set()
+  const rowPitch = L.nodeHeight + L.rowGap
+  let visited = 0
+  let truncated = false
+  let leaves = 0
+
+  // Kutu icindeki kayitlari topluca kaydirir (paketleme sirasinda).
+  const shift = (box, dx, dy) => {
+    for (const n of box.nodes) {
+      n.x += dx
+      n.y += dy
+    }
+    for (const e of box.edges) {
+      e.x1 += dx
+      e.x2 += dx
+      e.y1 += dy
+      e.y2 += dy
+    }
+  }
+
+  /**
+   * Bir dal icin kutu uretir. Kutunun sol-ust kosesi (0,0)'dir; dugumun
+   * KENDISI kutunun tepesindedir (x: `selfX`, y merkezi nodeHeight/2).
+   * @returns {{nodes, edges, width, height, selfX}|null}
+   */
+  const build = (id, parentKey, depth, ancestors) => {
+    const node = graph.nodes.get(id)
+    if (!node) return null
+    if (visited >= maxNodes) {
+      truncated = true
+      return null
+    }
+    visited += 1
+
+    const key = mindMapNodeKey(parentKey, id)
+    const kids = childIdsOf(graph, id).filter((c) => !ancestors.has(c))
+    const hasChildren = kids.length > 0
+    const isExpanded = hasChildren && expanded.has(key)
+
+    const record = {
+      key,
+      id,
+      node,
+      level: node.level,
+      depth,
+      x: 0,
+      y: L.nodeHeight / 2,
+      hasChildren,
+      expanded: isExpanded,
+      childCount: kids.length,
+      color: MIND_MAP_BRANCH_COLORS[node.level] || MIND_MAP_BRANCH_COLORS.system,
+    }
+    const box = { nodes: [record], edges: [], width: L.nodeWidth, height: L.nodeHeight, selfX: 0 }
+
+    if (!isExpanded) {
+      leaves += 1
+      return box
+    }
+
+    const nextAncestors = new Set(ancestors)
+    nextAncestors.add(id)
+    const kidBoxes = []
+    for (const cid of kids) {
+      const kb = build(cid, key, depth + 1, nextAncestors)
+      if (kb) kidBoxes.push(kb)
+    }
+    if (kidBoxes.length === 0) {
+      leaves += 1
+      return box
+    }
+
+    // Yigma karari: cocuklarin HEPSI yapraksa zincir, aksi halde yelpaze.
+    const stacked = kids.every((cid) => childIdsOf(graph, cid).length === 0)
+
+    if (stacked) {
+      // Zincir: cocuklar ust dugumle AYNI HIZADA, alt alta; aralarinda kisa
+      // dikey oklar (referans akis semasindaki sutunlar).
+      let cursorY = rowPitch
+      let width = L.nodeWidth
+      let prev = record
+      for (const kb of kidBoxes) {
+        shift(kb, 0, cursorY)
+        box.nodes.push(...kb.nodes)
+        box.edges.push(...kb.edges)
+        const kidRecord = kb.nodes[0]
+        box.edges.push(edgeBetween(prev, kidRecord, L))
+        cursorY += kb.height + L.rowGap
+        width = Math.max(width, kb.width)
+        // Zincir ARDISIKTIR: ok, ust dugumden degil bir ONCEKI kutudan iner.
+        prev = kidRecord
+      }
+      box.width = width
+      box.height = cursorY - L.rowGap
+      return box
+    }
+
+    // Yan yana: cocuk kutulari sirayla dizilir, ust dugum ortalarina hizalanir.
+    let cursorX = 0
+    let tallest = 0
+    for (const kb of kidBoxes) {
+      shift(kb, cursorX, rowPitch)
+      box.nodes.push(...kb.nodes)
+      box.edges.push(...kb.edges)
+      cursorX += kb.width + L.columnGap
+      tallest = Math.max(tallest, kb.height)
+    }
+    const childrenWidth = cursorX - L.columnGap
+    const firstSelf = kidBoxes[0].nodes[0].x
+    const lastSelf = kidBoxes[kidBoxes.length - 1].nodes[0].x
+    let selfX = (firstSelf + lastSelf) / 2
+    if (selfX < 0) {
+      shift(box, -selfX, 0)
+      selfX = 0
+    }
+    record.x = selfX
+    for (const kb of kidBoxes) box.edges.push(edgeBetween(record, kb.nodes[0], L))
+    box.selfX = selfX
+    box.width = Math.max(childrenWidth, selfX + L.nodeWidth)
+    box.height = rowPitch + tallest
+    return box
+  }
+
+  const nodes = []
+  const edges = []
+  let cursorY = 0
+  let width = 0
+  for (const rid of graph?.rootIds || []) {
+    const box = build(rid, null, 0, new Set())
+    if (!box) continue
+    shift(box, 0, cursorY)
+    nodes.push(...box.nodes)
+    edges.push(...box.edges)
+    cursorY += box.height + L.rowGap
+    width = Math.max(width, box.width)
+  }
+
+  nodes.sort((a, b) => a.y - b.y || a.x - b.x)
+  return {
+    nodes,
+    edges,
+    layout: L,
+    orientation: 'vertical',
+    compact: true,
+    minX: -L.padding,
+    minY: -L.padding,
+    width: Math.max(width, L.nodeWidth) + L.padding * 2,
+    height: Math.max(cursorY - L.rowGap, L.nodeHeight) + L.padding * 2,
+    leafRows: leaves,
+    truncated,
+  }
+}
+
 export function layoutMindMap(graph, expandedKeys, options = {}) {
   const L = { ...MIND_MAP_LAYOUT, ...(options.layout || {}) }
   const maxNodes = options.maxNodes ?? MIND_MAP_MAX_NODES
   const expanded = expandedKeys || new Set()
-  const rowPitch = L.nodeHeight + L.rowGap
-  const colPitch = L.nodeWidth + L.columnGap
+  const vertical = options.orientation === 'vertical'
+  // Sikisik dikey duzen ayri bir yerlesticidir (kutu paketleme); klasik
+  // "her yaprak bir sutun" mantigi genis projelerde okunmaz hale geliyordu.
+  if (vertical && options.compact) {
+    return layoutCompactVertical(graph, expandedKeys, L, maxNodes)
+  }
+  // Derinlik ekseni asagi (dikey) ya da saga (yatay) buyur; kardes ekseni
+  // her zaman digeridir. Adimlar buna gore secilir.
+  const depthPitch = vertical ? L.nodeHeight + L.rowGap : L.nodeWidth + L.columnGap
+  const crossPitch = vertical ? L.nodeWidth + L.columnGap : L.nodeHeight + L.rowGap
+  const crossHalf = vertical ? L.nodeWidth / 2 : L.nodeHeight / 2
 
   const nodes = []
   const edges = []
+  // `row` = kardes ekseninde tuketilen yaprak sayaci (yatayda satir,
+  // dikeyde sutun).
   let row = 0
   let maxDepth = 0
   let truncated = false
@@ -249,7 +458,7 @@ export function layoutMindMap(graph, expandedKeys, options = {}) {
     const kids = childIdsOf(graph, id).filter((c) => !ancestors.has(c))
     const hasChildren = kids.length > 0
     const isExpanded = hasChildren && expanded.has(key)
-    const x = depth * colPitch
+    const depthPos = depth * depthPitch
     if (depth > maxDepth) maxDepth = depth
 
     const record = {
@@ -258,42 +467,60 @@ export function layoutMindMap(graph, expandedKeys, options = {}) {
       node,
       level: node.level,
       depth,
-      x,
+      // Konumlar `cross` belirlendikten SONRA yazilir (asagida): yatayda
+      // x derinlikten, dikeyde y derinlikten gelir.
+      x: 0,
       y: 0,
+      cross: 0,
       hasChildren,
       expanded: isExpanded,
       childCount: kids.length,
       color: MIND_MAP_BRANCH_COLORS[node.level] || MIND_MAP_BRANCH_COLORS.system,
     }
 
+    const kidRecords = []
     if (isExpanded) {
       const nextAncestors = new Set(ancestors)
       nextAncestors.add(id)
-      const kidRecords = []
       for (const cid of kids) {
         const kr = walk(cid, key, depth + 1, nextAncestors)
         if (kr) kidRecords.push(kr)
       }
-      if (kidRecords.length === 0) {
-        record.y = row * rowPitch + L.nodeHeight / 2
-        row += 1
-      } else {
-        record.y = (kidRecords[0].y + kidRecords[kidRecords.length - 1].y) / 2
-        for (const kr of kidRecords) {
-          edges.push({
-            key: `${key}->${kr.key}`,
-            x1: x + L.nodeWidth,
-            y1: record.y,
-            x2: kr.x,
-            y2: kr.y,
-            color: kr.color,
-            depth: kr.depth,
-          })
-        }
-      }
-    } else {
-      record.y = row * rowPitch + L.nodeHeight / 2
+    }
+
+    if (kidRecords.length === 0) {
+      // Yaprak (ya da kapali dal): kardes ekseninde siradaki yeri alir.
+      record.cross = row * crossPitch + crossHalf
       row += 1
+    } else {
+      // Ust dugum cocuklarinin ORTASINA hizalanir.
+      record.cross = (kidRecords[0].cross + kidRecords[kidRecords.length - 1].cross) / 2
+    }
+
+    // Sozlesme: x = sol kenar, y = dikey merkez (yon farketmez).
+    if (vertical) {
+      record.x = record.cross - L.nodeWidth / 2
+      record.y = depthPos + L.nodeHeight / 2
+    } else {
+      record.x = depthPos
+      record.y = record.cross
+    }
+
+    // Kenarlar ust dugumun konumu belli olduktan sonra baglanir: dikeyde
+    // alt kenar ortasindan cocugun ust kenar ortasina, yatayda sag kenardan
+    // cocugun sol kenarina.
+    for (const kr of kidRecords) {
+      edges.push({
+        key: `${key}->${kr.key}`,
+        x1: vertical ? record.x + L.nodeWidth / 2 : record.x + L.nodeWidth,
+        y1: vertical ? record.y + L.nodeHeight / 2 : record.y,
+        x2: vertical ? kr.x + L.nodeWidth / 2 : kr.x,
+        y2: vertical ? kr.y - L.nodeHeight / 2 : kr.y,
+        vertical,
+        color: kr.color,
+        level: kr.node?.level,
+        depth: kr.depth,
+      })
     }
 
     nodes.push(record)
@@ -305,12 +532,18 @@ export function layoutMindMap(graph, expandedKeys, options = {}) {
   // Cizim sirasi: yukaridan asagi, soldan saga (deterministik ciktı).
   nodes.sort((a, b) => a.y - b.y || a.depth - b.depth)
 
-  const contentWidth = maxDepth * colPitch + L.nodeWidth
-  const contentHeight = Math.max(row, 1) * rowPitch
+  const depthExtent = maxDepth * depthPitch + (vertical ? L.nodeHeight : L.nodeWidth)
+  const crossExtent = Math.max(row, 1) * crossPitch
+  const contentWidth = vertical ? crossExtent : depthExtent
+  const contentHeight = vertical ? depthExtent : crossExtent
   return {
     nodes,
     edges,
     layout: L,
+    orientation: vertical ? 'vertical' : 'horizontal',
+    // Dikeyde dugum kendi kardes konumunun ETRAFINA yerlesir; ilk sutunun
+    // merkezi nodeWidth/2 oldugu icin sol kenari yine 0'dir — iki yonde de
+    // icerik (0,0)'dan baslar.
     minX: -L.padding,
     minY: -L.padding,
     width: contentWidth + L.padding * 2,
@@ -320,10 +553,31 @@ export function layoutMindMap(graph, expandedKeys, options = {}) {
   }
 }
 
-/** Kenar (dal) egrisi — yatay mind map'in klasik "S" bezier'i. */
+/**
+ * Kenar (dal) cizgisi.
+ *   yatay : klasik "S" bezier'i (soldan saga dallanma)
+ *   dikey : koseleri yuvarlatilmis DIRSEK — yukaridan asagi semalarda
+ *           egri demeti "spagetti" gorunurken dirsek, hangi dugumun kimin
+ *           altinda oldugunu tek bakista okutur.
+ */
 export function mindMapEdgePath(edge) {
-  const dx = Math.max(28, (edge.x2 - edge.x1) / 2)
   const r = (n) => Math.round(n * 10) / 10
+  if (edge.vertical) {
+    const midY = (edge.y1 + edge.y2) / 2
+    const dx = edge.x2 - edge.x1
+    // Ayni sutundaki cocuk: duz dikey cizgi.
+    if (Math.abs(dx) < 1) return `M ${r(edge.x1)} ${r(edge.y1)} V ${r(edge.y2)}`
+    const dir = dx > 0 ? 1 : -1
+    const k = Math.min(12, Math.abs(dx) / 2, Math.abs(midY - edge.y1), Math.abs(edge.y2 - midY))
+    return (
+      `M ${r(edge.x1)} ${r(edge.y1)} V ${r(midY - k)} ` +
+      `Q ${r(edge.x1)} ${r(midY)} ${r(edge.x1 + dir * k)} ${r(midY)} ` +
+      `H ${r(edge.x2 - dir * k)} ` +
+      `Q ${r(edge.x2)} ${r(midY)} ${r(edge.x2)} ${r(midY + k)} ` +
+      `V ${r(edge.y2)}`
+    )
+  }
+  const dx = Math.max(28, (edge.x2 - edge.x1) / 2)
   return `M ${r(edge.x1)} ${r(edge.y1)} C ${r(edge.x1 + dx)} ${r(edge.y1)}, ${r(
     edge.x2 - dx,
   )} ${r(edge.y2)}, ${r(edge.x2)} ${r(edge.y2)}`
@@ -359,14 +613,19 @@ export function buildMindMapSvg(mapLayout, { theme = 'dark', title = 'Mind Map' 
     )
     .join('')
 
+  const vertical = mapLayout.orientation === 'vertical'
   const nodes = mapLayout.nodes
     .map((n) => {
       const top = n.y - L.nodeHeight / 2
       const label = fitLabel(n.node.label, L.nodeWidth)
+      // Ac/kapa noktasi dalin CIKTIGI kenardadir: yatayda sag orta,
+      // dikeyde alt orta.
+      const dx = vertical ? n.x + L.nodeWidth / 2 : n.x + L.nodeWidth
+      const dy = vertical ? n.y + L.nodeHeight / 2 : n.y
       const dot = n.hasChildren
-        ? `<circle cx="${n.x + L.nodeWidth}" cy="${n.y}" r="8" fill="${c.dotBg}" stroke="${n.color}" stroke-width="2"/>` +
-          `<path d="M ${n.x + L.nodeWidth - 4} ${n.y} H ${n.x + L.nodeWidth + 4}${
-            n.expanded ? '' : ` M ${n.x + L.nodeWidth} ${n.y - 4} V ${n.y + 4}`
+        ? `<circle cx="${dx}" cy="${dy}" r="8" fill="${c.dotBg}" stroke="${n.color}" stroke-width="2"/>` +
+          `<path d="M ${dx - 4} ${dy} H ${dx + 4}${
+            n.expanded ? '' : ` M ${dx} ${dy - 4} V ${dy + 4}`
           }" stroke="${n.color}" stroke-width="1.8" stroke-linecap="round"/>`
         : ''
       return (
@@ -377,6 +636,12 @@ export function buildMindMapSvg(mapLayout, { theme = 'dark', title = 'Mind Map' 
           n.node.text_id,
         )}${n.node.typeSuffix ? ` <tspan fill="${c.subText}">· ${esc(n.node.typeSuffix)}</tspan>` : ''}</text>` +
         `<text x="${n.x + 14}" y="${top + 32}" font-family="Inter, Segoe UI, sans-serif" font-size="11" fill="${c.nodeText}">${esc(label)}</text>` +
+        // Ucuncu satir yalnizca dugum ozet tasiyorsa (bkz. MindMapCanvas).
+        (n.node.meta
+          ? `<text x="${n.x + 14}" y="${top + 47}" font-family="Inter, Segoe UI, sans-serif" font-size="10" font-weight="600" fill="${c.subText}">${esc(
+              fitLabel(n.node.meta, L.nodeWidth),
+            )}</text>`
+          : '') +
         dot +
         `</g>`
       )
