@@ -136,6 +136,18 @@ export function buildVerificationIndex(links, testCases = []) {
   return index
 }
 
+/**
+ * TEK bir test senaryosunun sonucunu dogrulama durumuna cevirir (Issue #123:
+ * bagli testler listede sonucuyla gorunur). Onaylanan test "doğrulandı",
+ * reddedilen "başarısız", digerleri (Draft / In Review / bilinmeyen)
+ * "bekliyor" sayilir — buildVerificationIndex ile AYNI oncelik.
+ */
+export function testResultState(status) {
+  if (status === STATUS.APPROVED) return VERIFICATION.VERIFIED
+  if (status === STATUS.REJECTED) return VERIFICATION.FAILED
+  return VERIFICATION.PENDING
+}
+
 /** Indeksten tek bir gereksinimin ozeti (yoksa "doğrulanamaz"). */
 export function verificationOf(index, reqId) {
   return index?.get(reqId) || EMPTY_INFO

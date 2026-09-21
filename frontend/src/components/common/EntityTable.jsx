@@ -23,8 +23,19 @@
 //    - Onay sutunu (Check Circle): "Baglantilar" ile "Eylemler" arasinda.
 //    - Onay Durumu sutunu: PM'e ozel "Onay Detayi" butonu + durum rozeti.
 //    - Izin bazli kalem/cop kilidi + onaylanan satirin donmasi (freeze).
+//    - SATIR GENISLETME (Issue #123): "BAG" sutunu yalnizca bir SAYI
+//      gosteriyordu; satirin basindaki ok ile satir acilir ve o kaydin ust/alt
+//      baglari + dogrulayan test senaryolari (sonucuyla) KOD + BASLIK olarak
+//      listelenir, bir koda tiklaninca hedef kayit acilir. Veri satir basina
+//      cekilmez: cagiran taraf TOPLU bir indeks (utils/linkIndex.js) kurup
+//      `linkSummaryFor` ile verir — ek sorgu maliyeti yoktur.
+//      Ayni ozet, bagsiz (yetim) kayitlari ve "alt bag beklenen ama alt bagi
+//      olmayan" kayitlari kod hucresinde rozetle isaretler; istenirse
+//      "Üst Bağlar" / "Alt Bağlar" AYRI SUTUN olarak da acilabilir
+//      (columnKeys: 'linksUp' / 'linksDown', bkz. utils/viewConfig.js).
 //  Test/gereksinim sayfalari izin fonksiyonlarini prop olarak gecer.
 // ============================================================================
+import { Fragment, useState } from 'react'
 import { StatusBadge, TypeBadge, AttrBadge, VerificationBadge } from './Badge.jsx'
 import {
   IconEdit,
@@ -38,7 +49,9 @@ import {
   IconAlert,
   IconChevron,
   IconLoader,
+  IconUnlink,
 } from './Icons.jsx'
+import LinkExpandPanel from './LinkExpandPanel.jsx'
 import { truncate, stripHtml, getDisplayLabel } from '../../utils/format.js'
 import { useLang } from '../../context/LanguageContext.jsx'
 import { useApp } from '../../context/AppContext.jsx'
@@ -61,6 +74,34 @@ const ALIGN = {
   actions: 'text-right',
 }
 
+/**
+ * Issue #123: "Üst Bağlar" / "Alt Bağlar" sutunlarinin hucresi — bagli
+ * kayitlarin KODLARI, tiklanabilir rozetler olarak. Basliklar tooltip'te
+ * durur (sutun genisligi satiri sismeden okunabilir kalsin diye); tam
+ * liste satir genisletildiginde gorunur.
+ */
+function CodeList({ items, onOpen }) {
+  if (!items || items.length === 0) return dash
+  return (
+    <div className="flex flex-wrap gap-1">
+      {items.map((it) => (
+        <button
+          key={it.linkId}
+          type="button"
+          onClick={() => onOpen && onOpen(it)}
+          disabled={!onOpen}
+          data-testid="link-code"
+          data-code={it.node.text_id}
+          title={getDisplayLabel(it.node).text}
+          className="rounded-md bg-brand-50 px-1.5 py-0.5 font-mono text-[11px] font-bold text-brand-700 transition-colors hover:bg-brand-100 disabled:cursor-default disabled:hover:bg-brand-50 dark:bg-brand-950/40 dark:text-brand-300 dark:hover:bg-brand-900/50"
+        >
+          {it.node.text_id}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export default function EntityTable({
   rows,
   columns = ['type', 'field', 'status', 'links'],
@@ -68,6 +109,18 @@ export default function EntityTable({
   columnKeys = null,
   attributeEntityType, // 'requirement' | 'testcase' — modular oznitelik sutunlari icin
   linkCountFor,
+  // --- Issue #123: satir genisletme + bag ozeti -----------------------------
+  //  expandable      : satir basina ac/kapa oku cikar (agac modunda degil)
+  //  linkSummaryFor  : (row) => utils/linkIndex.js linkSummaryOf ciktisi.
+  //                    TOPLU kurulmus bir indeksten okunur; bu bilesen asla
+  //                    satir basina istek atmaz.
+  //  onOpenLinked    : ({ kind, node }) => void — bagli koda tiklandiginda
+  //                    hedef kaydi acar (ViewModal).
+  //  expandShowsChildren: alt bag/test bolumleri anlamli mi (testlerde degil)
+  expandable = false,
+  linkSummaryFor,
+  onOpenLinked,
+  expandShowsChildren = true,
   // --- Issue #57: supheli bag gostergesi ---
   suspectCountFor, // (row) => suspect bag sayisi; verilmezse gosterge kapali
   onOpenSuspect, // (row) => tiklandiginda supheli bag yonetim sayfasina gider
@@ -137,6 +190,21 @@ export default function EntityTable({
   const { t } = useLang()
   const { attributeDefs } = useApp()
   const isSelected = (id) => Boolean(selectedIds && selectedIds.has(id))
+
+  // Genisletilmis satirlar SADECE gorunum durumudur (kaydedilmez): sayfa
+  // degistiginde/filtre daraldiginda acik kalan satir zaten cizilmez.
+  const [expandedIds, setExpandedIds] = useState(() => new Set())
+  // Agac modunda satir basindaki ok ZATEN alt kirilim icin kullanilir; ayni
+  // yere ikinci bir ok koymak anlamsiz olurdu.
+  const expandEnabled = expandable && !treeMode && Boolean(linkSummaryFor)
+  const isExpanded = (id) => expandedIds.has(id)
+  const toggleExpanded = (id) =>
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
 
   // Modular oznitelik sutunlari: projede tanimli her oznitelik (Priority
   // dahil — artik o da sabit degil) icin bir sutun, tanimlanan siraya gore.
@@ -219,6 +287,32 @@ export default function EntityTable({
                   {ctx.suspectCount}
                 </span>
               ))}
+            {/* Issue #123: bagsiz (yetim) kayit ayirt edilebilir olmali.
+                "Alt bag beklenen ama alt bagi olmayan" kayit da isaretlenir;
+                hicbir bagi olmayan kayitta daha guclu olan YETIM rozeti
+                gosterilir (iki rozet ust uste yigilmaz). */}
+            {ctx.linkSummary &&
+              (ctx.linkSummary.orphan ? (
+                <span
+                  data-testid="orphan-badge"
+                  className="inline-flex items-center gap-0.5 rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-rose-700 dark:bg-rose-950/50 dark:text-rose-300"
+                  title={t('links.orphanTitle')}
+                >
+                  <IconUnlink size={11} />
+                  {t('links.orphan')}
+                </span>
+              ) : (
+                ctx.linkSummary.missingChildren && (
+                  <span
+                    data-testid="missing-children-badge"
+                    className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-800 dark:bg-amber-950/50 dark:text-amber-300"
+                    title={t('links.missingChildTitle')}
+                  >
+                    <IconUnlink size={11} />
+                    {t('links.missingChild')}
+                  </span>
+                )
+              ))}
           </div>
         )
       case 'title':
@@ -268,6 +362,18 @@ export default function EntityTable({
           <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-slate-100 px-1.5 text-xs font-bold tabular-nums text-slate-600 dark:bg-slate-700 dark:text-slate-300">
             {linkCountFor ? linkCountFor(r.id) : 0}
           </span>
+        )
+      /* --- Issue #123: "Üst Bağlar" / "Alt Bağlar" ayri sutun olarak.
+             Varsayilan olarak KAPALIDIR; Gorunum yapilandirmasindan acilir
+             (satir genisletmenin alternatifi). --- */
+      case 'linksUp':
+        return <CodeList items={ctx.linkSummary?.parents} onOpen={onOpenLinked} />
+      case 'linksDown':
+        return (
+          <CodeList
+            items={[...(ctx.linkSummary?.children || []), ...(ctx.linkSummary?.tests || [])]}
+            onOpen={onOpenLinked}
+          />
         )
       /* --- Onay (Check Circle) + Reddet (X Circle) --- */
       case 'approval':
@@ -429,6 +535,13 @@ export default function EntityTable({
                   />
                 </th>
               )}
+              {/* Genisletme oku sutunu duzenin DISINDADIR (secim kutusu gibi):
+                  gizlenmesi bag okumasini imkansiz kilardi. */}
+              {expandEnabled && (
+                <th className="w-8 px-2 py-3">
+                  <span className="sr-only">{t('links.expand')}</span>
+                </th>
+              )}
               {treeMode && <th className="px-4 py-3">{t('tbl.th.section')}</th>}
               {keys.map((key) => (
                 <th key={key} className={`px-4 py-3 ${ALIGN[key] || ''}`}>
@@ -454,66 +567,116 @@ export default function EntityTable({
                 ...r,
                 title: r[titleKey],
               })
-              const ctx = { locked, suspectCount, info, canApprove, displayTitle, titleIsFallback }
+              // Bag ozeti TOPLU indeksten okunur (satir basina istek/tarama
+              // yok); hem rozetler hem genisletilmis panel ayni ozeti kullanir.
+              const linkSummary = linkSummaryFor ? linkSummaryFor(r) : null
+              const expanded = expandEnabled && isExpanded(r.id)
+              const ctx = {
+                locked,
+                suspectCount,
+                info,
+                canApprove,
+                displayTitle,
+                titleIsFallback,
+                linkSummary,
+              }
               return (
-                <tr
-                  key={r.id}
-                  draggable={treeMode && rowDraggable ? rowDraggable(r) : undefined}
-                  onDragStart={treeMode ? () => onRowDragStart && onRowDragStart(r) : undefined}
-                  onDragEnd={treeMode ? () => onRowDragEnd && onRowDragEnd() : undefined}
-                  onDragOver={
-                    treeMode
-                      ? (e) => {
-                          // preventDefault YALNIZCA gecerli hedefte cagrilir;
-                          // aksi halde tarayici birakmaya izin vermez.
-                          if (rowDropAllowed && rowDropAllowed(r)) e.preventDefault()
-                        }
-                      : undefined
-                  }
-                  onDrop={
-                    treeMode
-                      ? (e) => {
-                          e.preventDefault()
-                          if (rowDropAllowed && rowDropAllowed(r)) onRowDrop && onRowDrop(r)
-                        }
-                      : undefined
-                  }
-                  className={`group transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40 ${isSelected(r.id) ? 'bg-brand-50/60 dark:bg-brand-950/20' : ''} ${locked ? 'bg-emerald-50/40 dark:bg-emerald-950/10' : ''} ${suspectCount > 0 ? 'bg-amber-50/50 dark:bg-amber-950/10' : ''} ${treeMode && rowDraggable && rowDraggable(r) ? 'cursor-grab' : ''}`}
-                >
-                  {selectable && (
-                    <td className="px-4 py-3 align-top">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 cursor-pointer rounded border-slate-300 accent-brand-600 dark:border-slate-600 disabled:opacity-40"
-                        checked={isSelected(r.id)}
-                        disabled={locked}
-                        onChange={() => onToggleRow && onToggleRow(r.id)}
-                      />
-                    </td>
-                  )}
-                  {treeMode && (
-                    <td className="whitespace-nowrap px-4 py-3 align-top">
-                      <span className="font-mono text-xs font-semibold text-slate-500 dark:text-slate-400">
-                        {r._outline}
-                      </span>
-                    </td>
-                  )}
-                  {keys.map((key) => {
-                    // Kod hucresi tek satirda kalir; supheli satirlarda sol
-                    // kenar serittir. Baslik hucresi fallback etiketinde
-                    // dikeyde ortalanir (tek satirlik icerik).
-                    const extra =
-                      key === 'code'
-                        ? `whitespace-nowrap ${suspectCount > 0 ? 'border-l-4 border-l-amber-400' : ''}`
-                        : ''
-                    const valign = key === 'title' && titleIsFallback ? 'align-middle' : 'align-top'
-                    return (
-                      <td key={key} className={`px-4 py-3 ${ALIGN[key] || ''} ${valign} ${extra}`}>
-                        {renderCell(key, r, ctx)}
+                <Fragment key={r.id}>
+                  <tr
+                    draggable={treeMode && rowDraggable ? rowDraggable(r) : undefined}
+                    onDragStart={treeMode ? () => onRowDragStart && onRowDragStart(r) : undefined}
+                    onDragEnd={treeMode ? () => onRowDragEnd && onRowDragEnd() : undefined}
+                    onDragOver={
+                      treeMode
+                        ? (e) => {
+                            // preventDefault YALNIZCA gecerli hedefte cagrilir;
+                            // aksi halde tarayici birakmaya izin vermez.
+                            if (rowDropAllowed && rowDropAllowed(r)) e.preventDefault()
+                          }
+                        : undefined
+                    }
+                    onDrop={
+                      treeMode
+                        ? (e) => {
+                            e.preventDefault()
+                            if (rowDropAllowed && rowDropAllowed(r)) onRowDrop && onRowDrop(r)
+                          }
+                        : undefined
+                    }
+                    className={`group transition-colors hover:bg-slate-50 dark:hover:bg-slate-800/40 ${isSelected(r.id) ? 'bg-brand-50/60 dark:bg-brand-950/20' : ''} ${locked ? 'bg-emerald-50/40 dark:bg-emerald-950/10' : ''} ${suspectCount > 0 ? 'bg-amber-50/50 dark:bg-amber-950/10' : ''} ${treeMode && rowDraggable && rowDraggable(r) ? 'cursor-grab' : ''}`}
+                  >
+                    {expandEnabled && (
+                      <td className="px-2 py-3 align-top">
+                        <button
+                          type="button"
+                          onClick={() => toggleExpanded(r.id)}
+                          aria-expanded={expanded}
+                          aria-label={expanded ? t('links.collapse') : t('links.expand')}
+                          title={expanded ? t('links.collapse') : t('links.expand')}
+                          data-testid="row-expand-toggle"
+                          className="rounded p-0.5 text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700"
+                        >
+                          <IconChevron size={14} className={expanded ? 'rotate-90' : ''} />
+                        </button>
                       </td>
-                    )
-                  })}
-                </tr>
+                    )}
+                    {selectable && (
+                      <td className="px-4 py-3 align-top">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 cursor-pointer rounded border-slate-300 accent-brand-600 dark:border-slate-600 disabled:opacity-40"
+                          checked={isSelected(r.id)}
+                          disabled={locked}
+                          onChange={() => onToggleRow && onToggleRow(r.id)}
+                        />
+                      </td>
+                    )}
+                    {treeMode && (
+                      <td className="whitespace-nowrap px-4 py-3 align-top">
+                        <span className="font-mono text-xs font-semibold text-slate-500 dark:text-slate-400">
+                          {r._outline}
+                        </span>
+                      </td>
+                    )}
+                    {keys.map((key) => {
+                      // Kod hucresi tek satirda kalir; supheli satirlarda sol
+                      // kenar serittir. Baslik hucresi fallback etiketinde
+                      // dikeyde ortalanir (tek satirlik icerik).
+                      const extra =
+                        key === 'code'
+                          ? `whitespace-nowrap ${suspectCount > 0 ? 'border-l-4 border-l-amber-400' : ''}`
+                          : ''
+                      const valign =
+                        key === 'title' && titleIsFallback ? 'align-middle' : 'align-top'
+                      return (
+                        <td
+                          key={key}
+                          className={`px-4 py-3 ${ALIGN[key] || ''} ${valign} ${extra}`}
+                        >
+                          {renderCell(key, r, ctx)}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                  {expanded && (
+                    <tr
+                      data-testid="link-expand-row"
+                      className="bg-slate-50/60 dark:bg-slate-900/40"
+                    >
+                      <td
+                        colSpan={keys.length + 1 + (selectable ? 1 : 0)}
+                        className="px-4 pb-4 pt-0"
+                      >
+                        <LinkExpandPanel
+                          summary={linkSummary}
+                          onOpen={onOpenLinked}
+                          t={t}
+                          showChildren={expandShowsChildren}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
               )
             })}
           </tbody>

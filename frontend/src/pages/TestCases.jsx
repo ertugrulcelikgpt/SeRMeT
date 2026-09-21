@@ -35,6 +35,7 @@ import { TypeBadge } from '../components/common/Badge.jsx'
 import { IconPlus } from '../components/common/Icons.jsx'
 import { TEST_PAGES } from '../utils/constants.js'
 import { suspectLinksForTestCase } from '../utils/suspect.js'
+import { buildLinkIndex, linkCountOf, linkSummaryOf } from '../utils/linkIndex.js'
 import { getDisplayLabel } from '../utils/format.js'
 import { useBulkSelection } from '../hooks/useBulkSelection.js'
 import { useUndoableDelete } from '../hooks/useUndoableDelete.js'
@@ -55,6 +56,7 @@ export default function TestCases({
   const {
     testCases,
     links,
+    requirements,
     fields,
     attributeDefs,
     personnel,
@@ -78,6 +80,8 @@ export default function TestCases({
   const [bulkAssignOpen, setBulkAssignOpen] = useState(false)
   const [assignResult, setAssignResult] = useState(null)
   const [viewRow, setViewRow] = useState(null)
+  // Issue #123: genisletilmis satirdaki bag kodundan acilan HEDEF gereksinim.
+  const [linkedRow, setLinkedRow] = useState(null)
   const [matrixRow, setMatrixRow] = useState(null)
   const [attrMgr, setAttrMgr] = useState(false)
   // Silme oncesi zorunlu gerekce (izlenebilirlik) — bkz. ReasonModal.
@@ -89,7 +93,10 @@ export default function TestCases({
   // ATANAN KISI sutunu yoktur: atama coklu oldugu icin satiri sisirirdi;
   // atananlar goz (Read) ikonuyla acilan ViewModal'da sirayla gorunur.
   const tableColumns = useMemo(
-    () => (cfg?.lockedType ? ['field', 'status', 'links'] : ['type', 'field', 'status', 'links']),
+    () =>
+      cfg?.lockedType
+        ? ['field', 'status', 'links', 'linkTargets']
+        : ['type', 'field', 'status', 'links', 'linkTargets'],
     [cfg],
   )
   // Issue #97: tek kimlik dunyasi — oy veren kimligi her zaman kullanici id'si.
@@ -162,7 +169,15 @@ export default function TestCases({
   const visibleIds = useMemo(() => pageInfo.rows.map((r) => r.id), [pageInfo.rows])
   const sel = useBulkSelection(visibleIds)
 
-  const linkCountFor = (id) => links.filter((l) => l.fromId === id || l.toId === id).length
+  // Issue #123: bag indeksi TEK GECISTE kurulur; sayac ve satir genisletmedeki
+  // "doğruladığı gereksinimler" listesi ayni indeksten okunur (satir basina
+  // tarama/istek yok).
+  const linkIndex = useMemo(
+    () => buildLinkIndex({ links, requirements, testCases }),
+    [links, requirements, testCases],
+  )
+  const linkCountFor = (id) => linkCountOf(linkIndex, id)
+  const linkSummaryFor = (tc) => linkSummaryOf(linkIndex, tc)
 
   // Issue #57: testin supheli GIRIS bag sayisi (gelen Verifies) — gosterge.
   const suspectCountFor = (tc) => suspectLinksForTestCase(links, tc.id).length
@@ -292,6 +307,8 @@ export default function TestCases({
         canAssign={canEditRow()}
       />
 
+      {/* expandShowsChildren=false: bir test senaryosunun ALTI yoktur —
+          genisletilmis satirda yalnizca DOGRULADIGI gereksinimler listelenir. */}
       <EntityTable
         rows={pageInfo.rows}
         columns={tableColumns}
@@ -299,6 +316,10 @@ export default function TestCases({
         attributeEntityType="testcase"
         statusLabel={t('tbl.th.testResult')}
         linkCountFor={linkCountFor}
+        expandable
+        linkSummaryFor={linkSummaryFor}
+        onOpenLinked={canRead ? (item) => setLinkedRow(item.node) : undefined}
+        expandShowsChildren={false}
         suspectCountFor={suspectCountFor}
         onOpenSuspect={onOpenSuspect}
         onView={canRead ? setViewRow : undefined}
@@ -369,6 +390,15 @@ export default function TestCases({
         onSaveDescription={saveDescription}
         statusLabel={t('tbl.th.testResult')}
         commentEntityType="testcase"
+      />
+      {/* Issue #123: bag listesinden acilan HEDEF gereksinim — salt okunur. */}
+      <ViewModal
+        open={Boolean(linkedRow)}
+        row={linkedRow}
+        canWrite={false}
+        showStatus={false}
+        showVerification
+        onClose={() => setLinkedRow(null)}
       />
       <ApprovalMatrixModal
         open={Boolean(matrixRow)}
