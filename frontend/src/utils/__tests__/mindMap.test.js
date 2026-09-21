@@ -187,10 +187,40 @@ describe('layoutMindMap — dikey (yukarıdan aşağı) yön', () => {
     const edge = v.edges[0]
     expect(edge.vertical).toBe(true)
     expect(edge.y2).toBeGreaterThan(edge.y1)
-    // Dikey kenar DIRSEK cizer (bezier degil): dikey/yatay parcalar.
-    const d = mindMapEdgePath(edge)
-    expect(d.startsWith('M ')).toBe(true)
-    expect(d).toMatch(/[VH]/)
+  })
+
+  it('dikey dal EGRISEL (bezier) cizilir', () => {
+    const { v } = opened()
+    const d = mindMapEdgePath(v.edges[0])
+    expect(d).toMatch(/^M [\d.-]+ [\d.-]+ C /)
+    // Dirsek (V/H parcali) cizgiye geri donulmedigini de bekler.
+    expect(d).not.toMatch(/[VH]/)
+  })
+
+  it('dalin uclari ac/kapa noktasi ve ok ucu icin iceri alinir', () => {
+    const { v } = opened()
+    const edge = v.edges[0]
+    const [, sy] = /^M ([\d.-]+) ([\d.-]+) /.exec(mindMapEdgePath(edge))
+    // Baslangic, ust dugumun alt kenarinin ALTINDA (nokta r=9'un disinda).
+    expect(Number(sy)).toBeGreaterThan(edge.y1 + 9)
+    // Bitis, cocugun ust kenarinin UZERINDE (ok ucuna yer kalir).
+    const endY = Number(
+      mindMapEdgePath(edge)
+        .trim()
+        .split(/[\s,]+/)
+        .pop(),
+    )
+    expect(endY).toBeLessThan(edge.y2)
+  })
+
+  it('seviyeler arasinda dalin okunacagi kadar bosluk birakilir', () => {
+    const { v } = opened()
+    const byId = Object.fromEntries(v.nodes.map((n) => [n.id, n]))
+    // Iki seviye arasindaki BOS dikey alan (kutular haric) en az bir kutu
+    // yuksekligi kadar olmali; aksi halde dal birkac piksellik bir cizgiye
+    // sikisir (kullanici geri bildirimi: "baglantilar ve oklar net degil").
+    const gap = byId.s1.y - byId.u1.y - MIND_MAP_LAYOUT.nodeHeight
+    expect(gap).toBeGreaterThanOrEqual(MIND_MAP_LAYOUT.nodeHeight)
   })
 
   it('dikey duzende genislik kardes eksenine, yukseklik derinlige baglidir', () => {

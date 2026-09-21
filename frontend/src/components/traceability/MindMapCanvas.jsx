@@ -26,6 +26,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useLang } from '../../context/LanguageContext.jsx'
 import {
+  ARROW_SIZE,
+  BRANCH_STROKE_OPACITY,
+  BRANCH_STROKE_WIDTH,
   MIND_MAP_BRANCH_COLORS,
   fitLabel,
   mindMapEdgePath,
@@ -297,11 +300,11 @@ export default function MindMapCanvas({
               viewBox="0 0 8 8"
               refX="7.5"
               refY="4"
-              markerWidth="5"
-              markerHeight="5"
+              markerWidth={ARROW_SIZE}
+              markerHeight={ARROW_SIZE}
               orient="auto-start-reverse"
             >
-              <path d="M0 0 L8 4 L0 8 Z" fill={color} opacity="0.85" />
+              <path d="M0 0 L8 4 L0 8 Z" fill={color} opacity={BRANCH_STROKE_OPACITY} />
             </marker>
           ))}
         </defs>
@@ -313,8 +316,8 @@ export default function MindMapCanvas({
                 d={mindMapEdgePath(e)}
                 fill="none"
                 stroke={e.color}
-                strokeWidth={2}
-                strokeOpacity={0.75}
+                strokeWidth={BRANCH_STROKE_WIDTH}
+                strokeOpacity={BRANCH_STROKE_OPACITY}
                 strokeLinecap="round"
                 markerEnd={e.level ? `url(#mm-arrow-${e.level})` : undefined}
               />

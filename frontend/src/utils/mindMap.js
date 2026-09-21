@@ -77,10 +77,32 @@ export function mindMapTheme(theme) {
 export const MIND_MAP_LAYOUT = {
   nodeWidth: 224,
   nodeHeight: 44,
+  // Yatay duzende KARDES ekseni (ust uste satirlar) ve sikisik dikey
+  // duzendeki zincir adimi. Kutular burada bilincli olarak sikidir.
   rowGap: 12,
+  // Yatay duzende DERINLIK ekseni.
   columnGap: 88,
+  // Dikey (yukaridan asagi) duzende DERINLIK ekseni. Dalin egrisinin ve ok
+  // ucunun okunabilmesi icin kutu yuksekliginin iki katindan fazla bosluk
+  // birakilir; `rowGap` (12) ile cizilirse dallar iki kutu arasinda ezilen
+  // birkac pikselik bir cizgiye donusuyordu.
+  levelGap: 104,
   padding: 56,
 }
+
+// Dikey dalin ucundaki bosluklar: baslangic ust dugumun ac/kapa NOKTASININ
+// (r=9) altindan cikar, bitis cocugun ust kenarinin biraz uzerinde durur ki
+// ok ucu kutunun kendi cercevesine karismasin.
+export const BRANCH_START_INSET = 11
+export const BRANCH_END_INSET = 5
+
+// Dal kalinligi/matligi. Ince ve solgun dallar koyu zeminde kutu
+// cercevelerine karisiyordu; ekran ve disa aktarim ayni degerleri kullanir.
+export const BRANCH_STROKE_WIDTH = 2.6
+export const BRANCH_STROKE_OPACITY = 0.95
+// Ok ucu boyu. 5 birimde ok, kutu cercevesinin yaninda kaybolan bir
+// noktaya donusuyordu.
+export const ARROW_SIZE = 7
 
 // Tek seferde yerlestirilecek dugum ust siniri. Kullanici "tumunu ac"
 // dedigi devasa projelerde tarayiciyi kilitlememek icin duzen bu sinirda
@@ -493,7 +515,7 @@ export function layoutMindMap(graph, expandedKeys, options = {}) {
   }
   // Derinlik ekseni asagi (dikey) ya da saga (yatay) buyur; kardes ekseni
   // her zaman digeridir. Adimlar buna gore secilir.
-  const depthPitch = vertical ? L.nodeHeight + L.rowGap : L.nodeWidth + L.columnGap
+  const depthPitch = vertical ? L.nodeHeight + (L.levelGap ?? L.rowGap) : L.nodeWidth + L.columnGap
   const crossPitch = vertical ? L.nodeWidth + L.columnGap : L.nodeHeight + L.rowGap
   const crossHalf = vertical ? L.nodeWidth / 2 : L.nodeHeight / 2
 
@@ -626,18 +648,22 @@ export function layoutMindMap(graph, expandedKeys, options = {}) {
 export function mindMapEdgePath(edge) {
   const r = (n) => Math.round(n * 10) / 10
   if (edge.vertical) {
-    const midY = (edge.y1 + edge.y2) / 2
-    const dx = edge.x2 - edge.x1
-    // Ayni sutundaki cocuk: duz dikey cizgi.
-    if (Math.abs(dx) < 1) return `M ${r(edge.x1)} ${r(edge.y1)} V ${r(edge.y2)}`
-    const dir = dx > 0 ? 1 : -1
-    const k = Math.min(12, Math.abs(dx) / 2, Math.abs(midY - edge.y1), Math.abs(edge.y2 - midY))
+    // Issue #122: dallar EGRISEL (bezier) cizilir. Daha once dirsek
+    // (V/H parcali) cizgiydi; dar seviye araliginda bu, iki kutu arasinda
+    // ezilmis bir zimba teline benziyordu.
+    //
+    // Uclar iceri alinir: baslangic ac/kapa noktasinin altindan cikar,
+    // bitis cocugun ust kenarinin biraz uzerinde kalir (ok ucu icin yer).
+    const y1 = edge.y1 + BRANCH_START_INSET
+    const y2 = edge.y2 - BRANCH_END_INSET
+    // Cok sikisik bir aralikta egri ters donmesin diye duz cizgiye duser.
+    if (y2 <= y1) return `M ${r(edge.x1)} ${r(edge.y1)} V ${r(edge.y2)}`
+    // Kontrol noktalari dikeyde: dal ust dugumden ASAGI dogru cikip
+    // cocugun ustune DIKEY girer — yon her zaman yukaridan asagidir.
+    const dy = Math.max(16, (y2 - y1) * 0.55)
     return (
-      `M ${r(edge.x1)} ${r(edge.y1)} V ${r(midY - k)} ` +
-      `Q ${r(edge.x1)} ${r(midY)} ${r(edge.x1 + dir * k)} ${r(midY)} ` +
-      `H ${r(edge.x2 - dir * k)} ` +
-      `Q ${r(edge.x2)} ${r(midY)} ${r(edge.x2)} ${r(midY + k)} ` +
-      `V ${r(edge.y2)}`
+      `M ${r(edge.x1)} ${r(y1)} ` +
+      `C ${r(edge.x1)} ${r(y1 + dy)}, ${r(edge.x2)} ${r(y2 - dy)}, ${r(edge.x2)} ${r(y2)}`
     )
   }
   const dx = Math.max(28, (edge.x2 - edge.x1) / 2)
@@ -672,7 +698,9 @@ export function buildMindMapSvg(mapLayout, { theme = 'dark', title = 'Mind Map' 
   const edges = mapLayout.edges
     .map(
       (e) =>
-        `<path d="${mindMapEdgePath(e)}" fill="none" stroke="${e.color}" stroke-width="2" stroke-opacity="0.75" stroke-linecap="round"/>`,
+        `<path d="${mindMapEdgePath(e)}" fill="none" stroke="${e.color}" stroke-width="${BRANCH_STROKE_WIDTH}" stroke-opacity="${BRANCH_STROKE_OPACITY}" stroke-linecap="round"${
+          e.level ? ` marker-end="url(#mm-arrow-${e.level})"` : ''
+        }/>`,
     )
     .join('')
 
@@ -715,6 +743,15 @@ export function buildMindMapSvg(mapLayout, { theme = 'dark', title = 'Mind Map' 
     `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" ` +
     `viewBox="${Math.round(mapLayout.minX)} ${Math.round(mapLayout.minY)} ${w} ${h}">` +
     `<title>${esc(title)}</title>` +
+    // Ok uclari: SVG marker'lari boya degerini miras almaz, her dal rengi
+    // icin ayri tanim gerekir (ekrandaki cizimle ayni sozlesme).
+    `<defs>${Object.entries(MIND_MAP_BRANCH_COLORS)
+      .map(
+        ([level, color]) =>
+          `<marker id="mm-arrow-${level}" viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="${ARROW_SIZE}" markerHeight="${ARROW_SIZE}" orient="auto-start-reverse">` +
+          `<path d="M0 0 L8 4 L0 8 Z" fill="${color}" opacity="${BRANCH_STROKE_OPACITY}"/></marker>`,
+      )
+      .join('')}</defs>` +
     `<rect x="${Math.round(mapLayout.minX)}" y="${Math.round(mapLayout.minY)}" width="${w}" height="${h}" fill="${c.bg}"/>` +
     `<g>${edges}</g><g>${nodes}</g></svg>`
   )
