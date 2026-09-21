@@ -352,10 +352,6 @@ export function subtreeStats(tree, verificationIndex) {
  *   rootLabel       verilirse tum kokler bu SANAL proje dugumunun altina
  *                   toplanir (bkz. PROJECT_ROOT_KEY)
  *   rootMeta        proje dugumunun ozet satiri
- *   componentsOnly  true ise harita BILESEN KIRILIMIDIR: yalnizca alt
- *                   kirilimi OLAN kayitlar kutu olur, yaprak gereksinim
- *                   metinleri cizilmez (sayilari ust kutunun ozetinde durur).
- *                   Hic bilesen yoksa graf oldugu gibi birakilir.
  * @returns {{nodes:Map, children:Map, rootIds:string[], linkCount:number}}
  */
 export function buildComponentGraph(
@@ -368,7 +364,6 @@ export function buildComponentGraph(
     fieldNoneLabel = '',
     rootLabel = '',
     rootMeta = '',
-    componentsOnly = false,
   } = {},
 ) {
   const t = tree || buildRequirementTree(requirements)
@@ -433,50 +428,10 @@ export function buildComponentGraph(
     // Alan modunda gereksinimler DUZ listelenir: kendi alt kirilimlari
     // gruplarin altinda tekrar dallanmaz (ayni kayit iki yerde cikardi).
     for (const r of requirements || []) children.delete(r.id)
-    return withProjectRoot(
-      onlyComponents({ nodes, children, rootIds: groups.map((g) => g.key), linkCount }),
-    )
+    return withProjectRoot({ nodes, children, rootIds: groups.map((g) => g.key), linkCount })
   }
 
-  return withProjectRoot(
-    onlyComponents({ nodes, children, rootIds: t.roots.map((r) => r.id), linkCount }),
-  )
-
-  /**
-   * Bilesen kirilimi: yalnizca alt kirilimi OLAN kayitlar kutu kalir.
-   *
-   * Neden: urun agaci hem BILESENLERI (Donanim, Su Deposu Alt Sistemi...)
-   * hem de o bilesenlerin GEREKSINIM METINLERINI ayni agacta tutar. Feature
-   * map'te istenen sey kirilimin kendisidir; her gereksinim metnini kutu
-   * yapmak haritayi yuzlerce kutuya boguyordu. Yaprak metinler kutudan
-   * cikarilir, sayilari ust kutunun ozetinde ("12 gereksinim · 8 dogrulandi")
-   * ve Liste gorunumunde durur.
-   *
-   * Kirilimi hic olmayan (duz) projelerde filtre UYGULANMAZ: aksi halde
-   * harita bombos kalirdi.
-   */
-  function onlyComponents(graph) {
-    if (!componentsOnly) return graph
-    // Bilesen = alt kirilimi olan kayit. Kume filtrelemeden ONCE kurulur ki
-    // cocuklarinin hepsi yaprak olan bir bilesen (agacin en alt kademesi)
-    // kutu olarak KALSIN.
-    const keep = new Set()
-    for (const [id, kids] of graph.children) if (kids.length > 0) keep.add(id)
-    if (keep.size === 0) return graph
-
-    const children = new Map()
-    let linkCount = 0
-    for (const [id, kids] of graph.children) {
-      if (!keep.has(id)) continue
-      const kept = kids.filter((k) => keep.has(k))
-      if (kept.length === 0) continue
-      children.set(id, kept)
-      linkCount += kept.length
-    }
-    const nodes = new Map()
-    for (const [id, node] of graph.nodes) if (keep.has(id)) nodes.set(id, node)
-    return { nodes, children, rootIds: graph.rootIds.filter((id) => keep.has(id)), linkCount }
-  }
+  return withProjectRoot({ nodes, children, rootIds: t.roots.map((r) => r.id), linkCount })
 
   /** Istenmisse koklerin uzerine sanal proje dugumunu ekler. */
   function withProjectRoot(graph) {

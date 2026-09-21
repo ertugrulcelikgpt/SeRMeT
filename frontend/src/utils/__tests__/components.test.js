@@ -10,8 +10,6 @@ import {
   COMPONENT_SOURCE,
   FIELD_NONE_KEY,
   buildComponentPrintHtml,
-  PROJECT_ROOT_KEY,
-  buildComponentGraph,
   buildComponentViewRows,
   buildComponents,
   buildRequirementTree,
@@ -151,52 +149,6 @@ describe('buildComponents — bilesen listesi', () => {
     const flat = REQS.map((r) => ({ ...r, parentId: null }))
     expect(buildComponents(flat, { source: COMPONENT_SOURCE.PBS })).toHaveLength(0)
     expect(buildComponents(flat, { source: COMPONENT_SOURCE.FIELD }).length).toBeGreaterThan(0)
-  })
-})
-
-describe('buildComponentGraph — bileşen kırılımı (feature map)', () => {
-  it('componentsOnly: yalnizca alt kirilimi OLAN kayitlar kutu kalir', () => {
-    const g = buildComponentGraph(REQS, { componentsOnly: true })
-    // Bilesenler: kok (Kahve Makinesi) + iki alt sistem.
-    expect([...g.nodes.keys()].sort()).toEqual(['s1', 's2', 'u1'])
-    // Gereksinim METINLERI (yapraklar) kutu degildir.
-    expect(g.nodes.has('w1')).toBe(false)
-    expect(g.nodes.has('h1')).toBe(false)
-    expect(g.children.get('u1')).toEqual(['s1', 's2'])
-    expect(g.children.has('s1')).toBe(false)
-  })
-
-  it('componentsOnly kapaliyken urun agacinin TAMAMI cizilir', () => {
-    const g = buildComponentGraph(REQS, {})
-    expect(g.nodes.size).toBe(REQS.length)
-    expect(g.children.get('s2')).toEqual(['h1', 'h2'])
-  })
-
-  it('kirilimi HIC olmayan duz projede filtre uygulanmaz (harita bosalmaz)', () => {
-    const flat = [
-      { id: 'a', text_id: 'EH-TİD-USR-001', title: 'Bir', type: 'User Requirement' },
-      { id: 'b', text_id: 'EH-TİD-USR-002', title: 'Iki', type: 'User Requirement' },
-    ]
-    const g = buildComponentGraph(flat, { componentsOnly: true })
-    expect(g.nodes.size).toBe(2)
-    expect(g.rootIds).toEqual(['a', 'b'])
-  })
-
-  it('proje dugumu bilesenlerin uzerinde kok olarak kalir', () => {
-    const g = buildComponentGraph(REQS, { componentsOnly: true, rootLabel: 'Kahve Projesi' })
-    expect(g.rootIds).toEqual([PROJECT_ROOT_KEY])
-    expect(g.children.get(PROJECT_ROOT_KEY)).toEqual(['u1'])
-  })
-
-  it('Alan kaynaginda her Alan bir bilesen kutusudur; kayitlar cizilmez', () => {
-    const g = buildComponentGraph(REQS, {
-      source: COMPONENT_SOURCE.FIELD,
-      componentsOnly: true,
-      fieldNoneLabel: 'Alansız',
-    })
-    const labels = [...g.nodes.values()].map((n) => n.label).sort()
-    expect(labels).toEqual(['Alansız', 'Donanim', 'Yazilim'])
-    expect(g.nodes.has('s1')).toBe(false)
   })
 })
 

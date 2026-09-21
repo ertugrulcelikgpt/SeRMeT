@@ -564,13 +564,6 @@ export const STRINGS = {
     'comp.view': 'Görünüm',
     'comp.view.map': 'Harita',
     'comp.view.list': 'Liste',
-    'comp.scope': 'Kapsam',
-    'comp.scope.components': 'Bileşenler',
-    'comp.scope.componentsHint':
-      'Feature map: kutular yalnızca bileşenlerdir (alt kırılımı olan kayıtlar). Gereksinim metinleri kutu olmaz; sayıları bileşen özetinde ve Liste görünümünde durur.',
-    'comp.scope.all': 'Tüm gereksinimler',
-    'comp.scope.allHint':
-      'Ürün ağacının tamamı: her gereksinim kaydı ayrı bir kutu olarak çizilir.',
     'comp.layout': 'Düzen',
     'comp.layout.tree': 'Ağaç',
     'comp.layout.treeHint':
@@ -1566,13 +1559,6 @@ export const STRINGS = {
     'comp.view': 'View',
     'comp.view.map': 'Map',
     'comp.view.list': 'List',
-    'comp.scope': 'Scope',
-    'comp.scope.components': 'Components',
-    'comp.scope.componentsHint':
-      'Feature map: boxes are components only (records that have a breakdown). Requirement statements are not drawn; their counts live in the component summary and the List view.',
-    'comp.scope.all': 'All requirements',
-    'comp.scope.allHint':
-      'The whole product tree: every requirement record is drawn as its own box.',
     'comp.layout': 'Layout',
     'comp.layout.tree': 'Tree',
     'comp.layout.treeHint':

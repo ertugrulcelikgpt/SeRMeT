@@ -85,13 +85,6 @@ const VIEW = { MAP: 'map', LIST: 'list' }
 //             daralir, asagi uzar (cok kardesli projelerde gezinmesi kolay).
 const MAP_STYLE = { TREE: 'tree', COMPACT: 'compact' }
 
-// Haritanin KAPSAMI:
-//   COMPONENTS — feature map: kutular yalnizca BILESENLERDIR (alt kirilimi
-//                olan kayitlar). Gereksinim metinleri kutu olmaz; sayilari
-//                bilesen kutusunun ozetinde ve Liste gorunumunde durur.
-//   ALL        — urun agacinin tamami; her gereksinim kaydi bir kutudur.
-const MAP_SCOPE = { COMPONENTS: 'components', ALL: 'all' }
-
 function download(blob, filename) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -114,10 +107,6 @@ export default function Components() {
   // yukaridan asagi SEKLIDIR; sikisik duzen bunu zincire cevirdigi icin
   // kardeslik iliskisi kayboluyordu (bkz. MAP_STYLE).
   const [mapStyle, setMapStyle] = useState(MAP_STYLE.TREE)
-  // Varsayilan kapsam BILESENLER: bu sayfanin sorusu "hangi bilesen neyi
-  // kapsiyor" — tek tek gereksinim metinleri haritayi yuzlerce kutuya
-  // boguyordu, onlarin yeri Liste gorunumu.
-  const [mapScope, setMapScope] = useState(MAP_SCOPE.COMPONENTS)
   // Kaynak secimi: kullanici secmediyse (null) PBS varsayilandir; PBS hic
   // bilesen uretmiyorsa (agac kurulmamis) Alan kaynagina DUSULUR — ekran
   // bos bir liste yerine calisir halde acilir.
@@ -192,12 +181,10 @@ export default function Components() {
       // harita "kapali" baslar, kullanici inerek acar.
       rootLabel: projectLabel,
       rootMeta: summaryText(summarizeComponent(visibleRequirements, verificationIndex)),
-      // Feature map: yaprak gereksinim metinleri kutu olmaz (bkz. MAP_SCOPE).
-      componentsOnly: mapScope === MAP_SCOPE.COMPONENTS,
     })
     // summaryText/labelOf yalnizca t()'ye bagli; dil degisimi zaten render eder.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleRequirements, source, tree, stats, verificationIndex, projectLabel, mapScope, t])
+  }, [visibleRequirements, source, tree, stats, verificationIndex, projectLabel, t])
 
   // Yeni gorunen kokler kendiliginden acilir: yeni eklenen bir kayit sayfa
   // yenilemeden haritada dallariyla belirir.
@@ -398,16 +385,16 @@ export default function Components() {
     </button>
   )
 
-  const segBtn = ({ testId, active, onClick, label, title }) => (
+  const mapStyleBtn = (key, label, title) => (
     <button
       type="button"
-      onClick={onClick}
+      onClick={() => setMapStyle(key)}
       title={title}
-      data-testid={testId}
-      aria-pressed={active}
+      data-testid={`comp-mapstyle-${key}`}
+      aria-pressed={mapStyle === key}
       className={
         'rounded-lg px-2.5 py-1.5 text-[11px] font-semibold transition-colors ' +
-        (active
+        (mapStyle === key
           ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300'
           : 'text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800')
       }
@@ -415,24 +402,6 @@ export default function Components() {
       {label}
     </button>
   )
-
-  const mapStyleBtn = (key, label, title) =>
-    segBtn({
-      testId: `comp-mapstyle-${key}`,
-      active: mapStyle === key,
-      onClick: () => setMapStyle(key),
-      label,
-      title,
-    })
-
-  const mapScopeBtn = (key, label, title) =>
-    segBtn({
-      testId: `comp-mapscope-${key}`,
-      active: mapScope === key,
-      onClick: () => setMapScope(key),
-      label,
-      title,
-    })
 
   return (
     <div className="flex h-full flex-col gap-4">
@@ -518,18 +487,6 @@ export default function Components() {
 
         {view === VIEW.MAP && !isEmpty && (
           <>
-            <div
-              className="flex items-center gap-1 rounded-xl border border-slate-200 p-1 dark:border-slate-800"
-              role="group"
-              aria-label={t('comp.scope')}
-            >
-              {mapScopeBtn(
-                MAP_SCOPE.COMPONENTS,
-                t('comp.scope.components'),
-                t('comp.scope.componentsHint'),
-              )}
-              {mapScopeBtn(MAP_SCOPE.ALL, t('comp.scope.all'), t('comp.scope.allHint'))}
-            </div>
             <div
               className="flex items-center gap-1 rounded-xl border border-slate-200 p-1 dark:border-slate-800"
               role="group"
