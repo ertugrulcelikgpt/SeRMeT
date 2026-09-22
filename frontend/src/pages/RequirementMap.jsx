@@ -387,6 +387,7 @@ export default function RequirementMap() {
         row={viewRow?.row || null}
         canWrite={false}
         showStatus={viewRow?.kind !== 'requirement'}
+        showField={false}
         showVerification={viewRow?.kind === 'requirement'}
         commentEntityType={viewRow?.kind === 'requirement' ? 'requirement' : 'testcase'}
         baselineEntityType={viewRow?.kind === 'requirement' ? 'requirement' : 'testcase'}

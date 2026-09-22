@@ -208,13 +208,10 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
     expect(screen.getByTestId('comp-row-EH-TİD-HW-001')).toBeInTheDocument()
   })
 
-  it('Alan kaynaginda her Alan bir kok dugumdur', () => {
+  it('Alan kaynagi ekranda YOKTUR (Issue #143)', () => {
     renderPage()
-    fireEvent.click(screen.getByTestId('comp-source-field'))
-    // 'Donanim' hem harita dugumunde hem secim rozetinde gecer.
-    expect(screen.getAllByText('Donanim').length).toBeGreaterThan(0)
-    // Alani bos kayitlar da kendi (sanal) kok dugumunde toplanir.
-    expect(screen.getByText('Alansız')).toBeInTheDocument()
+    expect(screen.queryByTestId('comp-source-field')).not.toBeInTheDocument()
+    expect(screen.queryByText('Alansız')).not.toBeInTheDocument()
   })
 
   it('okuma izni olmayan seviye haritada da cizilmez', () => {
@@ -317,19 +314,12 @@ describe('Bileşenler — bileşen listesi', () => {
     expect(screen.queryByTestId('comp-item-s1')).not.toBeInTheDocument()
   })
 
-  it('urun agaci kurulmamissa Alan kaynagina dusulur', () => {
+  it('urun agaci kurulmamissa elle tanimli kaynak acilir (Alan kaynagi yok)', () => {
     appMock.requirements = appMock.requirements.map((r) => ({ ...r, parentId: null }))
     renderPage()
     showList()
-    expect(screen.getByTestId('comp-source-field')).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByTestId('comp-item-Donanim')).toBeInTheDocument()
-  })
-
-  it('kaynak Alan olarak degistirilebilir', () => {
-    renderPage()
-    showList()
-    fireEvent.click(screen.getByTestId('comp-source-field'))
-    expect(screen.getByTestId('comp-item-Donanim')).toHaveTextContent('2 gereksinim')
+    expect(screen.getByTestId('comp-source-manual')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByTestId('comp-item-Donanim')).not.toBeInTheDocument()
   })
 
   it('okuma izni olmayan seviye listeye HIC girmez', () => {

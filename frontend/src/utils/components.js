@@ -39,12 +39,13 @@ export const ROOT_KEY = '__root__'
  * Bilesen listesinin kaynagi.
  *   MANUAL — kullanicinin ELLE tanimladigi bilesenler (Issue #138, varsayilan)
  *   PBS    — gereksinim agacindan TURETILMIS bilesenler (Issue #129, korunur)
- *   FIELD  — Alan (disiplin) bazli gruplama (urun agaci kurulmamis projeler)
+ *
+ * Issue #143: ALAN (disiplin) kaynagi KALDIRILDI. Urun kirilimi elle tanimli
+ * bilesenler ve PBS agaci uzerinden yurur; Alan bir disiplin ETIKETIDIR,
+ * urun kirilimi degildir — bilesen gibi gosterilmesi ikinci bir (yanlis)
+ * kirilim uretiyordu. Alan bilgisi gereksinim formunda ve filtrelerde durur.
  */
-export const COMPONENT_SOURCE = { MANUAL: 'manual', PBS: 'pbs', FIELD: 'field' }
-
-/** Alani (disiplini) bos olan kayitlarin toplandigi sanal bilesen anahtari. */
-export const FIELD_NONE_KEY = '__nofield__'
+export const COMPONENT_SOURCE = { MANUAL: 'manual', PBS: 'pbs' }
 
 /**
  * Haritanin tepesindeki SANAL proje dugumu. Kok gereksinimler (User
@@ -257,14 +258,11 @@ export function subtreeRows(tree, nodeId) {
  * PBS kaynagi: ALT KIRILIMI OLAN her dugum bir bilesendir ("Basınç Pompası
  * Ünitesi" gibi). Bilesenin gereksinimleri = dugumun KENDISI + tum alt agaci
  * (User / System / Sub-system hepsi bir arada — istenen tam olarak budur).
- * Alan kaynagi: her Alan (disiplin) degeri bir bilesendir.
  *
  * @returns {Array<{key,label,outline,depth,node,rows}>}
  */
-export function buildComponents(requirements, { source = COMPONENT_SOURCE.PBS, tree } = {}) {
+export function buildComponents(requirements, { tree } = {}) {
   const t = tree || buildRequirementTree(requirements)
-  if (source === COMPONENT_SOURCE.FIELD) return fieldComponents(requirements, t)
-
   const out = []
   const walk = (key) => {
     for (const node of t.childrenOf.get(key) || []) {
@@ -287,33 +285,6 @@ export function buildComponents(requirements, { source = COMPONENT_SOURCE.PBS, t
   }
   walk(ROOT_KEY)
   return out
-}
-
-function fieldComponents(requirements, tree) {
-  const groups = new Map()
-  for (const r of requirements || []) {
-    const name = String(r.field || '').trim()
-    const key = name || FIELD_NONE_KEY
-    if (!groups.has(key))
-      groups.set(key, { key, label: name, outline: '', partNo: '', depth: 0, node: null, rows: [] })
-    groups.get(key).rows.push(r)
-  }
-  const outlineOf = (r) => tree.infoById.get(r.id)?.outline || ''
-  const list = [...groups.values()]
-  for (const g of list) {
-    g.rows.sort((a, b) => {
-      const oa = outlineOf(a)
-      const ob = outlineOf(b)
-      if (oa && ob && oa !== ob) return compareOutline(oa, ob)
-      return byTextId(a, b)
-    })
-  }
-  // Alansizlar her zaman en sonda; digerleri ada gore.
-  return list.sort((a, b) => {
-    if (a.key === FIELD_NONE_KEY) return 1
-    if (b.key === FIELD_NONE_KEY) return -1
-    return a.label.localeCompare(b.label, 'tr')
-  })
 }
 
 // --- ELLE tanimlanan bilesenler (Issue #138) --------------------------------
@@ -556,16 +527,13 @@ export function subtreeStats(tree, verificationIndex) {
 }
 
 /**
- * PBS agacini (ya da Alan gruplarini) mind map motorunun graf sekline cevirir.
+ * PBS agacini mind map motorunun graf sekline cevirir.
  *
  * @param {Array} requirements
  * @param {object} opts
- *   source          'pbs' | 'field'
  *   tree            hazir buildRequirementTree ciktisi (tekrar kurulmasin)
  *   metaOf          (row, { childCount }) => string — dugumun ucuncu satiri
  *                   (orn. "6 gereksinim · 2 doğrulandı")
- *   groupMetaOf     (component) => string — Alan kaynagindaki grup dugumu icin
- *   fieldNoneLabel  Alani bos olan grubun gorunen adi
  *   rootLabel       verilirse tum kokler bu SANAL proje dugumunun altina
  *                   toplanir (bkz. PROJECT_ROOT_KEY)
  *   rootMeta        proje dugumunun ozet satiri
@@ -573,15 +541,7 @@ export function subtreeStats(tree, verificationIndex) {
  */
 export function buildComponentGraph(
   requirements,
-  {
-    source = COMPONENT_SOURCE.PBS,
-    tree,
-    metaOf = null,
-    groupMetaOf = null,
-    fieldNoneLabel = '',
-    rootLabel = '',
-    rootMeta = '',
-  } = {},
+  { tree, metaOf = null, rootLabel = '', rootMeta = '' } = {},
 ) {
   const t = tree || buildRequirementTree(requirements)
   const nodes = new Map()
@@ -619,36 +579,6 @@ export function buildComponentGraph(
       )
       linkCount += kids.length
     }
-  }
-
-  if (source === COMPONENT_SOURCE.FIELD) {
-    // Alan kaynagi: her Alan bir KOK dugumdur, gereksinimleri duz cocuklari.
-    const groups = fieldComponents(requirements, t)
-    for (const g of groups) {
-      const label = g.key === FIELD_NONE_KEY ? fieldNoneLabel : g.label
-      nodes.set(g.key, {
-        id: g.key,
-        kind: 'field', // kaydi olmayan SANAL dugum: detayi acilmaz
-        type: null,
-        text_id: '',
-        label,
-        labelIsFallback: false,
-        level: 'user',
-        typeSuffix: '',
-        outline: '',
-        meta: groupMetaOf ? groupMetaOf(g) : '',
-        row: null,
-      })
-      children.set(
-        g.key,
-        g.rows.map((r) => r.id),
-      )
-      linkCount += g.rows.length
-    }
-    // Alan modunda gereksinimler DUZ listelenir: kendi alt kirilimlari
-    // gruplarin altinda tekrar dallanmaz (ayni kayit iki yerde cikardi).
-    for (const r of requirements || []) children.delete(r.id)
-    return withProjectRoot({ nodes, children, rootIds: groups.map((g) => g.key), linkCount })
   }
 
   return withProjectRoot({ nodes, children, rootIds: t.roots.map((r) => r.id), linkCount })

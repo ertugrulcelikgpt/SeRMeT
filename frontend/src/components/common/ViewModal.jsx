@@ -31,6 +31,11 @@ export default function ViewModal({
   row,
   canWrite = false,
   showStatus = true,
+  // Issue #143: "Alan" (disiplin) rozeti. Gereksinim Haritasi ve Bilesenler
+  // ekranlari URUN kirilimini anlatir; Alan orada bir kirilim olcusu degildir
+  // ve kutu/rozet kalabaligina donuyordu. O sayfalar false gecer; gereksinim
+  // listelerinde rozet aynen durur.
+  showField = true,
   // Kaynak dokuman satirina tiklandiginda cagirilir (dokumani acip pasaji
   // vurgulamak icin). Verilmezse "Kaynak" satiri salt bilgi olarak gosterilir.
   onOpenSource,
@@ -192,7 +197,7 @@ export default function ViewModal({
               showStatus && row.status && <StatusBadge value={row.status} />
             )}
             {row.dal_level && <DalBadge value={row.dal_level} />}
-            {row.field && (
+            {showField && row.field && (
               <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300">
                 {row.field}
               </span>
