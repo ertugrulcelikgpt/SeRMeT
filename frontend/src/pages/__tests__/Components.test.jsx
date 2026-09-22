@@ -152,13 +152,18 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
     expect(child).toBeGreaterThan(parent)
   })
 
-  it('kutuda YALNIZCA ISIM yazar (ID ve aciklama kutuda degil)', () => {
+  // Issue #140: kutu KENDI KIMLIGINI tasir — gereksinim kutusunda kaydin
+  // Text ID'si, bilesen kutusunda Parca No / "BİLEŞEN" etiketi. Boylece bir
+  // gereksinim, urun kimligi tasiyan bir bilesen gibi okunmaz. Aciklama
+  // metni yine kutuda DEGILDIR (ipucunda ve detayda okunur).
+  it('kutuda kaydin KENDI ID si ve ismi yazar (aciklama kutuda degil)', () => {
     renderPage()
     expandDot('EH-TİD-1')
     expect(screen.getAllByText('Basınç Pompası Ünitesi').length).toBeGreaterThan(0)
-    // Kutuda ID yoktur; ipucunda (title) ve detayda okunur.
-    expect(screen.queryByText('EH-TİD-SYS-002')).not.toBeInTheDocument()
-    expect(mapNode('EH-TİD-SYS-002')).toHaveTextContent('EH-TİD-SYS-002') // <title> ipucu
+    expect(screen.getByText('EH-TİD-SYS-002')).toBeInTheDocument()
+    expect(mapNode('EH-TİD-SYS-002')).toHaveTextContent('EH-TİD-SYS-002')
+    // Aciklama (gereksinim metni) kutuda yazmaz.
+    expect(screen.queryByText(/9 bar basınç üretmelidir/i)).not.toBeInTheDocument()
   })
 
   it('KUTUYA TIKLAYINCA kaydin detayi (ID + aciklama) acilir', () => {

@@ -345,6 +345,16 @@ describe('Bileşen ile gereksinim ayrımı', () => {
     expect(requirement.getAttribute('stroke')).not.toBe('#0d9488')
   })
 
+  it('gereksinim kutusu KENDI Text ID sini tasir (urun kimligi degil)', () => {
+    renderPage()
+    const toggles = screen.getAllByTestId('mindmap-toggle-')
+    for (const dot of toggles.slice(1)) fireEvent.click(dot)
+    // Gereksinim: kendi ID'si. Bilesen: Parca No / "BİLEŞEN" etiketi.
+    expect(screen.getByText('R-001')).toBeInTheDocument()
+    expect(screen.getByText('R-002')).toBeInTheDocument()
+    expect(screen.getAllByText('010.00.001').length).toBeGreaterThan(0)
+  })
+
   it('bileşen kutusu ÜRÜN olduğunu söyler (Parça No / BİLEŞEN etiketi)', () => {
     renderPage()
     // Parca No'su olan bilesen numarasini, olmayan "BİLEŞEN" etiketini tasir.

@@ -333,13 +333,18 @@ export default function MindMapCanvas({
               // Parca No ya da "BILESEN" etiketi durur. Gereksinim kutusu
               // yuvarlak koselidir ve ust satirinda kendi Text ID'sini tasir.
               const isProduct = n.node.kind === 'component' || n.node.kind === 'project'
-              // Kutunun ust satirindaki kimlik. URUN dugumunde her zaman
-              // vardir: Parca No, yoksa "BILESEN" etiketi. Gereksinim
-              // kutusunda ise #129'daki sakin duzen korunur — yalnizca isim
-              // (varsa Parca No, bkz. #135); Text ID ipucunda ve detayda.
+              // Kutunun ust satirindaki KIMLIK. Iki kayit tipi kendi
+              // kimligiyle gorunur (Issue #140):
+              //   URUN (bilesen/proje) -> Parca No, yoksa "BILESEN" etiketi.
+              //   GEREKSINIM           -> KENDI Text ID'si (EH-SYS-012...).
+              // Gereksinim kutusunda daha once yalnizca Parca No yaziyordu;
+              // bu, urun kimligi oldugu icin gereksinimi bilesen gibi
+              // gosteriyordu. Parca No'su olan gereksinimde numara ID'nin
+              // yanina SOLUK bir ek olarak yazilir (#135 korunur).
               const badge = isProduct
                 ? n.node.partNo || t('mindmap.componentTag')
-                : n.node.partNo || ''
+                : n.node.text_id || n.node.partNo || ''
+              const badgeExtra = !isProduct && n.node.text_id ? n.node.partNo || '' : ''
               const kindLabel = t(isProduct ? 'mindmap.kindComponent' : 'mindmap.kindRequirement')
               return (
                 <g
@@ -419,6 +424,8 @@ export default function MindMapCanvas({
                         pointerEvents="none"
                       >
                         {badge}
+                        {badgeExtra && <tspan fill={colors.subText}> · </tspan>}
+                        {badgeExtra && <tspan fill={colors.subText}>{badgeExtra}</tspan>}
                       </text>
                       <text
                         x={n.x + 16}
