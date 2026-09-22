@@ -981,6 +981,8 @@ export const STRINGS = {
     'partno.code.MAX_DEPTH': 'Derinlik aşımı',
     'partno.code.MISSING_PART_NO': 'Parça No yok',
     'nav.components': 'Bileşenler',
+    // Issue #140: bilesene bagli gereksinimler menude otomatik gorunur.
+    'nav.componentRequirements': '{name} Gereksinimleri',
     'nav.myWork': 'Bana Atananlar',
     'myWork.records': 'atanmış kayıt',
     'myWork.requirements': 'Gereksinimler',
@@ -1089,6 +1091,9 @@ export const STRINGS = {
 
     // --- Yeni sayfa başlıkları (Topbar) ---
     'page.reqUser.title': 'Kullanıcı Gereksinimleri',
+    'page.reqComponent.title': 'Bileşen Gereksinimleri',
+    'page.reqComponent.sub':
+      'Bu bileşene ve alt bileşenlerine bağlı tüm gereksinimler (seviye farkı gözetmeksizin)',
     'page.reqUser.sub': 'Kullanıcı seviyesi gereksinimleri oluştur, düzenle ve bağla',
     'page.reqSystem.title': 'Sistem Gereksinimleri',
     'page.reqSystem.sub': 'Sistem seviyesi gereksinimleri oluştur, düzenle ve bağla',
@@ -2091,6 +2096,7 @@ export const STRINGS = {
     'partno.code.MAX_DEPTH': 'Max depth exceeded',
     'partno.code.MISSING_PART_NO': 'Missing Part No',
     'nav.components': 'Components',
+    'nav.componentRequirements': '{name} Requirements',
     'nav.myWork': 'My Assignments',
     'myWork.records': 'assigned records',
     'myWork.requirements': 'Requirements',
@@ -2198,6 +2204,9 @@ export const STRINGS = {
 
     // --- New page titles (Topbar) ---
     'page.reqUser.title': 'User Requirements',
+    'page.reqComponent.title': 'Component Requirements',
+    'page.reqComponent.sub':
+      'All requirements linked to this component and its sub-components (across levels)',
     'page.reqUser.sub': 'Create, edit and link user-level requirements',
     'page.reqSystem.title': 'System Requirements',
     'page.reqSystem.sub': 'Create, edit and link system-level requirements',
