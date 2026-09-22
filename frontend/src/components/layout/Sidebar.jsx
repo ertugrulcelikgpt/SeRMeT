@@ -5,7 +5,7 @@
 //  AI Belge Analizi -> Degisiklik Tarihcesi.
 //  Aktif proje adi ustte gosterilir; "Projeler" ile secim ekranina donulur.
 // ============================================================================
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   IconDashboard,
   IconList,
@@ -28,6 +28,7 @@ import { useApp } from '../../context/AppContext.jsx'
 import { useLang } from '../../context/LanguageContext.jsx'
 import { useAuth } from '../../context/AuthContext.jsx'
 import { REQ_PAGES, TYPE_SUFFIX } from '../../utils/constants.js'
+import { buildComponentNavTree } from '../../utils/componentNav.js'
 
 // Sayfa anahtari -> i18n etiket anahtari. Bu liste SABITTIR (backend
 // navDefaults.js NAV_PAGE_KEYS ile birebir ayni); kullanici yalnizca bu
@@ -85,11 +86,62 @@ function NavButton({ active, onClick, Icon, label, indent = false }) {
   )
 }
 
+/**
+ * Issue #140: bilesen gereksinim girdisi — "<Bilesen adi> Gereksinimleri · N".
+ * Alt bilesenler IC ICE cizilir (urun kirilimi menude de korunur); sayac
+ * bilesenin alt kirilimi DAHIL gorulebilen gereksinim adedidir.
+ */
+function ComponentNavRow({ entry, depth, active, onNavigate, label, open, onToggle }) {
+  const hasChildren = entry.children.length > 0
+  const isActive = active === entry.key
+  return (
+    <div className="flex items-center gap-1" style={{ paddingLeft: 12 + depth * 12 }}>
+      {hasChildren ? (
+        <button
+          onClick={onToggle}
+          aria-label={label}
+          aria-expanded={open}
+          data-testid={`nav-component-toggle-${entry.componentId}`}
+          className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
+        >
+          <IconChevron
+            size={13}
+            className={open ? 'rotate-90 transition-transform' : 'transition-transform'}
+          />
+        </button>
+      ) : (
+        <span className="w-[21px] shrink-0" />
+      )}
+      <button
+        onClick={() => onNavigate(entry.key)}
+        title={label}
+        data-testid={`nav-component-${entry.componentId}`}
+        className={
+          'flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold transition-colors ' +
+          (isActive
+            ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300'
+            : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100')
+        }
+      >
+        <IconComponent size={15} className="shrink-0 opacity-70" />
+        <span className="flex-1 truncate text-left">{label}</span>
+        {/* Gereksinimi olmayan bilesen de gorunur: rozet 0 yazar (Issue #140). */}
+        <span
+          data-testid={`nav-component-count-${entry.componentId}`}
+          className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+        >
+          {entry.count}
+        </span>
+      </button>
+    </div>
+  )
+}
+
 export default function Sidebar({ active, onNavigate }) {
   const { activeProject, closeProject } = useProject()
-  const { nav, addNavItem, materializeNav } = useApp()
+  const { nav, components, requirements, addNavItem, materializeNav } = useApp()
   const { t } = useLang()
-  const { isPM } = useAuth()
+  const { isPM, can } = useAuth()
   // Kapali gruplarin id'leri (varsayilan: hepsi acik).
   const [closedGroups, setClosedGroups] = useState(() => new Set())
   const [navMgrOpen, setNavMgrOpen] = useState(false)
@@ -103,8 +155,26 @@ export default function Sidebar({ active, onNavigate }) {
   const [quickAddBusy, setQuickAddBusy] = useState(false)
   const [quickAddError, setQuickAddError] = useState('')
 
-  const groups = nav?.groups || []
+  const groups = useMemo(() => nav?.groups || [], [nav])
   const ungrouped = nav?.ungrouped || []
+  // Issue #140: bilesenlere bagli gereksinimler menude OTOMATIK belirir.
+  // Girdiler bilesen agacindan TURETILIR (yeni pageKey/NavItem uretilmez),
+  // bu yuzden ad degisimi / silme / bag kaldirma aninda yansir. Sayac ve
+  // liste, kullanicinin GOREBILDIGI kayitlarla sinirlidir (izin: kaydin
+  // kendi sayfa anahtari uzerinden — bkz. utils/componentNav.js).
+  const componentNav = useMemo(
+    () => buildComponentNavTree(components, requirements, { can }),
+    [components, requirements, can],
+  )
+  // Bilesen girdileri Gereksinimler grubunun ICINDE, sabit sayfalarin
+  // YANINDA durur (onlarin yerine gecmez). Grup adi kullanici tarafindan
+  // degistirilmis olabilecegi icin grup, icerdigi 'req-*' sayfalarindan
+  // bulunur; hicbir grupta gereksinim sayfasi yoksa girdiler gruplarin
+  // altinda kendi basina listelenir.
+  const componentGroupIndex = useMemo(
+    () => groups.findIndex((g) => (g.items || []).some((it) => REQ_PAGES[it.pageKey])),
+    [groups],
+  )
   // Materialize edilmemis varsayilan gruplarin etiketi i18n'den gelir;
   // kullanici ozellestirdikten sonra kendi verdigi duz isim kullanilir.
   const groupLabel = (g) => (g.nameKey ? t(g.nameKey) : g.name)
@@ -122,6 +192,34 @@ export default function Sidebar({ active, onNavigate }) {
       if (next.has(id)) next.delete(id)
       else next.add(id)
       return next
+    })
+
+  // Bilesen etiketi: "<Bilesen adi> Gereksinimleri" (i18n; EN: "<name>
+  // Requirements"). Adsiz bilesen olamaz (backend zorunlu tutar).
+  const componentNavLabel = (entry) => t('nav.componentRequirements', { name: entry.name })
+
+  // Ic ice bilesen dali. Kapali/acik durumu gruplarla AYNI kumede tutulur
+  // (anahtar bilesenin menu anahtaridir), boylece bilesen silinince artik
+  // kimse o anahtari sormaz ve durum kendiliginden temizlenir.
+  const renderComponentNav = (entries, depth = 0) =>
+    entries.map((entry) => {
+      const open = !closedGroups.has(entry.key)
+      return (
+        <div key={entry.key}>
+          <ComponentNavRow
+            entry={entry}
+            depth={depth}
+            active={active}
+            onNavigate={onNavigate}
+            label={componentNavLabel(entry)}
+            open={open}
+            onToggle={() => toggleGroup(entry.key)}
+          />
+          {open && entry.children.length > 0 && (
+            <div className="space-y-0.5">{renderComponentNav(entry.children, depth + 1)}</div>
+          )}
+        </div>
+      )
     })
 
   // "+" ile grubun yanindan dogrudan sayfa ekleme — "Menuyu duzenle" acmaya
@@ -266,6 +364,9 @@ export default function Sidebar({ active, onNavigate }) {
                       indent
                     />
                   ))}
+                  {/* Issue #140: bilesen gereksinim girdileri — sabit
+                      sayfalarin YANINDA, onlari degistirmeden. */}
+                  {gi === componentGroupIndex && renderComponentNav(componentNav)}
                 </div>
               )}
               {quickAddGroupId === gid && (
@@ -341,6 +442,12 @@ export default function Sidebar({ active, onNavigate }) {
             </div>
           )
         })}
+
+        {/* Hicbir grupta gereksinim sayfasi yoksa bilesen girdileri burada
+            (gruplarin altinda) durur — menude kaybolmazlar. */}
+        {componentGroupIndex === -1 && componentNav.length > 0 && (
+          <div className="space-y-0.5">{renderComponentNav(componentNav)}</div>
+        )}
 
         {/* Grupsuz sayfalar (varsayilan: Sozluk) */}
         {ungrouped.map((item) => (

@@ -327,6 +327,25 @@ export default function MindMapCanvas({
             {drawn.nodes.map((n) => {
               const top = n.y - L.nodeHeight / 2
               const openable = canOpenNode(n)
+              // Issue #140: BILESEN (urun) dugumu ile GEREKSINIM dugumu
+              // birbirine benzemez. Bilesen kutusu KOSELIDIR, kalin bir sol
+              // seritle ve kendi (camgobegi) rengiyle cizilir; ust satirinda
+              // Parca No ya da "BILESEN" etiketi durur. Gereksinim kutusu
+              // yuvarlak koselidir ve ust satirinda kendi Text ID'sini tasir.
+              const isProduct = n.node.kind === 'component' || n.node.kind === 'project'
+              // Kutunun ust satirindaki KIMLIK. Iki kayit tipi kendi
+              // kimligiyle gorunur (Issue #140):
+              //   URUN (bilesen/proje) -> Parca No, yoksa "BILESEN" etiketi.
+              //   GEREKSINIM           -> KENDI Text ID'si (EH-SYS-012...).
+              // Gereksinim kutusunda daha once yalnizca Parca No yaziyordu;
+              // bu, urun kimligi oldugu icin gereksinimi bilesen gibi
+              // gosteriyordu. Parca No'su olan gereksinimde numara ID'nin
+              // yanina SOLUK bir ek olarak yazilir (#135 korunur).
+              const badge = isProduct
+                ? n.node.partNo || t('mindmap.componentTag')
+                : n.node.text_id || n.node.partNo || ''
+              const badgeExtra = !isProduct && n.node.text_id ? n.node.partNo || '' : ''
+              const kindLabel = t(isProduct ? 'mindmap.kindComponent' : 'mindmap.kindRequirement')
               return (
                 <g
                   key={n.key}
@@ -338,12 +357,12 @@ export default function MindMapCanvas({
                     data-testid={`mindmap-node-${n.node.text_id}`}
                     role="button"
                     tabIndex={0}
-                    aria-label={`${n.node.text_id} ${n.node.label}`}
+                    aria-label={`${kindLabel}: ${badge} ${n.node.label}`.trim()}
                     x={n.x}
                     y={top}
                     width={L.nodeWidth}
                     height={L.nodeHeight}
-                    rx={10}
+                    rx={isProduct ? 3 : 10}
                     fill={colors.nodeBg}
                     stroke={n.key === focusKey ? FOCUS_COLOR : n.color}
                     strokeWidth={n.key === focusKey ? 3 : 1.5}
@@ -361,24 +380,24 @@ export default function MindMapCanvas({
                     {/* Kutuda yalnizca isim yazdiginda ID ve ozet ustune
                         gelince ipucu olarak gorunur. */}
                     <title>
-                      {[n.node.partNo, n.node.text_id, n.node.label, n.node.meta]
+                      {[kindLabel, n.node.partNo, n.node.text_id, n.node.label, n.node.meta]
                         .filter(Boolean)
                         .join(' — ')}
                     </title>
                   </rect>
                   <rect
                     x={n.x}
-                    y={top + 6}
-                    width={4}
-                    height={L.nodeHeight - 12}
-                    rx={2}
+                    y={isProduct ? top : top + 6}
+                    width={isProduct ? 7 : 4}
+                    height={isProduct ? L.nodeHeight : L.nodeHeight - 12}
+                    rx={isProduct ? 0 : 2}
                     fill={n.color}
                     pointerEvents="none"
                   />
-                  {showLabels && labelOnly && !n.node.partNo && (
-                    // YALNIZCA ISIM: tek satir, kutunun dikey ortasinda.
+                  {showLabels && labelOnly && !badge && (
+                    // Kimligi olmayan dugum: tek satir, kutunun dikey ortasinda.
                     <text
-                      x={n.x + 14}
+                      x={n.x + 16}
                       y={n.y + 4}
                       fontSize={12}
                       fontWeight={600}
@@ -388,24 +407,28 @@ export default function MindMapCanvas({
                       {fitLabel(n.node.label, L.nodeWidth)}
                     </text>
                   )}
-                  {showLabels && labelOnly && n.node.partNo && (
-                    // Issue #135: PARCA NO + isim. Numara urun kimligidir —
-                    // ayni adli iki dugumu (AMTB/GY1 vs STC/GY1) ayiran sey
-                    // odur, bu yuzden isimle birlikte kutuda durur.
+                  {showLabels && labelOnly && badge && (
+                    // Ust satir KIMLIK: urunde Parca No / "BİLEŞEN", gereksinimde
+                    // Text ID. Issue #135'te Parca No isimle birlikte kutuda
+                    // durur; Issue #140'ta ayni satir, bir kutunun URUN mu
+                    // GEREKSINIM mi oldugunu tek bakista soyler.
                     <>
                       <text
-                        x={n.x + 14}
+                        x={n.x + 16}
                         y={top + 15}
                         fontSize={10}
                         fontWeight={700}
                         fill={n.color}
                         className="font-mono"
+                        letterSpacing={isProduct && !n.node.partNo ? 0.6 : 0}
                         pointerEvents="none"
                       >
-                        {n.node.partNo}
+                        {badge}
+                        {badgeExtra && <tspan fill={colors.subText}> · </tspan>}
+                        {badgeExtra && <tspan fill={colors.subText}>{badgeExtra}</tspan>}
                       </text>
                       <text
-                        x={n.x + 14}
+                        x={n.x + 16}
                         y={top + 30}
                         fontSize={11}
                         fontWeight={600}

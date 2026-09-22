@@ -36,12 +36,13 @@ import AdminLayout from './admin/AdminLayout.jsx'
 import AIAssistant from './components/common/AIAssistant.jsx'
 import { TraceabilityPage } from './pages/TraceabilityPage'
 import { TraceabilityImportPage } from './pages/TraceabilityImportPage'
+import { COMPONENT_PAGE_KEY, componentIdFromNavKey } from './utils/componentNav.js'
 
 const REQ_KEYS = ['req-user', 'req-system', 'req-subsystem']
 const TEST_KEYS = ['test-acceptance', 'test-system', 'test-subsystem']
 
 export default function App() {
-  const { loading, nav } = useApp()
+  const { loading, nav, components } = useApp()
   const { currentUser } = useAuth()
   const { activeProjectId, closeProject } = useProject()
   const { t } = useLang()
@@ -57,11 +58,26 @@ export default function App() {
     const all = [...(nav?.groups || []).flatMap((g) => g.items), ...(nav?.ungrouped || [])]
     return all.find((i) => (i.id || i.pageKey) === page) || null
   }, [nav, page])
-  const pageKey = navItem?.pageKey || page
+  // Issue #140: bilesen gereksinim girdileri menude DB kaydi olmadan (bilesen
+  // agacindan turetilerek) durur; anahtari `req-component:<componentId>`dir.
+  // Tek bir sanal sayfaya (COMPONENT_PAGE_KEY) cozulur — yeni bir pageKey
+  // uretilmez, izin matrisi degismez.
+  const componentId = componentIdFromNavKey(page)
+  const componentNode = useMemo(
+    () => (componentId ? (components || []).find((c) => c.id === componentId) || null : null),
+    [components, componentId],
+  )
+  const pageKey = componentId ? COMPONENT_PAGE_KEY : navItem?.pageKey || page
 
   // Issue #103: uyelik DB'den canli dogrulanir; guard PROJECT_ACCESS_DENIED
   // dondugunde (uyelikten cikarildi) calisma alanini kapatip ProjectSelect'e
   // dusururuz. ProjectSelect artik PM harici uyeler icin de gosterilir.
+  // Acik olan bilesen listesi silinirse (menudeki girdi kaybolur) sayfada
+  // kalmayiz: kullanici panoya duser.
+  useEffect(() => {
+    if (!loading && componentId && !componentNode) setPage('dashboard')
+  }, [loading, componentId, componentNode])
+
   useEffect(() => {
     const onAccessDenied = () => closeProject()
     window.addEventListener('ehsim:project-access-denied', onAccessDenied)
@@ -110,13 +126,35 @@ export default function App() {
     <div className="flex h-screen overflow-hidden">
       <Sidebar active={page} onNavigate={navigate} />
       <div className="flex flex-1 flex-col overflow-hidden">
-        <Topbar active={pageKey} titleOverride={navItem?.label || null} />
+        <Topbar
+          active={pageKey}
+          titleOverride={
+            componentId
+              ? componentNode
+                ? t('nav.componentRequirements', { name: componentNode.name })
+                : null
+              : navItem?.label || null
+          }
+        />
         <main className="flex-1 overflow-y-auto p-6">
           {page === 'dashboard' && <Dashboard onNavigate={setPage} />}
           {page === 'pbs-tree' && <PbsTree />}
           {page === 'components' && <Components />}
           {page === 'my-work' && <MyAssignments />}
-          {REQ_KEYS.includes(pageKey) && (
+          {/* Issue #140: bilesene bagli gereksinimler — seviye farki
+              gozetmeksizin, ayni tablo/sutun/filtrelerle. Bilesen silinmisse
+              (girdi menuden dustuyse) Dashboard'a dusulur. */}
+          {componentId && componentNode && (
+            <Hierarchy
+              key={page}
+              pageKey={COMPONENT_PAGE_KEY}
+              navKey={page}
+              componentId={componentId}
+              titleOverride={t('nav.componentRequirements', { name: componentNode.name })}
+              onOpenSuspect={openSuspect}
+            />
+          )}
+          {!componentId && REQ_KEYS.includes(pageKey) && (
             <Hierarchy
               key={page}
               pageKey={pageKey}

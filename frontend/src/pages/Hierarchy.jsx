@@ -37,7 +37,9 @@ import FilterBar, { FilterSummary } from '../components/common/FilterBar.jsx'
 import ViewBar, { TablePager } from '../components/common/ViewBar.jsx'
 import { TypeBadge } from '../components/common/Badge.jsx'
 import { IconPlus } from '../components/common/Icons.jsx'
-import { REQ_PAGES } from '../utils/constants.js'
+import { HIERARCHY_REQ_TYPES, REQ_PAGES } from '../utils/constants.js'
+import { requirementsOfComponent } from '../utils/componentNav.js'
+import { componentKeyOf } from '../utils/permissions.js'
 import { suspectLinksForRequirement } from '../utils/suspect.js'
 import { buildVerificationIndex, verificationOf } from '../utils/verification.js'
 import { buildLinkIndex, linkCountOf, linkSummaryOf } from '../utils/linkIndex.js'
@@ -59,13 +61,34 @@ export default function Hierarchy({
   titleOverride = null,
   fieldFilter = null,
   typeFilter = null,
+  componentId = null,
   onOpenSuspect,
 }) {
   // titleOverride / fieldFilter / typeFilter: kullanicinin menuye ekledigi
   // OZEL sayfalar icin (Issue #9). Gereksinim TIPLERI sabittir; ozel sayfa
   // ayni tipin Alan (disiplin) ve/veya Tip (yalnizca req-subsystem: Software/
   // Hardware) filtresiyle daraltilmis gorunumudur.
-  const cfg = REQ_PAGES[pageKey]
+  // Issue #140: BILESEN gorunumu. `componentId` verildiginde sayfa tek bir
+  // hiyerarsi seviyesini degil, secilen bilesene (ve alt bilesenlerine) bagli
+  // TUM gereksinimleri listeler (User / System / Sub-system bir arada).
+  // Bu, sabit sayfalarin (req-user...) YERINE GECMEZ; ayni tablo, sutun ve
+  // filtrelerle onlarin yaninda duran ek bir gorunumdur.
+  const componentMode = Boolean(componentId)
+  const cfg = useMemo(
+    () =>
+      componentMode
+        ? {
+            // Sanal sayfa: izin matrisinde KARSILIGI YOKTUR — yetki kontrolu
+            // her KAYDIN kendi sayfa anahtari uzerinden yapilir (keyOfRow).
+            key: 'req-component',
+            navLabel: titleOverride || '',
+            lockedType: null,
+            typeOptions: HIERARCHY_REQ_TYPES,
+            addLabel: '',
+          }
+        : REQ_PAGES[pageKey],
+    [componentMode, titleOverride, pageKey],
+  )
   // typeFilter yalnizca sayfanin zaten sundugu tiplerden biriyse gecerlidir
   // (orn. req-subsystem'de 'Software Requirement'); aksi halde yoksayilir.
   const effectiveCfg = useMemo(() => {
@@ -82,6 +105,7 @@ export default function Hierarchy({
     personnel,
     bulkRemoveRequirements,
     editRequirement,
+    components,
     projectId,
   } = useApp()
   const { t } = useLang()
@@ -107,7 +131,11 @@ export default function Hierarchy({
   // Silme oncesi zorunlu gerekce (izlenebilirlik) — bkz. ReasonModal.
   const [deleteTarget, setDeleteTarget] = useState(null) // { ids, label } | null
 
-  const comp = pageKey // izin bileson anahtari = sayfa anahtari
+  // Izin bileson anahtari = sayfa anahtari. Bilesen gorunumunde tek bir sayfa
+  // anahtari yoktur (liste seviyeler arasidir); bu yuzden yetki SATIR BAZINDA,
+  // kaydin tipinden turetilen anahtarla sorulur.
+  const comp = componentMode ? null : pageKey
+  const keyOfRow = (r) => (componentMode ? componentKeyOf('requirement', r?.type) : comp)
   const types = useMemo(() => effectiveCfg?.typeOptions || [], [effectiveCfg])
   // Tip kilitliyse (tek tip) tablo sutununda tekrari onlemek icin kaldirilir;
   // bunun yerine baslik yaninda tek bir rozet olarak gosterilir. Gereksinimler
@@ -132,12 +160,17 @@ export default function Hierarchy({
   const verificationFor = (r) => verificationOf(verificationIndex, r.id)
 
   // --- Izin cozumleyiciler ---------------------------------------------------
-  const canRead = can('read', comp)
-  const canAdd = can('add_requirement', comp)
+  // Bilesen gorunumunde satirlar zaten okunabilirlige gore SUZULUR (rows),
+  // bu yuzden `canRead` her zaman dogrudur; yazma/silme/baglama haklari ise
+  // satirin kendi sayfa anahtarindan gelir.
+  const canRead = componentMode || can('read', comp)
+  // Bilesen gorunumu SALT LISTEDIR: yeni kayit, ait olacagi hiyerarsi seviyesi
+  // belirsiz oldugu icin buradan olusturulmaz — sabit sayfalardan eklenir.
+  const canAdd = !componentMode && can('add_requirement', comp)
   const canFields = can('manage_fields')
-  const canEditRow = () => can('write', comp)
-  const canDeleteRow = () => can('delete', comp)
-  const canLinksRow = () => can('link_satisfies', comp)
+  const canEditRow = (r) => can('write', keyOfRow(r))
+  const canDeleteRow = (r) => can('delete', keyOfRow(r))
+  const canLinksRow = (r) => can('link_satisfies', keyOfRow(r))
 
   // 5 sn geri alinabilir toplu silme.
   const del = useUndoableDelete(bulkRemoveRequirements)
@@ -177,9 +210,18 @@ export default function Hierarchy({
     onApplyFilters: fx.replace,
   })
 
+  // Bilesen gorunumunun kaynak kumesi: secilen bilesene ve ALT BILESENLERINE
+  // bagli, kullanicinin okuma yetkisi olan kayitlar. Yetki suzgeci burada
+  // uygulanir — yetkisiz kullanici sabit sayfalarda goremedigi bir kaydi bu
+  // liste uzerinden de goremez.
+  const sourceRows = useMemo(() => {
+    if (!componentMode) return requirements
+    return requirementsOfComponent(components, requirements, componentId, { can })
+  }, [componentMode, components, requirements, componentId, can])
+
   const rows = useMemo(() => {
     const statusOf = (r) => requirementStatusOf(r, verificationFor)
-    return requirements
+    return sourceRows
       .filter((r) => types.includes(r.type))
       .filter((r) => !fieldFilter || r.field === fieldFilter)
       .filter((r) => matchesFilters(r, fx.filters, statusOf, filterAttrDefs))
@@ -187,7 +229,7 @@ export default function Hierarchy({
     // verificationFor `verificationIndex` uzerinden hesaplanir; bagimlilik
     // olarak indeks yeterli (o da links + testCases'ten turer).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requirements, types, fx.filters, fieldFilter, verificationIndex, filterAttrDefs])
+  }, [sourceRows, types, fx.filters, fieldFilter, verificationIndex, filterAttrDefs])
 
   // Bekleyen (soft-delete) satirlari gizle.
   const visibleRows = useMemo(() => rows.filter((r) => !pendingSet.has(r.id)), [rows, pendingSet])
@@ -245,6 +287,12 @@ export default function Hierarchy({
     [pageInfo.rows, sel.selectedSet],
   )
 
+  // Toplu islem dugmeleri: SECILI satirlarin hepsinde izin varsa sunulur.
+  // Secimde yetkisiz tek bir kayit varsa dugme gorunmez — kismi basarisizlik
+  // yerine net bir kural. Secim yokken cubuk zaten gizlidir.
+  const bulkAllowed = (check) =>
+    selectedRows.length > 0 ? selectedRows.every((r) => check(r)) : !componentMode && check(null)
+
   if (!cfg) return null
 
   return (
@@ -252,6 +300,17 @@ export default function Hierarchy({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
+            {/* Issue #140: bu liste bir BILESENE (urune) aittir. Rozet, sayfa
+                basligindaki adin bir gereksinim degil bilesen oldugunu
+                soyler; satirlar ise gereksinimlerdir. */}
+            {componentMode && (
+              <span
+                data-testid="req-component-kind"
+                className="rounded-md bg-teal-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-teal-800 dark:bg-teal-900/40 dark:text-teal-200"
+              >
+                {t('comp.kindComponent')}
+              </span>
+            )}
             <h2 className="text-lg font-bold text-slate-900 dark:text-white">
               {titleOverride || effectiveCfg.navLabel}
             </h2>
@@ -320,12 +379,12 @@ export default function Hierarchy({
 
       <BulkActionBar
         count={sel.count}
-        onDelete={canDeleteRow() ? handleBulkDelete : undefined}
-        onLink={canLinksRow() ? () => setBulkLinkOpen(true) : undefined}
-        onAssign={canEditRow() ? () => setBulkAssignOpen(true) : undefined}
+        onDelete={bulkAllowed(canDeleteRow) ? handleBulkDelete : undefined}
+        onLink={bulkAllowed(canLinksRow) ? () => setBulkLinkOpen(true) : undefined}
+        onAssign={bulkAllowed(canEditRow) ? () => setBulkAssignOpen(true) : undefined}
         onClear={sel.clear}
-        canLink={canLinksRow()}
-        canAssign={canEditRow()}
+        canLink={bulkAllowed(canLinksRow)}
+        canAssign={bulkAllowed(canEditRow)}
       />
 
       <EntityTable
@@ -399,7 +458,7 @@ export default function Hierarchy({
       <ViewModal
         open={Boolean(viewRow)}
         row={viewRow}
-        canWrite={can('write', comp)}
+        canWrite={Boolean(viewRow) && canEditRow(viewRow)}
         showStatus={false}
         showVerification
         showHistory

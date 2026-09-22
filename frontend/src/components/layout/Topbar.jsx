@@ -15,6 +15,8 @@ const TITLE_KEY = {
   'req-user': 'reqUser',
   'req-system': 'reqSystem',
   'req-subsystem': 'reqSubsystem',
+  // Issue #140: bilesen bazli gereksinim listesi (sanal sayfa).
+  'req-component': 'reqComponent',
   'test-acceptance': 'testAcceptance',
   'test-system': 'testSystem',
   'test-subsystem': 'testSubsystem',

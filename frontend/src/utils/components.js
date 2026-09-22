@@ -455,7 +455,9 @@ export function buildManualComponentGraph(
       text_id: '',
       label: c.name || '',
       labelIsFallback: false,
-      level: 'user',
+      // Bilesen bir URUNDUR, gereksinim seviyesi degil: haritada kendi
+      // rengiyle ve kendi kutu bicimiyle cizilir (Issue #140).
+      level: 'component',
       typeSuffix: '',
       outline: ct.infoById.get(c.id)?.outline || '',
       partNo: c.partNo || '',
@@ -504,7 +506,8 @@ export function buildManualComponentGraph(
     text_id: '',
     label: rootLabel,
     labelIsFallback: false,
-    level: 'user',
+    // Proje kokunun altinda URUN kirilimi durur; gereksinim seviyesi degildir.
+    level: 'component',
     typeSuffix: '',
     outline: '',
     meta: rootMeta,
@@ -737,7 +740,7 @@ export function linkedTextIds(index, id, byId) {
  * kod listesi olarak (ok/rozet yok; tabloyu okunur tutar).
  */
 export function buildComponentViewRows(rows, ctx) {
-  const { tree, satisfiesIndex, verificationIndex, methodKeys = [] } = ctx || {}
+  const { tree, satisfiesIndex, verificationIndex, methodKeys = [], manual = false } = ctx || {}
   const depthOf = (id) => tree.infoById.get(id)?.depth ?? 0
   // Girinti SECIME GORE gorelidir: bir alt bilesen secildiginde tablo
   // soldan baslar, proje secildiginde tam agac girintisi gorunur.
@@ -757,11 +760,22 @@ export function buildComponentViewRows(rows, ctx) {
       text_id: r.text_id || '',
       // Issue #135: TID tablosunun urun kimligi sutunu.
       partNo: r.partNo || '',
+      // Kaydin TIPI (Kullanici / Sistem / SW / HW): tabloda her satirin bir
+      // GEREKSINIM oldugunu ve hangi seviyede durdugunu gosterir (Issue #140).
+      type: r.type || '',
+      typeSuffix: TYPE_SUFFIX[r.type] || '',
       title: label.isFallback ? '' : label.text,
       titleIsFallback: label.isFallback,
       text: plain,
       depth: Math.max(0, depthOf(r.id) - (Number.isFinite(baseDepth) ? baseDepth : 0)),
-      isComponent: (tree.childrenOf.get(r.id) || []).length > 0,
+      // Bu satirin altinda baska GEREKSINIM var mi (kendi blogunun basligi).
+      hasChildren: (tree.childrenOf.get(r.id) || []).length > 0,
+      // Issue #140: `isComponent` YALNIZCA turetilmis kaynaklarda (PBS/Alan)
+      // anlamlidir — orada "alt kirilimi olan gereksinim" bilesen SAYILIRDI
+      // (#129). Elle tanimli bilesenlerde (#138 varsayilan kaynak) bilesen
+      // KENDI kaydidir; bir gereksinim asla bilesen degildir, bu yuzden
+      // tabloda da bilesen gibi gosterilmez.
+      isComponent: !manual && (tree.childrenOf.get(r.id) || []).length > 0,
       linkedUp: linked.up,
       linkedDown: linked.down,
       linkedText: [...linked.up, ...linked.down].join(', '),

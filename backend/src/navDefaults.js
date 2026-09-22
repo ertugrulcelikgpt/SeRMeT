@@ -9,6 +9,14 @@
 //
 //  Frontend karsiligi: REQ_PAGES / TEST_PAGES anahtarlari
 //  (frontend/src/utils/constants.js) ile BIREBIR ayni olmalidir.
+//
+//  ISTISNA DEGIL, TAMAMLAYICI (Issue #140): sol menude bilesen basina beliren
+//  "<Bilesen adi> Gereksinimleri" girdileri buraya ya da NavItem tablosuna
+//  YAZILMAZ; bilesen agacindan (Component + Requirement.componentId) canli
+//  TURETILIR ve tek bir sanal sayfanin (`req-component:<componentId>`)
+//  gorunumudur. Yani yeni pageKey uretilmez, izin matrisi degismez; listelenen
+//  her kaydin yetkisi KENDI sayfa anahtari (req-user/req-system/req-subsystem)
+//  uzerinden sorulur. Bkz. frontend/src/utils/componentNav.js.
 // ============================================================================
 import { REQ_TYPE } from './constants.js';
 

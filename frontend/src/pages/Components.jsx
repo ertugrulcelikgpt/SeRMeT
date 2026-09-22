@@ -550,8 +550,11 @@ export default function Components() {
       satisfiesIndex,
       verificationIndex,
       methodKeys,
+      // Issue #140: elle tanimli kaynakta bir GEREKSINIM asla bilesen
+      // sayilmaz — tablo da onu bilesen basligi gibi gostermez.
+      manual: isManual,
     })
-  }, [selection, tree, satisfiesIndex, verificationIndex, methodKeys])
+  }, [selection, tree, satisfiesIndex, verificationIndex, methodKeys, isManual])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -687,9 +690,22 @@ export default function Components() {
         nodeDetail="label"
         className="min-h-[460px] flex-1"
       />
-      <p className="text-[11px] text-slate-400" data-testid="comp-map-hint">
-        {t('comp.mapHint')}
-      </p>
+      {/* Issue #140: haritadaki iki kutu tipinin ne oldugunu soyleyen kucuk
+          gosterge — bilesen bir URUNDUR, gereksinim ona bagli bir kayittir. */}
+      <div
+        className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400"
+        data-testid="comp-map-legend"
+      >
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-3 w-3 rounded-[2px] bg-teal-600" />
+          {t('comp.legendComponent')}
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-3 w-3 rounded-full bg-indigo-500" />
+          {t('comp.legendRequirement')}
+        </span>
+        <span data-testid="comp-map-hint">{t('comp.mapHint')}</span>
+      </div>
       {mapLayout.truncated && (
         <div
           data-testid="comp-truncated"
@@ -796,7 +812,10 @@ export default function Components() {
       ) : (
         <>
           <header className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-900/30 dark:text-brand-300">
+            {/* Issue #140: bu basliktaki kayit bir URUN (bilesen), asagidaki
+                tablo ise ona BAGLI GEREKSINIMLERDIR. Ikisi ayri seylerdir;
+                rozet ve renk bunu acikca soyler. */}
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300">
               <IconComponent size={18} />
             </div>
             <div className="min-w-0 flex-1">
@@ -804,6 +823,12 @@ export default function Components() {
                 data-testid="comp-selected-title"
                 className="truncate text-sm font-bold text-slate-900 dark:text-white"
               >
+                <span
+                  data-testid="comp-selected-kind"
+                  className="mr-2 rounded-md bg-teal-100 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase tracking-wide text-teal-800 dark:bg-teal-900/40 dark:text-teal-200"
+                >
+                  {t('comp.kindComponent')}
+                </span>
                 {selection.outline && (
                   <span className="mr-1.5 font-mono text-xs text-slate-400">
                     {selection.outline}
@@ -823,7 +848,7 @@ export default function Components() {
                 data-testid="comp-selected-summary"
                 className="text-[11px] font-semibold text-slate-400"
               >
-                {summaryText(selectionSummary)}
+                {t('comp.requirementsOf')} · {summaryText(selectionSummary)}
               </p>
             </div>
           </header>
@@ -887,8 +912,20 @@ export default function Components() {
                       >
                         {v.partNo || t('partno.none')}
                       </td>
+                      {/* Text ID + tip eki: bu satir bir GEREKSINIMDIR
+                                (bilesen degil) ve hangi seviyede oldugu
+                                buradan okunur — Issue #140. */}
                       <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-brand-700 dark:text-brand-300">
                         {v.text_id}
+                        {v.typeSuffix && (
+                          <span
+                            title={v.type}
+                            data-testid={`comp-row-type-${v.text_id}`}
+                            className="ml-1.5 rounded bg-slate-100 px-1 py-0.5 text-[10px] font-bold text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+                          >
+                            {v.typeSuffix}
+                          </span>
+                        )}
                       </td>
                       {/* Girinti = agactaki derinlik: "Depo Kapasitesi"
                                 basligi "Su Deposu Alt Sistemi"nin altinda
@@ -1849,26 +1886,45 @@ function ComponentFormModal({ open, form, projectId, parentName, format, onClose
 //  Bilesen gereksinim olmadan da var olur; bag her zaman sonradan kurulabilir
 //  ve kaldirilabilir. Gereksinimin METNI degismez (kilitli kayitlar da
 //  baglanabilir — urun kirilimi bir siniflandirmadir).
+//
+//  COKLU SECIM: bir bilesene TEK SEFERDE istedigin kadar gereksinim baglanir
+//  (kutucuklar + "tumunu sec"). Secim, modal ACILDIGINDA mevcut baglardan
+//  kurulur ve SONRASINDA KENDILIGINDEN SIFIRLANMAZ: AppContext her mutasyondan
+//  sonra tum koleksiyonlari tazeledigi icin `requirements` dizisinin kimligi
+//  modal acikken degisebilir; eskiden bu, kullanicinin isaretledigi kutulari
+//  silip yalnizca son isaretin kalmasina yol aciyordu (bkz. testler).
 // ============================================================================
 function LinkRequirementsModal({ open, component, requirements, onClose, onSave, t }) {
   const [selected, setSelected] = useState(() => new Set())
   const [query, setQuery] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const componentId = component?.id || null
 
-  const initial = useMemo(() => {
+  // Bilesenin O ANDA bagli gereksinimleri (sunucu gercegi).
+  const linkedIds = useMemo(() => {
     const ids = new Set()
-    for (const r of requirements || []) if (r.componentId === component?.id) ids.add(r.id)
+    for (const r of requirements || [])
+      if (componentId && r.componentId === componentId) ids.add(r.id)
     return ids
-  }, [requirements, component])
+  }, [requirements, componentId])
 
+  // Kaydederken FARKI en guncel bag durumuna gore hesaplayabilmek icin ref'te
+  // tutulur; boylece arka plandaki tazelemeler secimi yeniden kurmaz.
+  const linkedRef = useRef(linkedIds)
+  useEffect(() => {
+    linkedRef.current = linkedIds
+  }, [linkedIds])
+
+  // Secim YALNIZCA modal acildiginda (ya da baska bir bilesene gecildiginde)
+  // sifirlanir — veri tazelendiginde DEGIL.
   useEffect(() => {
     if (!open) return
-    setSelected(new Set(initial))
+    setSelected(new Set(linkedRef.current))
     setQuery('')
     setError('')
     setBusy(false)
-  }, [open, initial])
+  }, [open, componentId])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -1893,12 +1949,28 @@ function LinkRequirementsModal({ open, component, requirements, onClose, onSave,
       return next
     })
 
+  // "Tumunu sec": aramayla SUZULMUS listeye uygulanir — 12 gereksinimi tek tek
+  // isaretlemek yerine arayip topluca baglamak icin. Ikinci tiklama ayni
+  // kumenin secimini kaldirir; listede olmayan secimlere dokunmaz.
+  const allFilteredSelected = filtered.length > 0 && filtered.every((r) => selected.has(r.id))
+  const toggleAllFiltered = () =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      for (const r of filtered) {
+        if (allFilteredSelected) next.delete(r.id)
+        else next.add(r.id)
+      }
+      return next
+    })
+
   const save = async () => {
     setBusy(true)
     setError('')
     try {
-      const add = [...selected].filter((id) => !initial.has(id))
-      const remove = [...initial].filter((id) => !selected.has(id))
+      // Fark, kaydetme anindaki GERCEK bag durumuna gore hesaplanir.
+      const linked = linkedRef.current
+      const add = [...selected].filter((id) => !linked.has(id))
+      const remove = [...linked].filter((id) => !selected.has(id))
       await onSave(add, remove)
     } catch (err) {
       setError(err?.message || t('comp.saveError'))
@@ -1922,6 +1994,24 @@ function LinkRequirementsModal({ open, component, requirements, onClose, onSave,
           aria-label={t('comp.linkSearch')}
           data-testid="comp-link-search"
         />
+        <div className="flex items-center justify-between gap-2 px-1">
+          <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+            <input
+              type="checkbox"
+              checked={allFilteredSelected}
+              onChange={toggleAllFiltered}
+              disabled={filtered.length === 0}
+              data-testid="comp-link-select-all"
+            />
+            {t('comp.linkSelectAll')}
+          </label>
+          <span
+            className="text-[11px] font-semibold text-slate-500 dark:text-slate-400"
+            data-testid="comp-link-selected-count"
+          >
+            {t('comp.linkSelectedCount', { n: selected.size })}
+          </span>
+        </div>
         <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-800">
           {filtered.length === 0 ? (
             <p className="px-3 py-8 text-center text-sm text-slate-500 dark:text-slate-400">

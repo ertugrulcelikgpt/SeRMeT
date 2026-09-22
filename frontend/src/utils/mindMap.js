@@ -43,14 +43,19 @@ export function levelOfType(type) {
 }
 
 // Kok siralamasi ve kardes siralamasi icin seviye agirligi.
-const LEVEL_RANK = { user: 0, system: 1, subsystem: 2, test: 3 }
+const LEVEL_RANK = { component: -1, user: 0, system: 1, subsystem: 2, test: 3 }
 
 // Dal renkleri — koyu ve acik temada da okunur orta tonlar.
+//  BILESEN AYRI BIR RENKTIR (Issue #140): bilesen bir URUN dugumudur,
+//  gereksinim degildir. Gereksinim seviyeleri (user/system/subsystem) ve
+//  testler mor-mavi-pembe ailesinde kalirken bilesen yesil-camgobegi tonuyla
+//  ayrilir; kutu bicimi de farklidir (bkz. MindMapCanvas).
 export const MIND_MAP_BRANCH_COLORS = {
   user: '#6366f1', // indigo-500
   system: '#a855f7', // purple-500
   subsystem: '#32a1ff', // brand-500
   test: '#ec4899', // pink-500
+  component: '#0d9488', // teal-600 — URUN dugumu (gereksinim degil)
 }
 
 /** Tema yuzeyleri (arka plan / dugum govdesi / metin). */

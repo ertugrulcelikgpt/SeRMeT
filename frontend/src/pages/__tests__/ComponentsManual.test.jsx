@@ -292,6 +292,99 @@ describe('Düzenleme ve silme', () => {
   })
 })
 
+// ============================================================================
+//  Issue #140: BILESEN bir URUNDUR, gereksinim degildir. Ikisi ekranda
+//  birbirine benzemez:
+//   - Haritada bilesen kutusu KOSELI, kendi (camgobegi) renginde ve ust
+//     satirinda Parca No / "BILESEN" etiketi tasir; gereksinim kutusu
+//     yuvarlak ve kendi seviye renginde kalir.
+//   - Listede bilesen TABLONUN BASLIGIDIR (rozetiyle); tablonun satirlari
+//     yalnizca gereksinimdir — alt kirilimi olan bir gereksinim artik
+//     "bilesen satiri" gibi gosterilmez.
+// ============================================================================
+describe('Bileşen ile gereksinim ayrımı', () => {
+  beforeEach(() => {
+    appMock.components = [
+      comp('c1', 'A Donanımı', { sortIndex: 0, partNo: '010.00.001' }),
+      comp('c2', 'Alt Kart', { sortIndex: 0, parentId: 'c1' }),
+    ]
+    appMock.requirements = [
+      {
+        id: 'r1',
+        text_id: 'R-001',
+        title: 'Üst gereksinim',
+        type: 'System Requirement',
+        componentId: 'c1',
+      },
+      {
+        id: 'r2',
+        text_id: 'R-002',
+        title: 'Alt gereksinim',
+        type: 'Software Requirement',
+        componentId: 'c1',
+        parentId: 'r1',
+      },
+    ]
+  })
+
+  it('haritada bileşen kutusu köşelidir ve kendi rengindedir; gereksinim kutusu değil', () => {
+    renderPage()
+    // URUN dugumleri (proje koku + bilesenler): koseli kutu, camgobegi renk.
+    const products = screen.getAllByTestId('mindmap-node-')
+    expect(products.length).toBeGreaterThan(0)
+    for (const box of products) {
+      expect(box).toHaveAttribute('rx', '3')
+      expect(box.getAttribute('stroke')).toBe('#0d9488')
+    }
+    // Bilesen dallarini acinca cikan GEREKSINIM kutulari yuvarlaktir ve
+    // kendi seviye rengini tasir (urun rengini DEGIL).
+    const toggles = screen.getAllByTestId('mindmap-toggle-')
+    for (const dot of toggles.slice(1)) fireEvent.click(dot)
+    const requirement = screen.getByTestId('mindmap-node-R-001')
+    expect(requirement).toHaveAttribute('rx', '10')
+    expect(requirement.getAttribute('stroke')).not.toBe('#0d9488')
+  })
+
+  it('gereksinim kutusu KENDI Text ID sini tasir (urun kimligi degil)', () => {
+    renderPage()
+    const toggles = screen.getAllByTestId('mindmap-toggle-')
+    for (const dot of toggles.slice(1)) fireEvent.click(dot)
+    // Gereksinim: kendi ID'si. Bilesen: Parca No / "BİLEŞEN" etiketi.
+    expect(screen.getByText('R-001')).toBeInTheDocument()
+    expect(screen.getByText('R-002')).toBeInTheDocument()
+    expect(screen.getAllByText('010.00.001').length).toBeGreaterThan(0)
+  })
+
+  it('bileşen kutusu ÜRÜN olduğunu söyler (Parça No / BİLEŞEN etiketi)', () => {
+    renderPage()
+    // Parca No'su olan bilesen numarasini, olmayan "BİLEŞEN" etiketini tasir.
+    expect(screen.getAllByText('010.00.001').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('BİLEŞEN').length).toBeGreaterThan(0)
+  })
+
+  it('liste görünümünde başlık bileşendir, satırlar gereksinimdir', async () => {
+    renderPage()
+    fireEvent.click(screen.getByTestId('comp-view-list'))
+    fireEvent.click(screen.getByTestId('comp-item-c1'))
+    // Baslik: bilesen rozeti + "bu bilesene bagli gereksinimler".
+    expect(screen.getByTestId('comp-selected-kind')).toHaveTextContent('Bileşen')
+    expect(screen.getByTestId('comp-selected-summary')).toHaveTextContent(
+      /bu bileşene bağlı gereksinimler/i,
+    )
+    // Satirlar: her biri tipiyle birlikte bir GEREKSINIM.
+    expect(screen.getByTestId('comp-row-type-R-001')).toHaveTextContent('SYS')
+    expect(screen.getByTestId('comp-row-type-R-002')).toHaveTextContent('SW')
+  })
+
+  it('alt kırılımı olan gereksinim artık "bileşen satırı" gibi gösterilmez', () => {
+    renderPage()
+    fireEvent.click(screen.getByTestId('comp-view-list'))
+    fireEvent.click(screen.getByTestId('comp-item-c1'))
+    // R-001'in alti var ama o bir gereksinim: bilesen isaretini TASIMAZ.
+    expect(screen.getByTestId('comp-row-R-001')).not.toHaveAttribute('data-component')
+  })
+})
+
 describe('Gereksinim bağlama (sonradan)', () => {
   beforeEach(() => {
     appMock.components = [comp('c1', 'Su Pompası Ünitesi', { sortIndex: 0 })]
@@ -318,6 +411,73 @@ describe('Gereksinim bağlama (sonradan)', () => {
 
     await waitFor(() =>
       expect(appMock.linkRequirementsToComponent).toHaveBeenCalledWith('c1', ['r1']),
+    )
+  })
+
+  it('bir bileşene TEK SEFERDE birden fazla gereksinim bağlanır', async () => {
+    appMock.requirements = [
+      { id: 'r1', text_id: 'R-001', title: 'Bir', type: 'System Requirement' },
+      { id: 'r2', text_id: 'R-002', title: 'Iki', type: 'System Requirement' },
+      { id: 'r3', text_id: 'R-003', title: 'Uc', type: 'System Requirement' },
+    ]
+    renderPage()
+    fireEvent.click(screen.getByTestId('comp-link-c1'))
+    const modal = await screen.findByTestId('comp-link-modal')
+    fireEvent.click(within(modal).getByTestId('comp-link-row-R-001'))
+    fireEvent.click(within(modal).getByTestId('comp-link-row-R-003'))
+    expect(within(modal).getByTestId('comp-link-selected-count')).toHaveTextContent('2')
+    fireEvent.click(within(modal).getByTestId('comp-link-save'))
+
+    await waitFor(() =>
+      expect(appMock.linkRequirementsToComponent).toHaveBeenCalledWith('c1', ['r1', 'r3']),
+    )
+  })
+
+  it('"tümünü seç" ile listedeki tüm gereksinimler tek istekte bağlanır', async () => {
+    appMock.requirements = [
+      { id: 'r1', text_id: 'R-001', title: 'Bir', type: 'System Requirement' },
+      { id: 'r2', text_id: 'R-002', title: 'Iki', type: 'System Requirement' },
+      { id: 'r3', text_id: 'R-003', title: 'Uc', type: 'System Requirement' },
+    ]
+    renderPage()
+    fireEvent.click(screen.getByTestId('comp-link-c1'))
+    const modal = await screen.findByTestId('comp-link-modal')
+    fireEvent.click(within(modal).getByTestId('comp-link-select-all'))
+    fireEvent.click(within(modal).getByTestId('comp-link-save'))
+
+    await waitFor(() =>
+      expect(appMock.linkRequirementsToComponent).toHaveBeenCalledWith('c1', ['r1', 'r2', 'r3']),
+    )
+  })
+
+  // Regresyon: AppContext her mutasyondan sonra tum koleksiyonlari tazeler.
+  // Modal acikken gelen bu tazeleme, kullanicinin isaretledigi kutulari
+  // SILMEMELIDIR — aksi halde tek seferde yalnizca tek bir gereksinim
+  // baglanabiliyordu.
+  it('modal açıkken veri tazelense de işaretlenen gereksinimler korunur', async () => {
+    const fresh = () => [
+      { id: 'r1', text_id: 'R-001', title: 'Bir', type: 'System Requirement' },
+      { id: 'r2', text_id: 'R-002', title: 'Iki', type: 'System Requirement' },
+    ]
+    appMock.requirements = fresh()
+    const { rerender } = renderPage()
+    fireEvent.click(screen.getByTestId('comp-link-c1'))
+    const modal = await screen.findByTestId('comp-link-modal')
+    fireEvent.click(within(modal).getByTestId('comp-link-row-R-001'))
+
+    // Arka planda tazeleme: ayni veri, YENI dizi kimligi.
+    appMock.requirements = fresh()
+    rerender(
+      <LanguageProvider>
+        <Components />
+      </LanguageProvider>,
+    )
+    expect(within(modal).getByTestId('comp-link-row-R-001')).toBeChecked()
+
+    fireEvent.click(within(modal).getByTestId('comp-link-row-R-002'))
+    fireEvent.click(within(modal).getByTestId('comp-link-save'))
+    await waitFor(() =>
+      expect(appMock.linkRequirementsToComponent).toHaveBeenCalledWith('c1', ['r1', 'r2']),
     )
   })
 

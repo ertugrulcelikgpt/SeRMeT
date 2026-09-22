@@ -719,6 +719,11 @@ export const STRINGS = {
     'mindmap.exportError': 'Harita dışa aktarılamadı.',
     'mindmap.canvasLabel': 'Gereksinim haritası',
     'mindmap.expandBranch': '{id} dalını aç ({n} alt kayıt)',
+    // Issue #140: haritada kutunun ÜRÜN mü GEREKSİNİM mi olduğunu söyleyen
+    // etiketler (kutu üstü kimlik satırı + ekran okuyucu).
+    'mindmap.componentTag': 'BİLEŞEN',
+    'mindmap.kindComponent': 'Bileşen (ürün)',
+    'mindmap.kindRequirement': 'Gereksinim',
     'mindmap.collapseBranch': '{id} dalını kapat',
     'mindmap.zoomIn': 'Yakınlaştır',
     'mindmap.zoomOut': 'Uzaklaştır',
@@ -809,6 +814,14 @@ export const STRINGS = {
     'comp.linkSearch': 'Gereksinim ara…',
     'comp.linkNoRows': 'Bağlanabilecek gereksinim bulunamadı.',
     'comp.linkedElsewhere': 'başka bileşende',
+    'comp.linkSelectAll': 'Listedekilerin tümünü seç',
+    // Issue #140: bileşen bir ÜRÜNDÜR; gereksinim ona bağlanan ayrı bir kayıt.
+    'comp.kindComponent': 'Bileşen',
+    'comp.kindRequirement': 'Gereksinim',
+    'comp.requirementsOf': 'Bu bileşene bağlı gereksinimler',
+    'comp.legendComponent': 'Köşeli kutu: bileşen (ürün)',
+    'comp.legendRequirement': 'Yuvarlak kutu: gereksinim',
+    'comp.linkSelectedCount': '{n} gereksinim seçili',
     'comp.importFromPbs': 'Ürün ağacından içe aktar',
 
     // --- Etki Analizi (Impact Analysis) ---
@@ -981,6 +994,8 @@ export const STRINGS = {
     'partno.code.MAX_DEPTH': 'Derinlik aşımı',
     'partno.code.MISSING_PART_NO': 'Parça No yok',
     'nav.components': 'Bileşenler',
+    // Issue #140: bilesene bagli gereksinimler menude otomatik gorunur.
+    'nav.componentRequirements': '{name} Gereksinimleri',
     'nav.myWork': 'Bana Atananlar',
     'myWork.records': 'atanmış kayıt',
     'myWork.requirements': 'Gereksinimler',
@@ -1089,6 +1104,9 @@ export const STRINGS = {
 
     // --- Yeni sayfa başlıkları (Topbar) ---
     'page.reqUser.title': 'Kullanıcı Gereksinimleri',
+    'page.reqComponent.title': 'Bileşen Gereksinimleri',
+    'page.reqComponent.sub':
+      'Bu bileşene ve alt bileşenlerine bağlı tüm gereksinimler (seviye farkı gözetmeksizin)',
     'page.reqUser.sub': 'Kullanıcı seviyesi gereksinimleri oluştur, düzenle ve bağla',
     'page.reqSystem.title': 'Sistem Gereksinimleri',
     'page.reqSystem.sub': 'Sistem seviyesi gereksinimleri oluştur, düzenle ve bağla',
@@ -1828,6 +1846,9 @@ export const STRINGS = {
     'mindmap.exportError': 'The map could not be exported.',
     'mindmap.canvasLabel': 'Requirement map',
     'mindmap.expandBranch': 'Expand branch {id} ({n} children)',
+    'mindmap.componentTag': 'COMPONENT',
+    'mindmap.kindComponent': 'Component (product)',
+    'mindmap.kindRequirement': 'Requirement',
     'mindmap.collapseBranch': 'Collapse branch {id}',
     'mindmap.zoomIn': 'Zoom in',
     'mindmap.zoomOut': 'Zoom out',
@@ -1918,6 +1939,13 @@ export const STRINGS = {
     'comp.linkSearch': 'Search requirements…',
     'comp.linkNoRows': 'No requirements available to link.',
     'comp.linkedElsewhere': 'in another component',
+    'comp.linkSelectAll': 'Select all listed',
+    'comp.kindComponent': 'Component',
+    'comp.kindRequirement': 'Requirement',
+    'comp.requirementsOf': 'Requirements linked to this component',
+    'comp.legendComponent': 'Square box: component (product)',
+    'comp.legendRequirement': 'Rounded box: requirement',
+    'comp.linkSelectedCount': '{n} requirement(s) selected',
     'comp.importFromPbs': 'Import from product tree',
 
     // --- Impact Analysis ---
@@ -2091,6 +2119,7 @@ export const STRINGS = {
     'partno.code.MAX_DEPTH': 'Max depth exceeded',
     'partno.code.MISSING_PART_NO': 'Missing Part No',
     'nav.components': 'Components',
+    'nav.componentRequirements': '{name} Requirements',
     'nav.myWork': 'My Assignments',
     'myWork.records': 'assigned records',
     'myWork.requirements': 'Requirements',
@@ -2198,6 +2227,9 @@ export const STRINGS = {
 
     // --- New page titles (Topbar) ---
     'page.reqUser.title': 'User Requirements',
+    'page.reqComponent.title': 'Component Requirements',
+    'page.reqComponent.sub':
+      'All requirements linked to this component and its sub-components (across levels)',
     'page.reqUser.sub': 'Create, edit and link user-level requirements',
     'page.reqSystem.title': 'System Requirements',
     'page.reqSystem.sub': 'Create, edit and link system-level requirements',
