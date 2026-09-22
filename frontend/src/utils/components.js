@@ -4,6 +4,15 @@
 //  cagirir; hesap burada tek yerde durur ve kolayca test edilir.
 //
 //  BILESEN NEREDEN GELIR?
+//    ONCELIKLI KAYNAK (Issue #138): KULLANICININ ELLE TANIMLADIGI bilesenler
+//    (backend `Component` tablosu). Bilesen artik turetilmez — ekip once
+//    urunun bilesenlerini yazar (Su Pompasi Unitesi, AMTB, STC...), gereksinim
+//    ve baglanti agaci bunun USTUNE kurulur. Bilesen gereksinim olmadan da
+//    var olur; sirasi kullanicinin verdigi gibi kalir.
+//    Asagidaki IKI kaynak (PBS + Alan) KORUNUR: mevcut projeler bozulmasin
+//    diye turetilmis bilesenler kaybolmaz ve kullanici kaynaklar arasinda
+//    gecebilir (elle tanimliya tek seferlik ice aktarma da mumkundur).
+//
 //    Issue notunda "Alan (field) mi, ayri bir oznitelik mi, yoksa PBS agaci
 //    mi?" sorusu uygulama sirasinda netlesecekti. Karar: BIRINCIL KAYNAK PBS
 //    AGACIDIR (Requirement.parentId) — urun kirilimi zaten orada tutuluyor ve
@@ -26,8 +35,13 @@ import { VERIFICATION, verificationOf } from './verification.js'
 
 export const ROOT_KEY = '__root__'
 
-/** Bilesen listesinin turetildigi kaynak. */
-export const COMPONENT_SOURCE = { PBS: 'pbs', FIELD: 'field' }
+/**
+ * Bilesen listesinin kaynagi.
+ *   MANUAL — kullanicinin ELLE tanimladigi bilesenler (Issue #138, varsayilan)
+ *   PBS    — gereksinim agacindan TURETILMIS bilesenler (Issue #129, korunur)
+ *   FIELD  — Alan (disiplin) bazli gruplama (urun agaci kurulmamis projeler)
+ */
+export const COMPONENT_SOURCE = { MANUAL: 'manual', PBS: 'pbs', FIELD: 'field' }
 
 /** Alani (disiplini) bos olan kayitlarin toplandigi sanal bilesen anahtari. */
 export const FIELD_NONE_KEY = '__nofield__'
@@ -300,6 +314,204 @@ function fieldComponents(requirements, tree) {
     if (b.key === FIELD_NONE_KEY) return -1
     return a.label.localeCompare(b.label, 'tr')
   })
+}
+
+// --- ELLE tanimlanan bilesenler (Issue #138) --------------------------------
+//  Kaynak: backend `Component` tablosu (projectId, parentId, name, partNo,
+//  sortIndex). Gereksinim GEREKMEZ — bilesen tek basina var olur ve listede
+//  gorunur (bos bilesen gizlenmez). Sira, kullanicinin verdigi sortIndex'tir;
+//  ada ya da numaraya gore YENIDEN SIRALANMAZ.
+
+/**
+ * Duz bilesen listesinden kirilim agacini kurar + anahat (TID) numarasi.
+ * Ebeveyni listede olmayan kayit KOK sayilir (silinmis ust yuzunden bilesen
+ * gorunmez kalmasin).
+ * @returns {{byId:Map, childrenOf:Map, infoById:Map, roots:Array}}
+ */
+export function buildManualComponentTree(components) {
+  const list = components || []
+  const byId = new Map(list.map((c) => [c.id, c]))
+  const childrenOf = new Map()
+  for (const c of list) {
+    const parentKey =
+      c.parentId && byId.has(c.parentId) && c.parentId !== c.id ? c.parentId : ROOT_KEY
+    if (!childrenOf.has(parentKey)) childrenOf.set(parentKey, [])
+    childrenOf.get(parentKey).push(c)
+  }
+  const bySortIndex = (a, b) => {
+    const sa = Number.isFinite(a.sortIndex) ? a.sortIndex : 0
+    const sb = Number.isFinite(b.sortIndex) ? b.sortIndex : 0
+    if (sa !== sb) return sa - sb
+    return String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
+  }
+  for (const nodes of childrenOf.values()) nodes.sort(bySortIndex)
+
+  const infoById = new Map()
+  const walk = (key, depth, prefix) => {
+    const nodes = childrenOf.get(key) || []
+    nodes.forEach((node, i) => {
+      if (infoById.has(node.id)) return // dongu koruyucusu
+      const outline = prefix ? `${prefix}.${i + 1}` : String(i + 1)
+      infoById.set(node.id, { outline, depth, parentKey: key })
+      walk(node.id, depth + 1, outline)
+    })
+  }
+  walk(ROOT_KEY, 0, '')
+
+  return { byId, childrenOf, infoById, roots: childrenOf.get(ROOT_KEY) || [] }
+}
+
+/** Bir bilesen + tum alt bilesenlerinin id'leri (kendisi dahil). */
+export function componentSubtreeIds(componentTree, id) {
+  const out = []
+  const seen = new Set()
+  const walk = (key) => {
+    if (seen.has(key)) return
+    seen.add(key)
+    out.push(key)
+    for (const child of componentTree.childrenOf.get(key) || []) walk(child.id)
+  }
+  walk(id)
+  return out
+}
+
+/**
+ * ELLE tanimli bilesen listesi — sayfanin bekledigi ortak sekilde
+ * ({key,label,outline,partNo,depth,node,rows}).
+ *
+ * `rows`: bilesene (ve alt bilesenlerine) BAGLI gereksinimler. Bos olabilir —
+ * gereksinimi olmayan bilesen listede yine gorunur (kabul kriteri).
+ */
+export function buildManualComponents(components, requirements, { componentTree, tree } = {}) {
+  const ct = componentTree || buildManualComponentTree(components)
+  const reqTree = tree || buildRequirementTree(requirements)
+  const byComponent = new Map()
+  for (const r of requirements || []) {
+    if (!r?.componentId) continue
+    if (!byComponent.has(r.componentId)) byComponent.set(r.componentId, [])
+    byComponent.get(r.componentId).push(r)
+  }
+  const outlineOf = (r) => reqTree.infoById.get(r.id)?.outline || ''
+  const out = []
+  const walk = (key) => {
+    for (const node of ct.childrenOf.get(key) || []) {
+      const info = ct.infoById.get(node.id)
+      const rows = componentSubtreeIds(ct, node.id).flatMap((id) => byComponent.get(id) || [])
+      rows.sort((a, b) => {
+        const oa = outlineOf(a)
+        const ob = outlineOf(b)
+        if (oa && ob && oa !== ob) return compareOutline(oa, ob)
+        return byTextId(a, b)
+      })
+      out.push({
+        key: node.id,
+        label: node.name || '',
+        outline: info?.outline || '',
+        partNo: node.partNo || '',
+        depth: info?.depth ?? 0,
+        parentId: node.parentId || null,
+        // Elle tanimli bilesenin arkasinda bir GEREKSINIM kaydi yoktur;
+        // `node` bilesenin kendisidir (kaynak ayrimi icin `manual`).
+        manual: true,
+        component: node,
+        node: null,
+        rows,
+      })
+      walk(node.id)
+    }
+  }
+  walk(ROOT_KEY)
+  return out
+}
+
+/**
+ * ELLE tanimli bilesen kirilimini harita grafigine cevirir. Bilesen kutulari
+ * kirilimi, altlarindaki gereksinim kutulari da bagli kayitlari gosterir.
+ * Gereksinimi olmayan bilesen de haritada DURUR (gizlenmez).
+ */
+export function buildManualComponentGraph(
+  components,
+  requirements,
+  { componentTree, metaOf = null, componentMetaOf = null, rootLabel = '', rootMeta = '' } = {},
+) {
+  const ct = componentTree || buildManualComponentTree(components)
+  const nodes = new Map()
+  const children = new Map()
+  let linkCount = 0
+
+  const byComponent = new Map()
+  for (const r of requirements || []) {
+    if (!r?.componentId || !ct.byId.has(r.componentId)) continue
+    if (!byComponent.has(r.componentId)) byComponent.set(r.componentId, [])
+    byComponent.get(r.componentId).push(r)
+  }
+
+  for (const c of components || []) {
+    if (!c?.id) continue
+    nodes.set(c.id, {
+      id: c.id,
+      kind: 'component', // kaydi olmayan URUN dugumu: gereksinim detayi acilmaz
+      type: null,
+      text_id: '',
+      label: c.name || '',
+      labelIsFallback: false,
+      level: 'user',
+      typeSuffix: '',
+      outline: ct.infoById.get(c.id)?.outline || '',
+      partNo: c.partNo || '',
+      meta: componentMetaOf ? componentMetaOf(c) : '',
+      row: null,
+      component: c,
+    })
+  }
+
+  for (const r of requirements || []) {
+    if (!r?.componentId || !ct.byId.has(r.componentId)) continue
+    const label = getDisplayLabel(r, { max: 120 })
+    nodes.set(r.id, {
+      id: r.id,
+      kind: 'requirement',
+      type: r.type,
+      text_id: r.text_id || '',
+      label: label.text,
+      labelIsFallback: label.isFallback,
+      level: levelOfType(r.type),
+      typeSuffix: TYPE_SUFFIX[r.type] || '',
+      outline: '',
+      partNo: r.partNo || '',
+      meta: metaOf ? metaOf(r) : '',
+      row: r,
+    })
+  }
+
+  for (const c of components || []) {
+    if (!c?.id) continue
+    const kids = (ct.childrenOf.get(c.id) || []).map((k) => k.id)
+    const reqs = (byComponent.get(c.id) || []).map((r) => r.id)
+    const all = [...kids, ...reqs]
+    if (all.length > 0) {
+      children.set(c.id, all)
+      linkCount += all.length
+    }
+  }
+
+  const rootIds = ct.roots.map((c) => c.id)
+  if (!rootLabel || rootIds.length === 0) return { nodes, children, rootIds, linkCount }
+  nodes.set(PROJECT_ROOT_KEY, {
+    id: PROJECT_ROOT_KEY,
+    kind: 'project',
+    type: null,
+    text_id: '',
+    label: rootLabel,
+    labelIsFallback: false,
+    level: 'user',
+    typeSuffix: '',
+    outline: '',
+    meta: rootMeta,
+    row: null,
+  })
+  children.set(PROJECT_ROOT_KEY, rootIds)
+  return { nodes, children, rootIds: [PROJECT_ROOT_KEY], linkCount: linkCount + rootIds.length }
 }
 
 // --- Zihin haritasi (mind map) grafigi --------------------------------------

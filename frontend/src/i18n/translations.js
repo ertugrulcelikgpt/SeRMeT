@@ -778,6 +778,39 @@ export const STRINGS = {
     'comp.exportError': 'Dışa aktarılamadı. Tarayıcı açılır pencereyi engellemiş olabilir.',
     'comp.printTitle': 'Bileşen Bazlı Gereksinim Listesi',
 
+    // --- Elle tanımlanan bileşenler (Issue #138) ---
+    'comp.source.manual': 'Bileşenlerim',
+    'comp.manualTitle': 'Bileşenler',
+    'comp.manualEmpty':
+      'Henüz bileşen yok. Aşağıdaki “Yeni bileşen ekle” ile ürün bileşenlerinizi tanımlayın.',
+    'comp.emptyManual':
+      'Henüz bileşen tanımlanmadı. Soldaki “Yeni bileşen ekle” ile başlayın; gereksinimleri sonradan bağlayabilirsiniz.',
+    'comp.addComponent': 'Yeni bileşen ekle',
+    'comp.addChild': 'Alt bileşen ekle',
+    'comp.addTitle': 'Yeni Bileşen',
+    'comp.editTitle': 'Bileşeni Düzenle',
+    'comp.edit': 'Bileşeni düzenle',
+    'comp.delete': 'Bileşeni sil',
+    'comp.deleteTitle': 'Bileşeni Sil',
+    'comp.deleteWarning':
+      'Bu bileşenin {children} alt bileşeni ve {requirements} bağlı gereksinimi var. Alt bileşenler de silinir; gereksinimler SİLİNMEZ, yalnızca bağları kaldırılır.',
+    'comp.moveUp': 'Yukarı taşı',
+    'comp.moveDown': 'Aşağı taşı',
+    'comp.nameLabel': 'Bileşen adı',
+    'comp.nameRequired': 'Bileşen adı zorunludur.',
+    'comp.partNoLabel': 'Parça No (isteğe bağlı)',
+    'comp.partNoOptional': 'Boş bırakılabilir; numarayı sonradan da verebilirsiniz.',
+    'comp.partNoSuggested': 'Önerilen numara: {partNo} — değiştirebilir veya silebilirsiniz.',
+    'comp.parentHint': 'Üst bileşen: {name}',
+    'comp.save': 'Kaydet',
+    'comp.saveError': 'Kaydedilemedi.',
+    'comp.linkRequirements': 'Gereksinim bağla',
+    'comp.linkTitle': '“{name}” bileşenine gereksinim bağla',
+    'comp.linkSearch': 'Gereksinim ara…',
+    'comp.linkNoRows': 'Bağlanabilecek gereksinim bulunamadı.',
+    'comp.linkedElsewhere': 'başka bileşende',
+    'comp.importFromPbs': 'Ürün ağacından içe aktar',
+
     // --- Etki Analizi (Impact Analysis) ---
     'impact.title': 'Etki Analizi',
     'impact.subtitle':
@@ -1853,6 +1886,39 @@ export const STRINGS = {
     'comp.exportPdf': 'PDF',
     'comp.exportError': 'Export failed. Your browser may have blocked the pop-up window.',
     'comp.printTitle': 'Component-based requirement list',
+
+    // --- User-defined components (Issue #138) ---
+    'comp.source.manual': 'My components',
+    'comp.manualTitle': 'Components',
+    'comp.manualEmpty':
+      'No components yet. Use “Add new component” below to define your product components.',
+    'comp.emptyManual':
+      'No components defined yet. Start with “Add new component” on the left; requirements can be linked later.',
+    'comp.addComponent': 'Add new component',
+    'comp.addChild': 'Add sub-component',
+    'comp.addTitle': 'New component',
+    'comp.editTitle': 'Edit component',
+    'comp.edit': 'Edit component',
+    'comp.delete': 'Delete component',
+    'comp.deleteTitle': 'Delete component',
+    'comp.deleteWarning':
+      'This component has {children} sub-component(s) and {requirements} linked requirement(s). Sub-components are deleted too; requirements are NOT deleted, only unlinked.',
+    'comp.moveUp': 'Move up',
+    'comp.moveDown': 'Move down',
+    'comp.nameLabel': 'Component name',
+    'comp.nameRequired': 'Component name is required.',
+    'comp.partNoLabel': 'Part No (optional)',
+    'comp.partNoOptional': 'May be left blank; you can assign a number later.',
+    'comp.partNoSuggested': 'Suggested number: {partNo} — you may change or clear it.',
+    'comp.parentHint': 'Parent component: {name}',
+    'comp.save': 'Save',
+    'comp.saveError': 'Could not be saved.',
+    'comp.linkRequirements': 'Link requirements',
+    'comp.linkTitle': 'Link requirements to “{name}”',
+    'comp.linkSearch': 'Search requirements…',
+    'comp.linkNoRows': 'No requirements available to link.',
+    'comp.linkedElsewhere': 'in another component',
+    'comp.importFromPbs': 'Import from product tree',
 
     // --- Impact Analysis ---
     'impact.title': 'Impact Analysis',

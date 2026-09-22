@@ -29,8 +29,22 @@
 //  #122 izlenebilirlik bag grafigidir (Satisfies/Verifies, testler dahil),
 //  burasi tek-ebeveynli URUN AGACIDIR. Ikisi birlikte var olur.
 //
-//  Bilesen kaynagi PBS agacidir; urun agaci kurulmamis projelerde ALAN
-//  (field) kaynagina gecilebilir (bkz. utils/components.js).
+//  BILESEN ARTIK TURETILMEZ (Issue #138): kullanici bilesenleri KENDISI
+//  olusturur. Yeni bir projede ekip once urunun bilesenlerini yazar
+//  (Su Pompasi Unitesi, AMTB, STC...), gereksinim ve baglanti agaci bunun
+//  USTUNE kurulur. Bu yuzden varsayilan kaynak "Bileşenlerim"dir (MANUAL):
+//    * listenin altindaki "+ Yeni bileşen ekle" ile istenildigi kadar
+//      bilesen eklenir (bos projede bile),
+//    * bilesen adi duzenlenebilir, bilesen silinebilir (bagli gereksinim ya
+//      da alt bilesen varsa UYARI cikar; gereksinimler SILINMEZ),
+//    * bir bilesenin altina alt bilesen eklenir (elle urun kirilimi),
+//    * sira kullanicinin verdigi gibi kalir (yukari/asagi tasima),
+//    * gereksinimler SONRADAN baglanir; gereksinimi olmayan bilesen listede
+//      ve haritada GORUNUR (gizlenmez).
+//  MEVCUT PROJELER BOZULMAZ: PBS agacindan TURETILEN bilesenler ve ALAN
+//  (field) gruplamasi kaynak secimi olarak KORUNUR; tek seferlik "Ürün
+//  ağacından içe aktar" aksiyonu turetilmis kirilimi kalici bilesenlere
+//  cevirir (bkz. utils/components.js, backend src/components.js).
 //
 //  PARCA NO (Issue #135): her bilesen bir URUN'dur ve kimligini Parca No
 //  tasir — ayni ADA sahip iki dugum (AMTB/GY1 ve STC/GY1) FARKLI parcadir.
@@ -56,14 +70,20 @@ import {
   IconEdit,
   IconAlert,
   IconCheckCircle,
+  IconPlus,
+  IconTrash,
+  IconChevron,
+  IconLink,
 } from '../components/common/Icons.jsx'
-import { componentKeyOf } from '../utils/permissions.js'
+import { REQ_COMPONENT_KEYS, componentKeyOf } from '../utils/permissions.js'
 import Modal from '../components/common/Modal.jsx'
+import ReasonModal from '../components/common/ReasonModal.jsx'
 import {
   checkPartNumbers,
   ensurePartNumbers,
   setPartNo,
   setPartNoConfig,
+  suggestComponentPartNo,
 } from '../services/dataService.js'
 import { DEFAULT_PART_NO_FORMAT } from '../utils/constants.js'
 import { getDisplayLabel } from '../utils/format.js'
@@ -72,13 +92,18 @@ import { collectExpandableKeys, defaultExpandedKeys, layoutMindMap } from '../ut
 import {
   COMPONENT_SOURCE,
   FIELD_NONE_KEY,
+  ROOT_KEY,
   PROJECT_ROOT_KEY,
   VERIFICATION_METHOD_LABEL_KEY,
   buildComponentGraph,
   buildComponentPrintHtml,
   buildComponentViewRows,
   buildComponents,
+  buildManualComponentGraph,
+  buildManualComponentTree,
+  buildManualComponents,
   buildRequirementTree,
+  componentSubtreeIds,
   buildSatisfiesIndex,
   componentRowsToCsv,
   methodAttributeKeys,
@@ -117,7 +142,23 @@ function download(blob, filename) {
 }
 
 export default function Components() {
-  const { projectId, requirements, testCases, links, attributeDefs, theme, refresh } = useApp()
+  const {
+    projectId,
+    requirements,
+    testCases,
+    links,
+    attributeDefs,
+    theme,
+    refresh,
+    // Issue #138: ELLE tanimlanan bilesenler + aksiyonlari.
+    components: manualRows,
+    addComponent,
+    editComponent,
+    removeComponent,
+    reorderComponents,
+    linkRequirementsToComponent,
+    importComponentsFromPbs,
+  } = useApp()
   const { can, isPM } = useAuth()
   const { activeProject } = useProject()
   const { t } = useLang()
@@ -140,6 +181,13 @@ export default function Components() {
   const [partNoCheck, setPartNoCheck] = useState(null)
   const [partNoPanelOpen, setPartNoPanelOpen] = useState(false)
   const [partNoConfigOpen, setPartNoConfigOpen] = useState(false)
+  // --- Elle tanimli bilesenler (#138) ---------------------------------------
+  //  `form`  : acik olan olustur/duzenle formu ({ mode, parentId, component })
+  //  `toDelete` / `linkFor`: acik olan silme onayi ve gereksinim baglama modali
+  const [componentForm, setComponentForm] = useState(null)
+  const [componentToDelete, setComponentToDelete] = useState(null)
+  const [linkFor, setLinkFor] = useState(null)
+  const [componentError, setComponentError] = useState('')
   // Ilk gorulduginde kendiliginden acilan kokler; kullanicinin sonradan
   // kapattigi bir kok TEKRAR acilmasin diye "gorulenler" ayri tutulur.
   const seenRoots = useRef(new Set())
@@ -199,12 +247,37 @@ export default function Components() {
     [visibleRequirements, tree],
   )
 
+  // Issue #138: elle tanimli bilesenler. Gereksinimden BAGIMSIZ bir
+  // koleksiyondur — bos projede bile dolu olabilir, bos bilesen gizlenmez.
+  const manualComponentList = useMemo(() => manualRows || [], [manualRows])
+  const componentTree = useMemo(
+    () => buildManualComponentTree(manualComponentList),
+    [manualComponentList],
+  )
+  const manualComponents = useMemo(
+    () => buildManualComponents(manualComponentList, visibleRequirements, { componentTree, tree }),
+    [manualComponentList, visibleRequirements, componentTree, tree],
+  )
+
+  // Varsayilan kaynak: ELLE TANIMLI. Kullanici bilesen tanimlamadiysa ve proje
+  // zaten PBS/Alan uzerinden bilesen uretiyorsa (mevcut projeler) o kaynak
+  // acilir — hicbir sey kaybolmaz. Bos bir projede ise elle tanimli kaynak
+  // acilir: bos liste + "Yeni bileşen ekle".
   const source =
     sourceChoice ||
-    (pbsComponents.length === 0 && fieldComponents.length > 0
-      ? COMPONENT_SOURCE.FIELD
-      : COMPONENT_SOURCE.PBS)
-  const components = source === COMPONENT_SOURCE.FIELD ? fieldComponents : pbsComponents
+    (manualComponents.length > 0
+      ? COMPONENT_SOURCE.MANUAL
+      : pbsComponents.length > 0
+        ? COMPONENT_SOURCE.PBS
+        : fieldComponents.length > 0
+          ? COMPONENT_SOURCE.FIELD
+          : COMPONENT_SOURCE.MANUAL)
+  const isManual = source === COMPONENT_SOURCE.MANUAL
+  const components = isManual
+    ? manualComponents
+    : source === COMPONENT_SOURCE.FIELD
+      ? fieldComponents
+      : pbsComponents
 
   const verificationIndex = useMemo(
     () => buildVerificationIndex(links, testCases),
@@ -223,8 +296,21 @@ export default function Components() {
   //  secim rozetinde ve Liste gorunumunde zaten tam haliyle durur.
   const projectLabel = activeProject?.name || t('comp.projectRoot')
   const graph = useMemo(() => {
-    const metaOf = (row, { childCount }) =>
+    const metaOf = (row, { childCount } = {}) =>
       childCount > 0 ? summaryText(stats.get(row.id) || { total: 1, verified: 0 }) : ''
+    // Elle tanimli kaynakta harita, KULLANICININ kurdugu kirilimi gosterir:
+    // bilesen kutularinin altinda alt bilesenler ve bagli gereksinimler.
+    if (isManual) {
+      const summaryByKey = new Map(
+        manualComponents.map((c) => [c.key, summarizeComponent(c.rows, verificationIndex)]),
+      )
+      return buildManualComponentGraph(manualComponentList, visibleRequirements, {
+        componentTree,
+        componentMetaOf: (c) => summaryText(summaryByKey.get(c.id) || { total: 0, verified: 0 }),
+        rootLabel: projectLabel,
+        rootMeta: summaryText(summarizeComponent(visibleRequirements, verificationIndex)),
+      })
+    }
     return buildComponentGraph(visibleRequirements, {
       source,
       tree,
@@ -238,7 +324,19 @@ export default function Components() {
     })
     // summaryText/labelOf yalnizca t()'ye bagli; dil degisimi zaten render eder.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [visibleRequirements, source, tree, stats, verificationIndex, projectLabel, t])
+  }, [
+    visibleRequirements,
+    source,
+    isManual,
+    manualComponentList,
+    manualComponents,
+    componentTree,
+    tree,
+    stats,
+    verificationIndex,
+    projectLabel,
+    t,
+  ])
 
   // Yeni gorunen kokler kendiliginden acilir: yeni eklenen bir kayit sayfa
   // yenilemeden haritada dallariyla belirir.
@@ -378,6 +476,68 @@ export default function Components() {
     [projectId, refresh, reloadPartNoCheck],
   )
 
+  // --- Bilesen yonetimi (Issue #138) ----------------------------------------
+  //  Bilesen bir GEREKSINIM degildir; yazma yetkisi gereksinim bilesenlerinden
+  //  herhangi birinde yazma izni olan kullaniciya (ve PM'e) acilir.
+  const canManageComponents = Boolean(isPM) || REQ_COMPONENT_KEYS.some((key) => can('write', key))
+
+  //  Kardesler arasinda yukari/asagi tasima: kullanicinin verdigi sira
+  //  KALICIDIR (sunucu sortIndex'i yeniden yazar).
+  const moveComponent = useCallback(
+    async (component, direction) => {
+      setComponentError('')
+      const siblings = (manualComponentList || [])
+        .filter((c) => (c.parentId || null) === (component.parentId || null))
+        .sort((a, b) => (a.sortIndex ?? 0) - (b.sortIndex ?? 0))
+      const index = siblings.findIndex((c) => c.id === component.id)
+      const target = index + (direction === 'up' ? -1 : 1)
+      if (index < 0 || target < 0 || target >= siblings.length) return
+      const ids = siblings.map((c) => c.id)
+      ;[ids[index], ids[target]] = [ids[target], ids[index]]
+      try {
+        await reorderComponents?.(component.parentId || null, ids)
+      } catch (err) {
+        setComponentError(err?.message || t('comp.saveError'))
+      }
+    },
+    [manualComponentList, reorderComponents, t],
+  )
+
+  //  Tek seferlik gecis: PBS'ten turetilen kirilimi kalici bilesenlere cevirir
+  //  (idempotent — ikinci calistirma kopya uretmez).
+  const runImport = useCallback(async () => {
+    setComponentError('')
+    try {
+      await importComponentsFromPbs?.()
+      setSourceChoice(COMPONENT_SOURCE.MANUAL)
+    } catch (err) {
+      setComponentError(err?.message || t('comp.saveError'))
+    }
+  }, [importComponentsFromPbs, t])
+
+  //  Silme: sunucu alt bilesen / bagli gereksinim varsa 409 ile UYARI verir;
+  //  kullanici onaylayinca `force` ile tekrar denenir. Gereksinimler SILINMEZ.
+  const confirmDeleteComponent = useCallback(
+    async (reason) => {
+      if (!componentToDelete) return
+      await removeComponent?.(componentToDelete.id, reason, true)
+      setComponentToDelete(null)
+      if (selectedId === componentToDelete.id) setSelectedId(null)
+    },
+    [componentToDelete, removeComponent, selectedId],
+  )
+
+  // Silme uyarisi: kac alt bilesen + kac bagli gereksinim etkilenecek.
+  // Gereksinimler SILINMEZ; yalnizca bagi bosa duser (sunucu SetNull).
+  const deleteWarning = useMemo(() => {
+    if (!componentToDelete) return ''
+    const entry = manualComponents.find((c) => c.key === componentToDelete.id)
+    const childCount = componentSubtreeIds(componentTree, componentToDelete.id).length - 1
+    const reqCount = entry?.rows.length || 0
+    if (childCount === 0 && reqCount === 0) return ''
+    return t('comp.deleteWarning', { children: childCount, requirements: reqCount })
+  }, [componentToDelete, manualComponents, componentTree, t])
+
   const selectionSummary = useMemo(
     () => (selection ? summarizeComponent(selection.rows, verificationIndex) : null),
     [selection, verificationIndex],
@@ -498,6 +658,297 @@ export default function Components() {
     </button>
   )
 
+  // --- Gorunum bloklari ------------------------------------------------------
+  //  Ayni bloklar hem TURETILMIS (PBS/Alan) hem de ELLE tanimli (#138)
+  //  kaynakta kullanilir; fark yalnizca SOL panelde (turetilmis liste vs.
+  //  bilesen yoneticisi).
+  const emptyCard = (
+    <div
+      data-testid="comp-empty"
+      className="card flex-1 px-4 py-16 text-center text-sm text-slate-500 dark:text-slate-400"
+    >
+      {isManual
+        ? t('comp.emptyManual')
+        : source === COMPONENT_SOURCE.PBS
+          ? t('comp.emptyPbs')
+          : t('comp.empty')}
+    </div>
+  )
+
+  const mapBlock = (
+    <>
+      <MindMapCanvas
+        ariaLabel={t('comp.canvasLabel')}
+        mapLayout={mapLayout}
+        theme={theme}
+        onToggle={toggle}
+        onNodeClick={handleNodeClick}
+        canOpenNode={canOpenNode}
+        nodeDetail="label"
+        className="min-h-[460px] flex-1"
+      />
+      <p className="text-[11px] text-slate-400" data-testid="comp-map-hint">
+        {t('comp.mapHint')}
+      </p>
+      {mapLayout.truncated && (
+        <div
+          data-testid="comp-truncated"
+          className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
+        >
+          {t('mindmap.truncated', { n: mapLayout.nodes.length })}
+        </div>
+      )}
+    </>
+  )
+
+  // Sol panel — TURETILMIS (PBS / Alan) bilesen listesi (Issue #129).
+  const derivedAside = (
+    <aside className="card flex max-h-[70vh] flex-col overflow-hidden p-0">
+      <div className="border-b border-slate-200 p-3 dark:border-slate-800">
+        <div className="relative">
+          <IconSearch
+            size={14}
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
+          />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={t('comp.search')}
+            aria-label={t('comp.search')}
+            data-testid="comp-search"
+            className="input w-full !py-1.5 !pl-8 text-xs"
+          />
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-2">
+        {filtered.length === 0 && (
+          <p className="px-2 py-6 text-center text-xs text-slate-500 dark:text-slate-400">
+            {t('comp.noMatch')}
+          </p>
+        )}
+        <ul className="space-y-0.5">
+          {filtered.map((c) => {
+            const active = selection?.key === c.key
+            const s = summarizeComponent(c.rows, verificationIndex)
+            return (
+              <li key={c.key}>
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(c.key)}
+                  data-testid={`comp-item-${c.key}`}
+                  aria-current={active ? 'true' : undefined}
+                  style={
+                    source === COMPONENT_SOURCE.PBS
+                      ? { paddingLeft: `${0.5 + Math.min(c.depth, 5) * 0.75}rem` }
+                      : undefined
+                  }
+                  className={
+                    'w-full rounded-lg py-1.5 pr-2 text-left transition-colors ' +
+                    (active
+                      ? 'bg-brand-50 dark:bg-brand-900/30'
+                      : 'hover:bg-slate-100 dark:hover:bg-slate-800')
+                  }
+                >
+                  <span className="flex items-center gap-1.5">
+                    {c.outline && (
+                      <span className="font-mono text-[10px] text-slate-400 tabular-nums">
+                        {c.outline}
+                      </span>
+                    )}
+                    {c.partNo && (
+                      <span
+                        data-testid={`comp-partno-${c.key}`}
+                        className="font-mono text-[10px] font-bold text-brand-600 tabular-nums dark:text-brand-400"
+                      >
+                        {c.partNo}
+                      </span>
+                    )}
+                    <span
+                      className={
+                        'flex-1 truncate text-xs font-semibold ' +
+                        (active
+                          ? 'text-brand-700 dark:text-brand-300'
+                          : 'text-slate-700 dark:text-slate-200')
+                      }
+                    >
+                      {labelOf(c)}
+                    </span>
+                  </span>
+                  <span className="mt-0.5 block truncate text-[11px] text-slate-400">
+                    {summaryText(s)}
+                  </span>
+                </button>
+              </li>
+            )
+          })}
+        </ul>
+      </div>
+    </aside>
+  )
+
+  const tableSection = (
+    <section className="card overflow-hidden p-0">
+      {!selection ? (
+        <div className="px-4 py-16 text-center text-sm text-slate-500 dark:text-slate-400">
+          {t('comp.selectHint')}
+        </div>
+      ) : (
+        <>
+          <header className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-900/30 dark:text-brand-300">
+              <IconComponent size={18} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <h3
+                data-testid="comp-selected-title"
+                className="truncate text-sm font-bold text-slate-900 dark:text-white"
+              >
+                {selection.outline && (
+                  <span className="mr-1.5 font-mono text-xs text-slate-400">
+                    {selection.outline}
+                  </span>
+                )}
+                {selection.partNo && (
+                  <span
+                    data-testid="comp-selected-partno"
+                    className="mr-1.5 font-mono text-xs text-brand-600 dark:text-brand-400"
+                  >
+                    {selection.partNo}
+                  </span>
+                )}
+                {selection.label}
+              </h3>
+              <p
+                data-testid="comp-selected-summary"
+                className="text-[11px] font-semibold text-slate-400"
+              >
+                {summaryText(selectionSummary)}
+              </p>
+            </div>
+          </header>
+
+          {viewRows.length === 0 ? (
+            <div className="px-4 py-16 text-center text-sm text-slate-500 dark:text-slate-400">
+              {t('comp.noRows')}
+            </div>
+          ) : (
+            <div className="max-h-[62vh] overflow-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="sticky top-0 z-10 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                  <tr>
+                    <th className="px-3 py-2 font-bold">{t('comp.th.outline')}</th>
+                    <th className="px-3 py-2 font-bold">{t('partno.column')}</th>
+                    <th className="px-3 py-2 font-bold">{t('comp.th.textId')}</th>
+                    <th className="px-3 py-2 font-bold">{t('comp.th.title')}</th>
+                    <th className="px-3 py-2 font-bold">{t('comp.th.text')}</th>
+                    <th className="px-3 py-2 font-bold">{t('comp.th.linked')}</th>
+                    <th className="px-3 py-2 font-bold">{t('comp.th.method')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {viewRows.map((v) => (
+                    <tr
+                      key={v.id}
+                      onClick={() => setViewRow(v.row)}
+                      data-testid={`comp-row-${v.text_id}`}
+                      data-component={v.isComponent ? 'true' : undefined}
+                      title={t('comp.rowOpen')}
+                      className={
+                        'cursor-pointer align-top ' +
+                        // Alt kirilimi olan kayit kendi blogunun BASLIK
+                        // satiridir: koyu yazi + gri zemin (kilavuzdaki
+                        // TID tablosuyla ayni okuma duzeni).
+                        (v.isComponent
+                          ? 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-800'
+                          : 'hover:bg-slate-50 dark:hover:bg-slate-800/60')
+                      }
+                    >
+                      <td
+                        className={
+                          'whitespace-nowrap px-3 py-2 font-mono text-xs tabular-nums ' +
+                          (v.isComponent
+                            ? 'font-bold text-slate-700 dark:text-slate-200'
+                            : 'text-slate-400')
+                        }
+                      >
+                        {v.outline}
+                      </td>
+                      {/* Issue #135: urun kimligi. Bilesen satirinda
+                                vurgulu, yaprak satirlarda soluktur. */}
+                      <td
+                        data-testid={`comp-row-partno-${v.text_id}`}
+                        className={
+                          'whitespace-nowrap px-3 py-2 font-mono text-xs tabular-nums ' +
+                          (v.isComponent
+                            ? 'font-bold text-brand-700 dark:text-brand-300'
+                            : 'text-slate-400')
+                        }
+                      >
+                        {v.partNo || t('partno.none')}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-brand-700 dark:text-brand-300">
+                        {v.text_id}
+                      </td>
+                      {/* Girinti = agactaki derinlik: "Depo Kapasitesi"
+                                basligi "Su Deposu Alt Sistemi"nin altinda
+                                iceri kayar. */}
+                      <td
+                        className={
+                          'px-3 py-2 text-[13px] ' +
+                          (v.isComponent
+                            ? 'font-bold text-slate-900 dark:text-white'
+                            : 'font-semibold text-slate-800 dark:text-slate-100')
+                        }
+                        style={{ paddingLeft: `${0.75 + v.depth * 1.15}rem` }}
+                      >
+                        {v.title || <span className="font-normal text-slate-400">—</span>}
+                      </td>
+                      <td className="px-3 py-2 text-[13px] text-slate-600 dark:text-slate-300">
+                        {v.text || <span className="text-slate-400">—</span>}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-[11px] text-slate-500 dark:text-slate-400">
+                        {v.linkedText ? (
+                          <span title={`${t('comp.linkedUp')} / ${t('comp.linkedDown')}`}>
+                            {v.linkedText}
+                          </span>
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+                      <td className="whitespace-nowrap px-3 py-2">
+                        <span
+                          data-testid={`comp-method-${v.text_id}`}
+                          title={
+                            v.method
+                              ? `${v.method.codes.map(methodLabel).join(' · ')}${
+                                  v.method.derived ? ` · ${t('comp.method.derived')}` : ''
+                                }`
+                              : t('comp.method.missing')
+                          }
+                          className={
+                            'text-[12px] font-bold ' +
+                            (v.method
+                              ? v.method.derived
+                                ? 'text-slate-500 underline decoration-dotted underline-offset-2 dark:text-slate-400'
+                                : 'text-slate-800 dark:text-slate-100'
+                              : 'text-slate-400')
+                          }
+                        >
+                          {v.method ? v.method.label : '—'}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  )
+
   return (
     <div className="flex h-full flex-col gap-4">
       {/* Baslik + gorunum secimi + disa aktarim */}
@@ -581,7 +1032,7 @@ export default function Components() {
       {/* Arac cubugu: kaynak + (haritada) dal kontrolleri + secim ozeti */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1 rounded-xl border border-slate-200 p-1 dark:border-slate-800">
-          {[COMPONENT_SOURCE.PBS, COMPONENT_SOURCE.FIELD].map((s) => (
+          {[COMPONENT_SOURCE.MANUAL, COMPONENT_SOURCE.PBS, COMPONENT_SOURCE.FIELD].map((s) => (
             <button
               key={s}
               type="button"
@@ -600,7 +1051,13 @@ export default function Components() {
                   : 'text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800')
               }
             >
-              {t(s === COMPONENT_SOURCE.PBS ? 'comp.source.pbs' : 'comp.source.field')}
+              {t(
+                s === COMPONENT_SOURCE.MANUAL
+                  ? 'comp.source.manual'
+                  : s === COMPONENT_SOURCE.PBS
+                    ? 'comp.source.pbs'
+                    : 'comp.source.field',
+              )}
             </button>
           ))}
         </div>
@@ -676,283 +1133,51 @@ export default function Components() {
 
       {partNoPanelOpen && partNoCheck && <PartNoIssuePanel check={partNoCheck} t={t} />}
 
-      {isEmpty ? (
-        <div
-          data-testid="comp-empty"
-          className="card flex-1 px-4 py-16 text-center text-sm text-slate-500 dark:text-slate-400"
-        >
-          {source === COMPONENT_SOURCE.PBS ? t('comp.emptyPbs') : t('comp.empty')}
-        </div>
-      ) : view === VIEW.MAP ? (
-        <>
-          <MindMapCanvas
-            ariaLabel={t('comp.canvasLabel')}
-            mapLayout={mapLayout}
-            theme={theme}
-            onToggle={toggle}
-            onNodeClick={handleNodeClick}
-            canOpenNode={canOpenNode}
-            nodeDetail="label"
-            className="min-h-[460px] flex-1"
+      {isManual ? (
+        /* Elle tanimli kaynak: SOL panel bilesen yoneticisidir (ekle /
+           duzenle / sil / sirala / alt bilesen), sag taraf secili gorunum.
+           Bos projede de acilir: bos liste + "Yeni bileşen ekle". */
+        <div className="grid flex-1 gap-4 lg:grid-cols-[20rem_minmax(0,1fr)]">
+          <ManualComponentPanel
+            componentTree={componentTree}
+            components={manualComponents}
+            selectedKey={selection?.key || null}
+            onSelect={setSelectedId}
+            onAdd={(parentId) => {
+              setComponentError('')
+              setComponentForm({ mode: 'create', parentId: parentId || null, component: null })
+            }}
+            onEdit={(component) => {
+              setComponentError('')
+              setComponentForm({ mode: 'edit', parentId: component.parentId || null, component })
+            }}
+            onDelete={(component) => {
+              setComponentError('')
+              setComponentToDelete(component)
+            }}
+            onMove={moveComponent}
+            onLink={(component) => {
+              setComponentError('')
+              setLinkFor(component)
+            }}
+            canImport={pbsComponents.length > 0}
+            onImport={runImport}
+            canWrite={canManageComponents}
+            error={componentError}
+            t={t}
           />
-          <p className="text-[11px] text-slate-400" data-testid="comp-map-hint">
-            {t('comp.mapHint')}
-          </p>
-          {mapLayout.truncated && (
-            <div
-              data-testid="comp-truncated"
-              className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800 dark:bg-amber-900/30 dark:text-amber-300"
-            >
-              {t('mindmap.truncated', { n: mapLayout.nodes.length })}
-            </div>
-          )}
-        </>
+          <div className="flex min-w-0 flex-col gap-2">
+            {isEmpty ? emptyCard : view === VIEW.MAP ? mapBlock : tableSection}
+          </div>
+        </div>
+      ) : isEmpty ? (
+        emptyCard
+      ) : view === VIEW.MAP ? (
+        mapBlock
       ) : (
         <div className="grid flex-1 gap-4 lg:grid-cols-[18rem_minmax(0,1fr)]">
-          {/* Sol: bilesen listesi */}
-          <aside className="card flex max-h-[70vh] flex-col overflow-hidden p-0">
-            <div className="border-b border-slate-200 p-3 dark:border-slate-800">
-              <div className="relative">
-                <IconSearch
-                  size={14}
-                  className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
-                />
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder={t('comp.search')}
-                  aria-label={t('comp.search')}
-                  data-testid="comp-search"
-                  className="input w-full !py-1.5 !pl-8 text-xs"
-                />
-              </div>
-            </div>
-
-            <div className="flex-1 overflow-y-auto p-2">
-              {filtered.length === 0 && (
-                <p className="px-2 py-6 text-center text-xs text-slate-500 dark:text-slate-400">
-                  {t('comp.noMatch')}
-                </p>
-              )}
-              <ul className="space-y-0.5">
-                {filtered.map((c) => {
-                  const active = selection?.key === c.key
-                  const s = summarizeComponent(c.rows, verificationIndex)
-                  return (
-                    <li key={c.key}>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedId(c.key)}
-                        data-testid={`comp-item-${c.key}`}
-                        aria-current={active ? 'true' : undefined}
-                        style={
-                          source === COMPONENT_SOURCE.PBS
-                            ? { paddingLeft: `${0.5 + Math.min(c.depth, 5) * 0.75}rem` }
-                            : undefined
-                        }
-                        className={
-                          'w-full rounded-lg py-1.5 pr-2 text-left transition-colors ' +
-                          (active
-                            ? 'bg-brand-50 dark:bg-brand-900/30'
-                            : 'hover:bg-slate-100 dark:hover:bg-slate-800')
-                        }
-                      >
-                        <span className="flex items-center gap-1.5">
-                          {c.outline && (
-                            <span className="font-mono text-[10px] text-slate-400 tabular-nums">
-                              {c.outline}
-                            </span>
-                          )}
-                          {c.partNo && (
-                            <span
-                              data-testid={`comp-partno-${c.key}`}
-                              className="font-mono text-[10px] font-bold text-brand-600 tabular-nums dark:text-brand-400"
-                            >
-                              {c.partNo}
-                            </span>
-                          )}
-                          <span
-                            className={
-                              'flex-1 truncate text-xs font-semibold ' +
-                              (active
-                                ? 'text-brand-700 dark:text-brand-300'
-                                : 'text-slate-700 dark:text-slate-200')
-                            }
-                          >
-                            {labelOf(c)}
-                          </span>
-                        </span>
-                        <span className="mt-0.5 block truncate text-[11px] text-slate-400">
-                          {summaryText(s)}
-                        </span>
-                      </button>
-                    </li>
-                  )
-                })}
-              </ul>
-            </div>
-          </aside>
-
-          {/* Sag: secimin TUM gereksinimleri (TID tablosu duzeni) */}
-          <section className="card overflow-hidden p-0">
-            {!selection ? (
-              <div className="px-4 py-16 text-center text-sm text-slate-500 dark:text-slate-400">
-                {t('comp.selectHint')}
-              </div>
-            ) : (
-              <>
-                <header className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-900/30 dark:text-brand-300">
-                    <IconComponent size={18} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <h3
-                      data-testid="comp-selected-title"
-                      className="truncate text-sm font-bold text-slate-900 dark:text-white"
-                    >
-                      {selection.outline && (
-                        <span className="mr-1.5 font-mono text-xs text-slate-400">
-                          {selection.outline}
-                        </span>
-                      )}
-                      {selection.partNo && (
-                        <span
-                          data-testid="comp-selected-partno"
-                          className="mr-1.5 font-mono text-xs text-brand-600 dark:text-brand-400"
-                        >
-                          {selection.partNo}
-                        </span>
-                      )}
-                      {selection.label}
-                    </h3>
-                    <p
-                      data-testid="comp-selected-summary"
-                      className="text-[11px] font-semibold text-slate-400"
-                    >
-                      {summaryText(selectionSummary)}
-                    </p>
-                  </div>
-                </header>
-
-                {viewRows.length === 0 ? (
-                  <div className="px-4 py-16 text-center text-sm text-slate-500 dark:text-slate-400">
-                    {t('comp.noRows')}
-                  </div>
-                ) : (
-                  <div className="max-h-[62vh] overflow-auto">
-                    <table className="w-full text-left text-sm">
-                      <thead className="sticky top-0 z-10 bg-slate-50 text-[11px] uppercase tracking-wide text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-                        <tr>
-                          <th className="px-3 py-2 font-bold">{t('comp.th.outline')}</th>
-                          <th className="px-3 py-2 font-bold">{t('partno.column')}</th>
-                          <th className="px-3 py-2 font-bold">{t('comp.th.textId')}</th>
-                          <th className="px-3 py-2 font-bold">{t('comp.th.title')}</th>
-                          <th className="px-3 py-2 font-bold">{t('comp.th.text')}</th>
-                          <th className="px-3 py-2 font-bold">{t('comp.th.linked')}</th>
-                          <th className="px-3 py-2 font-bold">{t('comp.th.method')}</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                        {viewRows.map((v) => (
-                          <tr
-                            key={v.id}
-                            onClick={() => setViewRow(v.row)}
-                            data-testid={`comp-row-${v.text_id}`}
-                            data-component={v.isComponent ? 'true' : undefined}
-                            title={t('comp.rowOpen')}
-                            className={
-                              'cursor-pointer align-top ' +
-                              // Alt kirilimi olan kayit kendi blogunun BASLIK
-                              // satiridir: koyu yazi + gri zemin (kilavuzdaki
-                              // TID tablosuyla ayni okuma duzeni).
-                              (v.isComponent
-                                ? 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800/80 dark:hover:bg-slate-800'
-                                : 'hover:bg-slate-50 dark:hover:bg-slate-800/60')
-                            }
-                          >
-                            <td
-                              className={
-                                'whitespace-nowrap px-3 py-2 font-mono text-xs tabular-nums ' +
-                                (v.isComponent
-                                  ? 'font-bold text-slate-700 dark:text-slate-200'
-                                  : 'text-slate-400')
-                              }
-                            >
-                              {v.outline}
-                            </td>
-                            {/* Issue #135: urun kimligi. Bilesen satirinda
-                                vurgulu, yaprak satirlarda soluktur. */}
-                            <td
-                              data-testid={`comp-row-partno-${v.text_id}`}
-                              className={
-                                'whitespace-nowrap px-3 py-2 font-mono text-xs tabular-nums ' +
-                                (v.isComponent
-                                  ? 'font-bold text-brand-700 dark:text-brand-300'
-                                  : 'text-slate-400')
-                              }
-                            >
-                              {v.partNo || t('partno.none')}
-                            </td>
-                            <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-brand-700 dark:text-brand-300">
-                              {v.text_id}
-                            </td>
-                            {/* Girinti = agactaki derinlik: "Depo Kapasitesi"
-                                basligi "Su Deposu Alt Sistemi"nin altinda
-                                iceri kayar. */}
-                            <td
-                              className={
-                                'px-3 py-2 text-[13px] ' +
-                                (v.isComponent
-                                  ? 'font-bold text-slate-900 dark:text-white'
-                                  : 'font-semibold text-slate-800 dark:text-slate-100')
-                              }
-                              style={{ paddingLeft: `${0.75 + v.depth * 1.15}rem` }}
-                            >
-                              {v.title || <span className="font-normal text-slate-400">—</span>}
-                            </td>
-                            <td className="px-3 py-2 text-[13px] text-slate-600 dark:text-slate-300">
-                              {v.text || <span className="text-slate-400">—</span>}
-                            </td>
-                            <td className="px-3 py-2 font-mono text-[11px] text-slate-500 dark:text-slate-400">
-                              {v.linkedText ? (
-                                <span title={`${t('comp.linkedUp')} / ${t('comp.linkedDown')}`}>
-                                  {v.linkedText}
-                                </span>
-                              ) : (
-                                <span className="text-slate-400">—</span>
-                              )}
-                            </td>
-                            <td className="whitespace-nowrap px-3 py-2">
-                              <span
-                                data-testid={`comp-method-${v.text_id}`}
-                                title={
-                                  v.method
-                                    ? `${v.method.codes.map(methodLabel).join(' · ')}${
-                                        v.method.derived ? ` · ${t('comp.method.derived')}` : ''
-                                      }`
-                                    : t('comp.method.missing')
-                                }
-                                className={
-                                  'text-[12px] font-bold ' +
-                                  (v.method
-                                    ? v.method.derived
-                                      ? 'text-slate-500 underline decoration-dotted underline-offset-2 dark:text-slate-400'
-                                      : 'text-slate-800 dark:text-slate-100'
-                                    : 'text-slate-400')
-                                }
-                              >
-                                {v.method ? v.method.label : '—'}
-                              </span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </>
-            )}
-          </section>
+          {derivedAside}
+          {tableSection}
         </div>
       )}
 
@@ -964,6 +1189,58 @@ export default function Components() {
         projectId={projectId}
         current={partNoCheck}
         onSaved={reloadPartNoCheck}
+        t={t}
+      />
+
+      {/* Bilesen olustur / duzenle (Issue #138). Parca No ONERILIR; kullanici
+          silebilir ya da elle baska bir numara verebilir. */}
+      <ComponentFormModal
+        open={Boolean(componentForm)}
+        form={componentForm}
+        projectId={projectId}
+        parentName={
+          componentForm?.parentId ? componentTree.byId.get(componentForm.parentId)?.name || '' : ''
+        }
+        format={partNoCheck?.format || DEFAULT_PART_NO_FORMAT}
+        onClose={() => setComponentForm(null)}
+        onSubmit={async (payload) => {
+          if (componentForm?.mode === 'edit') {
+            await editComponent?.(componentForm.component.id, payload)
+          } else {
+            const created = await addComponent?.({
+              ...payload,
+              parentId: componentForm?.parentId || null,
+            })
+            if (created?.id) setSelectedId(created.id)
+          }
+          setComponentForm(null)
+        }}
+        t={t}
+      />
+
+      {/* Silme onayi: gerekce ZORUNLU; bagli gereksinim/alt bilesen varsa
+          uyari metni bunu acikca soyler (gereksinimler silinmez). */}
+      <ReasonModal
+        open={Boolean(componentToDelete)}
+        onClose={() => setComponentToDelete(null)}
+        onConfirm={confirmDeleteComponent}
+        title={t('comp.deleteTitle')}
+        itemLabel={componentToDelete?.name || ''}
+        warning={deleteWarning}
+      />
+
+      {/* Gereksinim baglama: bilesen gereksinim olmadan da var olur, bag
+          SONRADAN kurulur. */}
+      <LinkRequirementsModal
+        open={Boolean(linkFor)}
+        component={linkFor}
+        requirements={visibleRequirements}
+        onClose={() => setLinkFor(null)}
+        onSave={async (add, remove) => {
+          if (add.length > 0) await linkRequirementsToComponent?.(linkFor.id, add)
+          if (remove.length > 0) await linkRequirementsToComponent?.(null, remove)
+          setLinkFor(null)
+        }}
         t={t}
       />
 
@@ -1211,6 +1488,493 @@ function PartNoConfigModal({ open, onClose, projectId, current, onSaved, t }) {
           </button>
         </div>
       </form>
+    </Modal>
+  )
+}
+
+// ============================================================================
+//  ManualComponentPanel (Issue #138) — ELLE tanimlanan bilesen yoneticisi.
+//
+//  Bu panel bilesenin VAR OLMA yeridir: bos bir projede bile acilir ve
+//  listenin ALTINDAKI "+ Yeni bileşen ekle" ile istenildigi kadar bilesen
+//  eklenir. Her satirda alt bilesen ekleme, duzenleme, silme, gereksinim
+//  baglama ve yukari/asagi tasima aksiyonlari vardir; sira kullanicinin
+//  verdigi gibi kalir (ada/numaraya gore YENIDEN siralanmaz).
+//
+//  Gereksinimi olmayan bilesen GIZLENMEZ — "0 gereksinim" olarak durur.
+// ============================================================================
+function ManualComponentPanel({
+  componentTree,
+  components,
+  selectedKey,
+  onSelect,
+  onAdd,
+  onEdit,
+  onDelete,
+  onMove,
+  onLink,
+  canImport,
+  onImport,
+  canWrite,
+  error,
+  t,
+}) {
+  const siblingsOf = (parentId) =>
+    (componentTree.childrenOf.get(parentId || ROOT_KEY) || []).map((c) => c.id)
+
+  return (
+    <aside
+      data-testid="comp-manual-panel"
+      className="card flex max-h-[70vh] flex-col overflow-hidden p-0"
+    >
+      <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-3 py-2 dark:border-slate-800">
+        <h3 className="text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+          {t('comp.manualTitle')}
+        </h3>
+        <span className="text-[11px] font-semibold text-slate-400 tabular-nums">
+          {t('comp.componentCount', { n: components.length })}
+        </span>
+      </div>
+
+      {error && (
+        <div
+          data-testid="comp-manual-error"
+          className="border-b border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-semibold text-rose-700 dark:border-rose-900 dark:bg-rose-950/40 dark:text-rose-300"
+        >
+          {error}
+        </div>
+      )}
+
+      <div className="flex-1 overflow-y-auto p-2">
+        {components.length === 0 ? (
+          <p
+            data-testid="comp-manual-empty"
+            className="px-2 py-6 text-center text-xs text-slate-500 dark:text-slate-400"
+          >
+            {t('comp.manualEmpty')}
+          </p>
+        ) : (
+          <ul className="space-y-0.5">
+            {components.map((c) => {
+              const active = selectedKey === c.key
+              const siblings = siblingsOf(c.parentId)
+              const index = siblings.indexOf(c.key)
+              return (
+                <li key={c.key}>
+                  <div
+                    className={
+                      'group flex items-center gap-1 rounded-lg py-1 pr-1 ' +
+                      (active
+                        ? 'bg-brand-50 dark:bg-brand-900/30'
+                        : 'hover:bg-slate-100 dark:hover:bg-slate-800')
+                    }
+                    style={{ paddingLeft: `${0.25 + Math.min(c.depth, 5) * 0.75}rem` }}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => onSelect(c.key)}
+                      data-testid={`comp-item-${c.key}`}
+                      aria-current={active ? 'true' : undefined}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        {c.outline && (
+                          <span className="font-mono text-[10px] text-slate-400 tabular-nums">
+                            {c.outline}
+                          </span>
+                        )}
+                        {c.partNo && (
+                          <span
+                            data-testid={`comp-partno-${c.key}`}
+                            className="font-mono text-[10px] font-bold text-brand-600 tabular-nums dark:text-brand-400"
+                          >
+                            {c.partNo}
+                          </span>
+                        )}
+                        <span
+                          className={
+                            'flex-1 truncate text-xs font-semibold ' +
+                            (active
+                              ? 'text-brand-700 dark:text-brand-300'
+                              : 'text-slate-700 dark:text-slate-200')
+                          }
+                        >
+                          {c.label}
+                        </span>
+                      </span>
+                      <span className="mt-0.5 block truncate text-[11px] text-slate-400">
+                        {t('comp.reqCount', { n: c.rows.length })}
+                      </span>
+                    </button>
+
+                    {canWrite && (
+                      <span className="flex shrink-0 items-center gap-0.5 opacity-60 transition-opacity group-hover:opacity-100">
+                        <IconBtn
+                          title={t('comp.moveUp')}
+                          disabled={index <= 0}
+                          testId={`comp-up-${c.key}`}
+                          onClick={() => onMove(c.component, 'up')}
+                        >
+                          <IconChevron size={13} className="-rotate-90" />
+                        </IconBtn>
+                        <IconBtn
+                          title={t('comp.moveDown')}
+                          disabled={index < 0 || index >= siblings.length - 1}
+                          testId={`comp-down-${c.key}`}
+                          onClick={() => onMove(c.component, 'down')}
+                        >
+                          <IconChevron size={13} className="rotate-90" />
+                        </IconBtn>
+                        <IconBtn
+                          title={t('comp.addChild')}
+                          testId={`comp-add-child-${c.key}`}
+                          onClick={() => onAdd(c.key)}
+                        >
+                          <IconPlus size={13} />
+                        </IconBtn>
+                        <IconBtn
+                          title={t('comp.linkRequirements')}
+                          testId={`comp-link-${c.key}`}
+                          onClick={() => onLink(c.component)}
+                        >
+                          <IconLink size={13} />
+                        </IconBtn>
+                        <IconBtn
+                          title={t('comp.edit')}
+                          testId={`comp-edit-${c.key}`}
+                          onClick={() => onEdit(c.component)}
+                        >
+                          <IconEdit size={13} />
+                        </IconBtn>
+                        <IconBtn
+                          title={t('comp.delete')}
+                          testId={`comp-delete-${c.key}`}
+                          danger
+                          onClick={() => onDelete(c.component)}
+                        >
+                          <IconTrash size={13} />
+                        </IconBtn>
+                      </span>
+                    )}
+                  </div>
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </div>
+
+      {canWrite && (
+        <div className="space-y-2 border-t border-slate-200 p-2 dark:border-slate-800">
+          {/* Kabul kriteri: ekleme aksiyonu LISTENIN ALTINDADIR ve arka arkaya
+              birden fazla bilesen eklemeye izin verir. */}
+          <button
+            type="button"
+            onClick={() => onAdd(null)}
+            data-testid="comp-add-root"
+            className="btn-primary btn-sm w-full justify-center"
+          >
+            <IconPlus size={14} /> {t('comp.addComponent')}
+          </button>
+          {canImport && components.length === 0 && (
+            // Mevcut projeler icin tek seferlik gecis: turetilmis kirilimi
+            // kalici bilesenlere cevirir (hicbir sey kaybolmaz).
+            <button
+              type="button"
+              onClick={onImport}
+              data-testid="comp-import-pbs"
+              className="btn-secondary btn-sm w-full justify-center"
+            >
+              {t('comp.importFromPbs')}
+            </button>
+          )}
+        </div>
+      )}
+    </aside>
+  )
+}
+
+/** Satir ici kucuk aksiyon butonu (bilesen yoneticisi). */
+function IconBtn({ title, onClick, children, disabled = false, danger = false, testId }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      aria-label={title}
+      data-testid={testId}
+      disabled={disabled}
+      onClick={onClick}
+      className={
+        'rounded p-1 transition-colors disabled:opacity-30 ' +
+        (danger
+          ? 'text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40'
+          : 'text-slate-400 hover:bg-slate-200 hover:text-brand-600 dark:hover:bg-slate-700 dark:hover:text-brand-400')
+      }
+    >
+      {children}
+    </button>
+  )
+}
+
+// ============================================================================
+//  ComponentFormModal — bilesen olustur / duzenle.
+//  Ad ZORUNLU, Parca No OPSIYONELDIR. Yeni kayitta sunucudan bir numara
+//  ONERILIR (oneri, dayatma degil): kullanici alani bosaltirsa bilesen
+//  numarasiz olusur, elle baska bir numara yazarsa o kullanilir; cakisma
+//  sunucuda reddedilir ve hicbir sey yazilmaz.
+// ============================================================================
+function ComponentFormModal({ open, form, projectId, parentName, format, onClose, onSubmit, t }) {
+  const [name, setName] = useState('')
+  const [partNo, setPartNo] = useState('')
+  const [suggested, setSuggested] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const isEdit = form?.mode === 'edit'
+
+  useEffect(() => {
+    if (!open) return
+    setName(form?.component?.name || '')
+    setPartNo(form?.component?.partNo || '')
+    setSuggested('')
+    setError('')
+    setBusy(false)
+    if (isEdit || !projectId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await suggestComponentPartNo(projectId, form?.parentId || null)
+        if (!cancelled && res?.partNo) {
+          setSuggested(res.partNo)
+          setPartNo(res.partNo)
+        }
+      } catch {
+        // Oneri alinamadi: alan bos kalir — bilesen numarasiz da olusabilir.
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [open, form, projectId, isEdit])
+
+  const submit = async (e) => {
+    e.preventDefault()
+    if (!name.trim()) {
+      setError(t('comp.nameRequired'))
+      return
+    }
+    setBusy(true)
+    setError('')
+    try {
+      await onSubmit({ name: name.trim(), partNo: partNo.trim() })
+    } catch (err) {
+      setError(err?.message || t('comp.saveError'))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={isEdit ? t('comp.editTitle') : t('comp.addTitle')}
+      maxWidth="max-w-md"
+    >
+      <form onSubmit={submit} className="space-y-4" data-testid="comp-form">
+        {parentName && (
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            {t('comp.parentHint', { name: parentName })}
+          </p>
+        )}
+        <div>
+          <label className="label" htmlFor="comp-name-input">
+            {t('comp.nameLabel')}
+          </label>
+          <input
+            id="comp-name-input"
+            autoFocus
+            className="input w-full"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            data-testid="comp-name-input"
+          />
+        </div>
+        <div>
+          <label className="label" htmlFor="comp-partno-input">
+            {t('comp.partNoLabel')}
+          </label>
+          <input
+            id="comp-partno-input"
+            className="input w-full font-mono"
+            value={partNo}
+            placeholder={format}
+            onChange={(e) => setPartNo(e.target.value)}
+            data-testid="comp-partno-input"
+          />
+          <p className="mt-1 text-xs text-slate-400">
+            {suggested
+              ? t('comp.partNoSuggested', { partNo: suggested })
+              : t('comp.partNoOptional')}
+          </p>
+        </div>
+        {error && (
+          <div
+            data-testid="comp-form-error"
+            className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-900/30 dark:text-rose-300"
+          >
+            {error}
+          </div>
+        )}
+        <div className="flex justify-end gap-2 pt-1">
+          <button type="button" className="btn-secondary" onClick={onClose}>
+            {t('form.cancel')}
+          </button>
+          <button
+            type="submit"
+            className="btn-primary"
+            disabled={busy}
+            data-testid="comp-form-save"
+          >
+            {t('comp.save')}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
+
+// ============================================================================
+//  LinkRequirementsModal — gereksinimleri SONRADAN bir bilesene baglar.
+//  Bilesen gereksinim olmadan da var olur; bag her zaman sonradan kurulabilir
+//  ve kaldirilabilir. Gereksinimin METNI degismez (kilitli kayitlar da
+//  baglanabilir — urun kirilimi bir siniflandirmadir).
+// ============================================================================
+function LinkRequirementsModal({ open, component, requirements, onClose, onSave, t }) {
+  const [selected, setSelected] = useState(() => new Set())
+  const [query, setQuery] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const initial = useMemo(() => {
+    const ids = new Set()
+    for (const r of requirements || []) if (r.componentId === component?.id) ids.add(r.id)
+    return ids
+  }, [requirements, component])
+
+  useEffect(() => {
+    if (!open) return
+    setSelected(new Set(initial))
+    setQuery('')
+    setError('')
+    setBusy(false)
+  }, [open, initial])
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const list = requirements || []
+    if (!q) return list
+    return list.filter(
+      (r) =>
+        String(r.text_id || '')
+          .toLowerCase()
+          .includes(q) ||
+        String(r.title || '')
+          .toLowerCase()
+          .includes(q),
+    )
+  }, [requirements, query])
+
+  const toggle = (id) =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+  const save = async () => {
+    setBusy(true)
+    setError('')
+    try {
+      const add = [...selected].filter((id) => !initial.has(id))
+      const remove = [...initial].filter((id) => !selected.has(id))
+      await onSave(add, remove)
+    } catch (err) {
+      setError(err?.message || t('comp.saveError'))
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={t('comp.linkTitle', { name: component?.name || '' })}
+      maxWidth="max-w-2xl"
+    >
+      <div className="space-y-3" data-testid="comp-link-modal">
+        <input
+          className="input w-full"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t('comp.linkSearch')}
+          aria-label={t('comp.linkSearch')}
+          data-testid="comp-link-search"
+        />
+        <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-800">
+          {filtered.length === 0 ? (
+            <p className="px-3 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+              {t('comp.linkNoRows')}
+            </p>
+          ) : (
+            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+              {filtered.map((r) => (
+                <li key={r.id}>
+                  <label className="flex cursor-pointer items-center gap-2 px-3 py-1.5 hover:bg-slate-50 dark:hover:bg-slate-800/60">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(r.id)}
+                      onChange={() => toggle(r.id)}
+                      data-testid={`comp-link-row-${r.text_id || r.id}`}
+                    />
+                    <span className="font-mono text-[11px] text-brand-700 dark:text-brand-300">
+                      {r.text_id}
+                    </span>
+                    <span className="truncate text-xs text-slate-700 dark:text-slate-200">
+                      {r.title || '—'}
+                    </span>
+                    {r.componentId && r.componentId !== component?.id && (
+                      <span className="ml-auto shrink-0 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                        {t('comp.linkedElsewhere')}
+                      </span>
+                    )}
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+        {error && (
+          <div className="rounded-lg bg-rose-50 px-3 py-2 text-sm text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
+            {error}
+          </div>
+        )}
+        <div className="flex justify-end gap-2">
+          <button type="button" className="btn-secondary" onClick={onClose}>
+            {t('form.cancel')}
+          </button>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={save}
+            disabled={busy}
+            data-testid="comp-link-save"
+          >
+            {t('comp.save')}
+          </button>
+        </div>
+      </div>
     </Modal>
   )
 }

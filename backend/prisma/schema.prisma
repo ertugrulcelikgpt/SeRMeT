@@ -144,7 +144,8 @@ model Project {
   //                 olarak aynen korunur (orn. "NNN.NN.NNN" -> 320.00.001).
   //  partNoBlockStep : KOK seviyedeki dallara otomatik blok atanirken
   //                 kullanilan adim (orn. 10 -> 010, 020, 030...). Dal kendi
-  //                 blogunu Component.partNoBlock ile elle de belirleyebilir.
+  //                 blogunu `partNoBlock` ile elle de belirleyebilir (hem
+  //                 Requirement hem Component uzerinde ayni anlamda).
   partNoFormat    String          @default("NNN.NN.NNN")
   partNoBlockStep Int             @default(10)
   createdAt    DateTime           @default(now())
@@ -167,6 +168,7 @@ model Project {
   documents    ProjectDocument[]
   comments     Comment[]
   savedViews   SavedView[]
+  components   Component[]
 }
 
 // --- Proje SILME gerekcesi (izlenebilirlik) ---------------------------------
@@ -380,6 +382,54 @@ model Approval {
   @@index([projectId, entityType, entityId])
 }
 
+// --- BILESEN (Component) — ELLE tanimli urun kirilimi (Issue #138) ---------
+//  Issue #129'da "Bilesenler" sayfasi PBS agacindan TURETILIYORDU: bir
+//  gereksinim dugumunun alt kirilimi varsa o dugum bilesen sayiliyordu. Bu,
+//  gercek calisma sirasinin TERSIDIR — ekip once urunun bilesenlerini
+//  (Su Pompasi Unitesi, AMTB, STC...) tanimlar, gereksinimler bunun USTUNE
+//  kurulur. Bu tablo bileseni KENDI BASINA bir kayit yapar: gereksinim
+//  olmadan da var olur, elle olusturulur, duzenlenir, silinir, siralanir ve
+//  kendi altina alt bilesen alabilir.
+//
+//  TURETILMIS bilesenler kaybolmaz: mevcut projeler PBS kaynagiyla calismaya
+//  devam eder; tek seferlik ice aktarma (POST .../components/import-from-pbs)
+//  agaci bu tabloya cevirir (bkz. src/components.js).
+//
+//  SIRALAMA (sortIndex): kullanicinin verdigi sira KORUNUR — ada ya da
+//  numaraya gore yeniden siralanmaz. Kardesler arasinda benzersiz degildir
+//  (esitlikte createdAt belirler); tasima/siralama islemleri araligi yeniden
+//  numaralar.
+//
+//  PARCA NO (#135): bilesen kendi basina bir kayit oldugu icin urun kimligi
+//  de ARTIK BURADA yasar. Otomatik atama yalnizca ONERIDIR: kullanici
+//  numarayi bos birakabilir ya da elle verebilir. Proje icinde TEKILDIR.
+model Component {
+  id          String   @id @default(uuid())
+  projectId   String
+  parentId    String?
+  name        String
+  description String   @default("")
+  partNo      String?
+  // Bu dalin COCUKLARINA verecegi onek (orn. AMTB -> "320"); bos ise
+  // dugumun kendi Parca No'sunun blok bolumu kullanilir (bkz. src/partNo.js).
+  partNoBlock String?
+  sortIndex   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  project     Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // Alt bilesen: ust silinirse alt kirilim de silinir. Sunucu yine de
+  // kullanicidan onay ister (force) — sessiz toplu silme YOKTUR.
+  parent      Component?  @relation("ComponentTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children    Component[] @relation("ComponentTree")
+  // Bilesene bagli gereksinimler. Bilesen silinince gereksinim SILINMEZ,
+  // yalnizca bag bosa duser (SetNull).
+  requirements Requirement[] @relation("RequirementComponent")
+
+  @@unique([projectId, partNo])
+  @@index([projectId, parentId])
+}
+
 // --- Dinamik "Alan" (Field / Disiplin) secenekleri (proje bazli) -----------
 model ProjectField {
   id        String  @id @default(uuid())
@@ -487,11 +537,17 @@ model Requirement {
   //  kullanilmaz (audit kara listesi, bkz. src/partNo.js).
   partNo      String?
   partNoBlock String?
+  // --- Bagli BILESEN (Issue #138) ------------------------------------------
+  //  Gereksinim, elle tanimlanmis bir bilesene baglanabilir. Bag ZORUNLU
+  //  DEGILDIR: bilesen gereksinim olmadan, gereksinim de bilesen olmadan var
+  //  olabilir. Bilesen silinirse bag bosa duser (SetNull) — gereksinim kalir.
+  componentId String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @default(now()) @updatedAt
   project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   sourceDocument ProjectDocument? @relation("RequirementSource", fields: [sourceDocumentId], references: [id], onDelete: SetNull)
   parent      Requirement?  @relation("RequirementTree", fields: [parentId], references: [id], onDelete: SetNull)
+  component   Component?    @relation("RequirementComponent", fields: [componentId], references: [id], onDelete: SetNull)
   children    Requirement[] @relation("RequirementTree")
   history     RequirementHistory[]
   assignee    User?     @relation("RequirementAssignee", fields: [assigneeId], references: [id], onDelete: SetNull)
@@ -505,6 +561,7 @@ model Requirement {
   @@index([projectId, parentId])
   @@index([sourceDocumentId])
   @@index([projectId, assigneeId])
+  @@index([projectId, componentId])
 }
 
 // --- Gereksinim versiyon gecmisi (SCD Type 4) ------------------------------

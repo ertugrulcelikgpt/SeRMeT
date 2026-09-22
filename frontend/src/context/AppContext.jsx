@@ -33,6 +33,9 @@ export function AppProvider({ children }) {
   // Atanabilir kisiler (proje uyeleri) — Issue #97/A: Personnel yerine User.
   const [assignees, setAssignees] = useState(EMPTY)
   const [snapshots, setSnapshots] = useState(EMPTY)
+  // Issue #138: ELLE tanimlanan bilesenler (urun kirilimi). Gereksinimden
+  // bagimsiz bir koleksiyondur: bos projede de dolu olabilir.
+  const [components, setComponents] = useState(EMPTY)
   // Sol menu duzeni (gruplar + sayfa yerlesimi) — Issue #9 / Adim 6
   const [nav, setNav] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -70,11 +73,12 @@ export function AppProvider({ children }) {
       setApprovals(EMPTY)
       setAssignees(EMPTY)
       setSnapshots(EMPTY)
+      setComponents(EMPTY)
       setNav(null)
       return
     }
     const pid = activeProjectId
-    const [reqs, tcs, lnks, glo, flds, attrDefs, audit, apps, people, snaps, navLayout] =
+    const [reqs, tcs, lnks, glo, flds, attrDefs, audit, apps, people, snaps, navLayout, comps] =
       await Promise.all([
         data.listRequirements(pid),
         data.listTestCases(pid),
@@ -87,6 +91,7 @@ export function AppProvider({ children }) {
         data.listAssignees(pid),
         data.listSnapshots(pid),
         data.getNav(pid),
+        data.listComponents(pid),
       ])
     setRequirements(reqs)
     setTestCases(tcs)
@@ -99,6 +104,7 @@ export function AppProvider({ children }) {
     setAssignees(people)
     // Snapshots endpoint paginated: { data, total, take, skip }
     setSnapshots(snaps?.data || EMPTY)
+    setComponents(comps || EMPTY)
     setNav(navLayout)
   }, [activeProjectId])
 
@@ -157,6 +163,42 @@ export function AppProvider({ children }) {
     async bulkAssignRequirements(ids, assigneeIds, mode) {
       if (!ids || ids.length === 0) return null
       const r = await data.bulkAssignRequirements(pid, ids, assigneeIds, mode)
+      await refresh()
+      return r
+    },
+
+    // Bilesenler (Issue #138) ----------------------------------------------
+    //  Bilesen KENDI BASINA bir kayittir: gereksinim olmadan olusturulur,
+    //  duzenlenir, silinir ve sirasi kullanicinin verdigi gibi kalir.
+    async addComponent(payload) {
+      const c = await data.createComponent(pid, payload)
+      await refresh()
+      return c
+    },
+    async editComponent(id, updates) {
+      const c = await data.updateComponent(pid, id, updates)
+      await refresh()
+      return c
+    },
+    //  Alt bilesen / bagli gereksinim varsa sunucu 409 doner; cagiran
+    //  kullaniciya uyariyi gosterip `force` ile tekrar dener.
+    async removeComponent(id, reason, force = false) {
+      const r = await data.deleteComponent(pid, id, reason, force)
+      await refresh()
+      return r
+    },
+    async reorderComponents(parentId, ids) {
+      const r = await data.reorderComponents(pid, parentId, ids)
+      await refresh()
+      return r
+    },
+    async linkRequirementsToComponent(componentId, requirementIds) {
+      const r = await data.linkRequirementsToComponent(pid, componentId, requirementIds)
+      await refresh()
+      return r
+    },
+    async importComponentsFromPbs() {
+      const r = await data.importComponentsFromPbs(pid)
       await refresh()
       return r
     },
@@ -422,6 +464,8 @@ export function AppProvider({ children }) {
     assignees,
     personnel: assignees,
     snapshots,
+    // Issue #138: elle tanimlanan bilesenler (urun kirilimi).
+    components,
     nav,
     // durum
     loading,
