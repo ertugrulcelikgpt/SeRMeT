@@ -174,10 +174,16 @@ describe('Parça No — görünürlük', () => {
     expect(amtbGy1).not.toBe(stcGy1)
   })
 
-  it('haritadaki kutuda Parça No isimle birlikte çizilir', async () => {
+  it('haritada gereksinim kutusu Parça No YAZMAZ, numara ipucunda kalır (#143)', async () => {
     renderPage()
     await waitFor(() => expect(screen.getByTestId('mindmap-node-R-001')).toBeInTheDocument())
-    expect(screen.getByText('100.00.001')).toBeInTheDocument()
+    // Kutunun ust satirinda gereksinimin KENDI kodu durur (#140); urun
+    // kimligi olan Parca No gereksinim satirina yazilmaz (#143).
+    expect(screen.getByText('R-001')).toBeInTheDocument()
+    expect(screen.queryByText('100.00.001')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mindmap-node-R-001').querySelector('title')?.textContent).toContain(
+      '100.00.001',
+    )
   })
 })
 

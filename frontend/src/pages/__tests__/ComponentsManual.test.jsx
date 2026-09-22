@@ -355,6 +355,21 @@ describe('Bileşen ile gereksinim ayrımı', () => {
     expect(screen.getAllByText('010.00.001').length).toBeGreaterThan(0)
   })
 
+  it('gereksinim kutusunda Text ID yaninda Parca No YAZMAZ (Issue #143)', () => {
+    appMock.requirements = appMock.requirements.map((r) =>
+      r.id === 'r1' ? { ...r, partNo: '010.00.005' } : r,
+    )
+    renderPage()
+    const toggles = screen.getAllByTestId('mindmap-toggle-')
+    for (const dot of toggles.slice(1)) fireEvent.click(dot)
+    const box = screen.getByTestId('mindmap-node-R-001')
+    // Kutunun ust satiri YALNIZCA gereksinim kodudur; numara yalnizca
+    // kutunun ipucunda (title) kalir.
+    expect(screen.getByText('R-001')).toBeInTheDocument()
+    expect(screen.queryByText('010.00.005')).not.toBeInTheDocument()
+    expect(box.querySelector('title')?.textContent).toContain('010.00.005')
+  })
+
   it('bileşen kutusu ÜRÜN olduğunu söyler (Parça No / BİLEŞEN etiketi)', () => {
     renderPage()
     // Parca No'su olan bilesen numarasini, olmayan "BİLEŞEN" etiketini tasir.
