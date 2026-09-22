@@ -292,6 +292,89 @@ describe('Düzenleme ve silme', () => {
   })
 })
 
+// ============================================================================
+//  Issue #140: BILESEN bir URUNDUR, gereksinim degildir. Ikisi ekranda
+//  birbirine benzemez:
+//   - Haritada bilesen kutusu KOSELI, kendi (camgobegi) renginde ve ust
+//     satirinda Parca No / "BILESEN" etiketi tasir; gereksinim kutusu
+//     yuvarlak ve kendi seviye renginde kalir.
+//   - Listede bilesen TABLONUN BASLIGIDIR (rozetiyle); tablonun satirlari
+//     yalnizca gereksinimdir — alt kirilimi olan bir gereksinim artik
+//     "bilesen satiri" gibi gosterilmez.
+// ============================================================================
+describe('Bileşen ile gereksinim ayrımı', () => {
+  beforeEach(() => {
+    appMock.components = [
+      comp('c1', 'A Donanımı', { sortIndex: 0, partNo: '010.00.001' }),
+      comp('c2', 'Alt Kart', { sortIndex: 0, parentId: 'c1' }),
+    ]
+    appMock.requirements = [
+      {
+        id: 'r1',
+        text_id: 'R-001',
+        title: 'Üst gereksinim',
+        type: 'System Requirement',
+        componentId: 'c1',
+      },
+      {
+        id: 'r2',
+        text_id: 'R-002',
+        title: 'Alt gereksinim',
+        type: 'Software Requirement',
+        componentId: 'c1',
+        parentId: 'r1',
+      },
+    ]
+  })
+
+  it('haritada bileşen kutusu köşelidir ve kendi rengindedir; gereksinim kutusu değil', () => {
+    renderPage()
+    // URUN dugumleri (proje koku + bilesenler): koseli kutu, camgobegi renk.
+    const products = screen.getAllByTestId('mindmap-node-')
+    expect(products.length).toBeGreaterThan(0)
+    for (const box of products) {
+      expect(box).toHaveAttribute('rx', '3')
+      expect(box.getAttribute('stroke')).toBe('#0d9488')
+    }
+    // Bilesen dallarini acinca cikan GEREKSINIM kutulari yuvarlaktir ve
+    // kendi seviye rengini tasir (urun rengini DEGIL).
+    const toggles = screen.getAllByTestId('mindmap-toggle-')
+    for (const dot of toggles.slice(1)) fireEvent.click(dot)
+    const requirement = screen.getByTestId('mindmap-node-R-001')
+    expect(requirement).toHaveAttribute('rx', '10')
+    expect(requirement.getAttribute('stroke')).not.toBe('#0d9488')
+  })
+
+  it('bileşen kutusu ÜRÜN olduğunu söyler (Parça No / BİLEŞEN etiketi)', () => {
+    renderPage()
+    // Parca No'su olan bilesen numarasini, olmayan "BİLEŞEN" etiketini tasir.
+    expect(screen.getAllByText('010.00.001').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('BİLEŞEN').length).toBeGreaterThan(0)
+  })
+
+  it('liste görünümünde başlık bileşendir, satırlar gereksinimdir', async () => {
+    renderPage()
+    fireEvent.click(screen.getByTestId('comp-view-list'))
+    fireEvent.click(screen.getByTestId('comp-item-c1'))
+    // Baslik: bilesen rozeti + "bu bilesene bagli gereksinimler".
+    expect(screen.getByTestId('comp-selected-kind')).toHaveTextContent('Bileşen')
+    expect(screen.getByTestId('comp-selected-summary')).toHaveTextContent(
+      /bu bileşene bağlı gereksinimler/i,
+    )
+    // Satirlar: her biri tipiyle birlikte bir GEREKSINIM.
+    expect(screen.getByTestId('comp-row-type-R-001')).toHaveTextContent('SYS')
+    expect(screen.getByTestId('comp-row-type-R-002')).toHaveTextContent('SW')
+  })
+
+  it('alt kırılımı olan gereksinim artık "bileşen satırı" gibi gösterilmez', () => {
+    renderPage()
+    fireEvent.click(screen.getByTestId('comp-view-list'))
+    fireEvent.click(screen.getByTestId('comp-item-c1'))
+    // R-001'in alti var ama o bir gereksinim: bilesen isaretini TASIMAZ.
+    expect(screen.getByTestId('comp-row-R-001')).not.toHaveAttribute('data-component')
+  })
+})
+
 describe('Gereksinim bağlama (sonradan)', () => {
   beforeEach(() => {
     appMock.components = [comp('c1', 'Su Pompası Ünitesi', { sortIndex: 0 })]

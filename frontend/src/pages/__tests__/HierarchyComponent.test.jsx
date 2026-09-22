@@ -168,4 +168,11 @@ describe('Hierarchy — bilesen gorunumu (Issue #140)', () => {
     renderPage()
     expect(screen.getByText('A Donanımı Gereksinimleri')).toBeInTheDocument()
   })
+
+  // Issue #140: baslikta duran ad bir URUNDUR (bilesen); tablodaki satirlar
+  // ise gereksinimdir. Rozet bu ayrimi acikca yazar.
+  it('baslikta BILESEN rozeti durur', () => {
+    renderPage()
+    expect(screen.getByTestId('req-component-kind')).toHaveTextContent('Bileşen')
+  })
 })

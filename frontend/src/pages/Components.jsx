@@ -550,8 +550,11 @@ export default function Components() {
       satisfiesIndex,
       verificationIndex,
       methodKeys,
+      // Issue #140: elle tanimli kaynakta bir GEREKSINIM asla bilesen
+      // sayilmaz — tablo da onu bilesen basligi gibi gostermez.
+      manual: isManual,
     })
-  }, [selection, tree, satisfiesIndex, verificationIndex, methodKeys])
+  }, [selection, tree, satisfiesIndex, verificationIndex, methodKeys, isManual])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -687,9 +690,22 @@ export default function Components() {
         nodeDetail="label"
         className="min-h-[460px] flex-1"
       />
-      <p className="text-[11px] text-slate-400" data-testid="comp-map-hint">
-        {t('comp.mapHint')}
-      </p>
+      {/* Issue #140: haritadaki iki kutu tipinin ne oldugunu soyleyen kucuk
+          gosterge — bilesen bir URUNDUR, gereksinim ona bagli bir kayittir. */}
+      <div
+        className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400"
+        data-testid="comp-map-legend"
+      >
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-3 w-3 rounded-[2px] bg-teal-600" />
+          {t('comp.legendComponent')}
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="inline-block h-3 w-3 rounded-full bg-indigo-500" />
+          {t('comp.legendRequirement')}
+        </span>
+        <span data-testid="comp-map-hint">{t('comp.mapHint')}</span>
+      </div>
       {mapLayout.truncated && (
         <div
           data-testid="comp-truncated"
@@ -796,7 +812,10 @@ export default function Components() {
       ) : (
         <>
           <header className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-50 text-brand-600 dark:bg-brand-900/30 dark:text-brand-300">
+            {/* Issue #140: bu basliktaki kayit bir URUN (bilesen), asagidaki
+                tablo ise ona BAGLI GEREKSINIMLERDIR. Ikisi ayri seylerdir;
+                rozet ve renk bunu acikca soyler. */}
+            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-300">
               <IconComponent size={18} />
             </div>
             <div className="min-w-0 flex-1">
@@ -804,6 +823,12 @@ export default function Components() {
                 data-testid="comp-selected-title"
                 className="truncate text-sm font-bold text-slate-900 dark:text-white"
               >
+                <span
+                  data-testid="comp-selected-kind"
+                  className="mr-2 rounded-md bg-teal-100 px-1.5 py-0.5 align-middle text-[10px] font-bold uppercase tracking-wide text-teal-800 dark:bg-teal-900/40 dark:text-teal-200"
+                >
+                  {t('comp.kindComponent')}
+                </span>
                 {selection.outline && (
                   <span className="mr-1.5 font-mono text-xs text-slate-400">
                     {selection.outline}
@@ -823,7 +848,7 @@ export default function Components() {
                 data-testid="comp-selected-summary"
                 className="text-[11px] font-semibold text-slate-400"
               >
-                {summaryText(selectionSummary)}
+                {t('comp.requirementsOf')} · {summaryText(selectionSummary)}
               </p>
             </div>
           </header>
@@ -887,8 +912,20 @@ export default function Components() {
                       >
                         {v.partNo || t('partno.none')}
                       </td>
+                      {/* Text ID + tip eki: bu satir bir GEREKSINIMDIR
+                                (bilesen degil) ve hangi seviyede oldugu
+                                buradan okunur — Issue #140. */}
                       <td className="whitespace-nowrap px-3 py-2 font-mono text-xs text-brand-700 dark:text-brand-300">
                         {v.text_id}
+                        {v.typeSuffix && (
+                          <span
+                            title={v.type}
+                            data-testid={`comp-row-type-${v.text_id}`}
+                            className="ml-1.5 rounded bg-slate-100 px-1 py-0.5 text-[10px] font-bold text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+                          >
+                            {v.typeSuffix}
+                          </span>
+                        )}
                       </td>
                       {/* Girinti = agactaki derinlik: "Depo Kapasitesi"
                                 basligi "Su Deposu Alt Sistemi"nin altinda

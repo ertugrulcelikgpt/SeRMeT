@@ -719,6 +719,11 @@ export const STRINGS = {
     'mindmap.exportError': 'Harita dışa aktarılamadı.',
     'mindmap.canvasLabel': 'Gereksinim haritası',
     'mindmap.expandBranch': '{id} dalını aç ({n} alt kayıt)',
+    // Issue #140: haritada kutunun ÜRÜN mü GEREKSİNİM mi olduğunu söyleyen
+    // etiketler (kutu üstü kimlik satırı + ekran okuyucu).
+    'mindmap.componentTag': 'BİLEŞEN',
+    'mindmap.kindComponent': 'Bileşen (ürün)',
+    'mindmap.kindRequirement': 'Gereksinim',
     'mindmap.collapseBranch': '{id} dalını kapat',
     'mindmap.zoomIn': 'Yakınlaştır',
     'mindmap.zoomOut': 'Uzaklaştır',
@@ -810,6 +815,12 @@ export const STRINGS = {
     'comp.linkNoRows': 'Bağlanabilecek gereksinim bulunamadı.',
     'comp.linkedElsewhere': 'başka bileşende',
     'comp.linkSelectAll': 'Listedekilerin tümünü seç',
+    // Issue #140: bileşen bir ÜRÜNDÜR; gereksinim ona bağlanan ayrı bir kayıt.
+    'comp.kindComponent': 'Bileşen',
+    'comp.kindRequirement': 'Gereksinim',
+    'comp.requirementsOf': 'Bu bileşene bağlı gereksinimler',
+    'comp.legendComponent': 'Köşeli kutu: bileşen (ürün)',
+    'comp.legendRequirement': 'Yuvarlak kutu: gereksinim',
     'comp.linkSelectedCount': '{n} gereksinim seçili',
     'comp.importFromPbs': 'Ürün ağacından içe aktar',
 
@@ -1835,6 +1846,9 @@ export const STRINGS = {
     'mindmap.exportError': 'The map could not be exported.',
     'mindmap.canvasLabel': 'Requirement map',
     'mindmap.expandBranch': 'Expand branch {id} ({n} children)',
+    'mindmap.componentTag': 'COMPONENT',
+    'mindmap.kindComponent': 'Component (product)',
+    'mindmap.kindRequirement': 'Requirement',
     'mindmap.collapseBranch': 'Collapse branch {id}',
     'mindmap.zoomIn': 'Zoom in',
     'mindmap.zoomOut': 'Zoom out',
@@ -1926,6 +1940,11 @@ export const STRINGS = {
     'comp.linkNoRows': 'No requirements available to link.',
     'comp.linkedElsewhere': 'in another component',
     'comp.linkSelectAll': 'Select all listed',
+    'comp.kindComponent': 'Component',
+    'comp.kindRequirement': 'Requirement',
+    'comp.requirementsOf': 'Requirements linked to this component',
+    'comp.legendComponent': 'Square box: component (product)',
+    'comp.legendRequirement': 'Rounded box: requirement',
     'comp.linkSelectedCount': '{n} requirement(s) selected',
     'comp.importFromPbs': 'Import from product tree',
 

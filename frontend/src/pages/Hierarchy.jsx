@@ -300,6 +300,17 @@ export default function Hierarchy({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
+            {/* Issue #140: bu liste bir BILESENE (urune) aittir. Rozet, sayfa
+                basligindaki adin bir gereksinim degil bilesen oldugunu
+                soyler; satirlar ise gereksinimlerdir. */}
+            {componentMode && (
+              <span
+                data-testid="req-component-kind"
+                className="rounded-md bg-teal-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-teal-800 dark:bg-teal-900/40 dark:text-teal-200"
+              >
+                {t('comp.kindComponent')}
+              </span>
+            )}
             <h2 className="text-lg font-bold text-slate-900 dark:text-white">
               {titleOverride || effectiveCfg.navLabel}
             </h2>
