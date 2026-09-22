@@ -138,16 +138,22 @@ export function configOf(project) {
 
 /**
  * KULLANILMIS (canli + silinmis) tum Parca No'lari toplar — kara liste.
- * Kaynak: canli Requirement.partNo degerleri + AuditLog'daki Parca No
- * izleri (PARTNO action'lari; silinen kayitlarin numarasi orada kalir).
+ * Kaynak: canli Requirement.partNo + Component.partNo degerleri (Issue #138
+ * ile bilesen kendi basina bir kayittir; iki tablo AYNI numara uzayini
+ * paylasir) + AuditLog'daki Parca No izleri (PARTNO action'lari; silinen
+ * kayitlarin numarasi orada kalir).
  * AuditLog.textId "320.00.001 -> 320.00.007" gibi birlesik de olabildigi
  * icin bosluk/ok'a gore parcalanip her parca degerlendirilir (idGen.js ile
  * ayni ayristirma).
  * @returns {Promise<Set<string>>}
  */
 export async function usedPartNos(prisma, projectId) {
-  const [rows, auditRows] = await Promise.all([
+  const [rows, componentRows, auditRows] = await Promise.all([
     prisma.requirement.findMany({
+      where: { projectId, partNo: { not: null } },
+      select: { partNo: true },
+    }),
+    prisma.component.findMany({
       where: { projectId, partNo: { not: null } },
       select: { partNo: true },
     }),
@@ -165,6 +171,7 @@ export async function usedPartNos(prisma, projectId) {
     }
   };
   for (const { partNo } of rows) consider(partNo);
+  for (const { partNo } of componentRows) consider(partNo);
   for (const row of auditRows) {
     consider(row.textId);
     consider(row.oldValue);

@@ -69,6 +69,36 @@ export const splitRequirement = (pid, id, newTitles) =>
 export const mergeRequirements = (pid, ids) =>
   api.post(`/projects/${pid}/requirements/merge`, { ids })
 
+// --- Bilesenler (Issue #138) ------------------------------------------------
+//  Bilesen artik TURETILMEZ; kullanici olusturur. Gereksinim olmadan da var
+//  olabilir, kendi altina alt bilesen alabilir ve sirasi kullanicinin
+//  verdigi gibi kalir. Gereksinimler sonradan baglanir.
+export const listComponents = (pid) => api.get(`/projects/${pid}/components`)
+//  `autoPartNo`: Parca No verilmediyse sunucu bir numara ONERIP yazar; alan
+//  bos birakilirsa bilesen numarasiz kalir (otomatik atama zorunlu degil).
+export const createComponent = (pid, payload) => api.post(`/projects/${pid}/components`, payload)
+export const updateComponent = (pid, id, payload) =>
+  api.patch(`/projects/${pid}/components/${id}`, payload)
+//  Alt bilesen ya da bagli gereksinim varsa 409 + etki ozeti doner; kullanici
+//  onaylayinca `force` ile tekrar cagrilir. Gereksinimler SILINMEZ.
+export const deleteComponent = (pid, id, reason, force = false) =>
+  api.del(`/projects/${pid}/components/${id}`, { reason, force })
+export const getComponentDeleteImpact = (pid, id) =>
+  api.get(`/projects/${pid}/components/${id}/delete-impact`)
+//  Kardesler arasi siralama — kullanicinin verdigi sira KALICIDIR.
+export const reorderComponents = (pid, parentId, ids) =>
+  api.post(`/projects/${pid}/components/reorder`, { parentId, ids })
+//  Gereksinim <-> bilesen bagi; componentId = null bagi kaldirir.
+export const linkRequirementsToComponent = (pid, componentId, requirementIds) =>
+  api.post(`/projects/${pid}/components/link-requirements`, { componentId, requirementIds })
+//  Otomatik numara yalnizca ONERIDIR: form bunu on-doldurur, kullanici siler
+//  ya da degistirebilir.
+export const suggestComponentPartNo = (pid, parentId) =>
+  api.get(`/projects/${pid}/components/suggest-part-no`, parentId ? { parentId } : undefined)
+//  Tek seferlik GECIS: PBS'ten turetilen bilesenleri kalici kayda cevirir.
+export const importComponentsFromPbs = (pid) =>
+  api.post(`/projects/${pid}/components/import-from-pbs`)
+
 // --- Parca No (Issue #135) --------------------------------------------------
 //  Bilesenler PBS agacindan turetildigi icin (#129) parca kimligi de o
 //  dugumun uzerinde yasar (Requirement.partNo). Ayri bir sayfa/tablo yoktur;

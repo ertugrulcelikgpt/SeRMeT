@@ -6,6 +6,9 @@
 //    Proje alti (hepsi /api/projects/:pid/...):
 //        fields         (GET/POST/DELETE)
 //        requirements   (GET/POST/GET:id/PUT:id/DELETE:id)
+//        components     (GET/POST/PATCH:id/DELETE:id, POST /reorder,
+//                        POST /link-requirements, POST /import-from-pbs,
+//                        GET /suggest-part-no)  -> ELLE tanimli bilesen (#138)
 //        part-numbers   (POST /ensure, GET /check)  -> Parca No (#135)
 //        part-no-config (GET/PUT)  -> Parca No bicimi (PM)
 //        testcases      (GET/POST/GET:id/PUT:id/DELETE:id)
@@ -82,6 +85,17 @@ import {
 } from './baselines.js';
 import { scopeSummary } from './modules.js';
 import { ensurePartNumbers, setPartNo, setPartNoBlock, checkPartNumbers } from './partNumbers.js';
+import {
+  listComponents,
+  createComponent,
+  updateComponent,
+  deleteComponent,
+  deleteImpact,
+  reorderComponents,
+  setRequirementComponent,
+  suggestPartNo as suggestComponentPartNo,
+  importFromPbs as importComponentsFromPbs,
+} from './components.js';
 import { parsePartNoFormat, configOf as partNoConfigOf, allocatePartNo, PART_NO_AUDIT_FIELD } from './partNo.js';
 import { labelOf } from './label.js';
 import {
@@ -226,6 +240,16 @@ async function resolveSource(pid, body) {
         .trim()
         .slice(0, 5000) || null,
   };
+}
+
+// --- Bilesen bagi (Issue #138) ---------------------------------------------
+//  Gereksinimin baglandigi ELLE tanimli bilesen. Bos/null bag KALDIRIR.
+//  Baska projenin bileseni kabul edilmez (IDOR).
+async function resolveComponentId(pid, value) {
+  if (value === null || value === undefined || value === '') return null;
+  const row = await prisma.component.findFirst({ where: { id: String(value), projectId: pid }, select: { id: true } });
+  if (!row) throw bad('Bilesen bulunamadi.', 404);
+  return row.id;
 }
 
 // Etki analizinde kullanilan "ilgili dokuman" etiket listesini temizler.
@@ -1356,6 +1380,170 @@ app.delete(
 );
 
 // ===========================================================================
+//  BILESENLER (Issue #138) — ELLE tanimlanan urun kirilimi.
+//  Bilesen artik TURETILMEZ; kullanici olusturur. Gereksinim olmadan da var
+//  olabilir, kendi altina alt bilesen alabilir ve sirasi KULLANICININ
+//  verdigi gibi kalir. Gereksinimler sonradan baglanir (componentId).
+//  Mevcut projeler icin tek seferlik ice aktarma: POST /import-from-pbs.
+// ===========================================================================
+app.get(
+  '/api/projects/:pid/components',
+  wrap(async (req, res) => {
+    res.json(await listComponents(prisma, req.params.pid));
+  }),
+);
+
+// Otomatik numara yalnizca ONERIDIR (#138): form bunu on-doldurur, kullanici
+// silebilir ya da degistirebilir.
+app.get(
+  '/api/projects/:pid/components/suggest-part-no',
+  wrap(async (req, res) => {
+    res.json(await suggestComponentPartNo(prisma, req.params.pid, req.query.parentId || null));
+  }),
+);
+
+app.post(
+  '/api/projects/:pid/components',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const row = await createComponent(prisma, pid, req.body || {});
+    await audit(pid, {
+      action: 'CREATE',
+      entityType: 'component',
+      entityId: row.id,
+      textId: row.partNo || null,
+      message: `Bilesen olusturuldu: "${row.name}"${row.partNo ? ` (${row.partNo})` : ''}.`,
+      actor: actorOf(req),
+    });
+    // Parca No izi kara listeye de girer (silinen numara yeniden uretilmesin).
+    if (row.partNo) {
+      await audit(pid, {
+        action: 'UPDATE',
+        entityType: 'component',
+        entityId: row.id,
+        field: PART_NO_AUDIT_FIELD,
+        textId: row.partNo,
+        newValue: row.partNo,
+        message: `Parca No atandi: ${row.partNo} ("${row.name}").`,
+        actor: actorOf(req),
+      });
+    }
+    res.status(201).json(row);
+  }),
+);
+
+app.patch(
+  '/api/projects/:pid/components/:id',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const before = await prisma.component.findUnique({ where: { id: req.params.id } });
+    if (!before || before.projectId !== pid) throw bad('Bilesen bulunamadi.', 404);
+    const row = await updateComponent(prisma, pid, req.params.id, req.body || {});
+    await audit(pid, {
+      action: 'UPDATE',
+      entityType: 'component',
+      entityId: row.id,
+      textId: row.partNo || null,
+      message: `Bilesen guncellendi: "${row.name}".`,
+      actor: actorOf(req),
+    });
+    if (row.partNo !== before.partNo) {
+      await audit(pid, {
+        action: 'UPDATE',
+        entityType: 'component',
+        entityId: row.id,
+        field: PART_NO_AUDIT_FIELD,
+        textId: [before.partNo, row.partNo].filter(Boolean).join(' -> '),
+        oldValue: before.partNo || null,
+        newValue: row.partNo || null,
+        message: `Parca No degisti: ${before.partNo || '—'} -> ${row.partNo || '—'} ("${row.name}").`,
+        actor: actorOf(req),
+      });
+    }
+    res.json(row);
+  }),
+);
+
+// Silme ETKISI (onay ekrani icin): kac alt bilesen, kac bagli gereksinim.
+app.get(
+  '/api/projects/:pid/components/:id/delete-impact',
+  wrap(async (req, res) => {
+    res.json(await deleteImpact(prisma, req.params.pid, req.params.id));
+  }),
+);
+
+// Silme. Alt kirilim ya da bagli gereksinim varsa `force` ZORUNLU (409 +
+// etki ozeti). Bagli gereksinimler SILINMEZ; baglari bosa duser.
+app.delete(
+  '/api/projects/:pid/components/:id',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const reason = requireReason(req);
+    const impact = await deleteComponent(prisma, pid, req.params.id, { force: Boolean(req.body?.force) });
+    await audit(pid, {
+      action: 'DELETE',
+      entityType: 'component',
+      entityId: impact.component.id,
+      message:
+        `Bilesen silindi: "${impact.component.name}"` +
+        (impact.childCount > 0 ? ` (+${impact.childCount} alt bilesen)` : '') +
+        (impact.requirementCount > 0 ? `; ${impact.requirementCount} gereksinimin bagi kaldirildi` : '') +
+        '.',
+      reason,
+      actor: actorOf(req),
+    });
+    res.json({ ok: true, ...impact });
+  }),
+);
+
+// Kardesler arasi siralama — kullanicinin verdigi sira KALICIDIR.
+app.post(
+  '/api/projects/:pid/components/reorder',
+  wrap(async (req, res) => {
+    const b = req.body || {};
+    res.json(await reorderComponents(prisma, req.params.pid, b.parentId || null, b.ids));
+  }),
+);
+
+// Gereksinim <-> bilesen bagi. componentId=null bagi kaldirir.
+app.post(
+  '/api/projects/:pid/components/link-requirements',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const b = req.body || {};
+    const result = await setRequirementComponent(prisma, pid, b.requirementIds, b.componentId || null);
+    await audit(pid, {
+      action: 'UPDATE',
+      entityType: 'component',
+      entityId: b.componentId || null,
+      field: 'componentId',
+      message: b.componentId
+        ? `${result.count} gereksinim bilesene baglandi.`
+        : `${result.count} gereksinimin bilesen bagi kaldirildi.`,
+      actor: actorOf(req),
+    });
+    res.json(result);
+  }),
+);
+
+// Tek seferlik GECIS: bugunku PBS'ten turetilen bilesenleri kalici kayda
+// cevirir (idempotent — ikinci calistirma kopya uretmez).
+app.post(
+  '/api/projects/:pid/components/import-from-pbs',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const result = await importComponentsFromPbs(prisma, pid);
+    await audit(pid, {
+      action: 'CREATE',
+      entityType: 'component',
+      message: `Urun agacindan ${result.created} bilesen ice aktarildi (${result.linked} gereksinim baglandi).`,
+      actor: actorOf(req),
+    });
+    res.json(result);
+  }),
+);
+
+// ===========================================================================
 //  PARCA NO (Issue #135) — "Bilesenler" sayfasinin (#129) urun kimligi.
 //  Bilesenler PBS agacindan turetildigi icin numara da o dugumun uzerinde
 //  (Requirement.partNo) yasar; ayri bir tablo/ekran yoktur.
@@ -1805,11 +1993,15 @@ app.post(
     } catch {
       partNo = null;
     }
+    // Issue #138: gereksinim, ELLE tanimlanmis bir bilesene baglanabilir.
+    // Bag zorunlu degildir; verilmisse ayni projeye ait olmalidir (IDOR).
+    const componentId = await resolveComponentId(pid, b.componentId);
     const created = await prisma.requirement.create({
       data: {
         projectId: pid,
         text_id,
         partNo,
+        componentId,
         title: (b.title || '').trim(),
         description: cleanRichText((b.description || '').trim()),
         type: b.type,
@@ -1911,6 +2103,9 @@ app.put(
     }
     if (data.description != null) data.description = cleanRichText(data.description);
     if (b.relatedDocuments != null) data.relatedDocuments = normalizeDocuments(b.relatedDocuments);
+    // Issue #138: bilesen bagi. null gonderilirse bag kaldirilir; alan hic
+    // gonderilmediyse dokunulmaz.
+    if (b.componentId !== undefined) data.componentId = await resolveComponentId(pid, b.componentId);
     const attrInput = extractAttributeInput(b);
     if (Object.keys(attrInput).length > 0) {
       const defs = await listDefs(prisma, pid, 'requirement');

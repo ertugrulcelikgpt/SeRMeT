@@ -46,6 +46,7 @@ FastAPI Bridge (ai-bridge:8008) ──► LM Studio + Gemma (:1234)
 │   │   ├── impact.js          # Recursive CTE impact analysis (Issue #46)
 │   │   ├── baselines.js       # Baseline etiketleme + restore (tek transaction) + diff (#128)
 │   │   ├── modules.js         # Baseline KAPSAMI: modul (sol menu sayfasi) tanimlari (#128)
+│   │   ├── components.js      # ELLE tanimlanan bilesenler: CRUD, siralama, gereksinim bagi, PBS'ten ice aktarma (#138)
 │   │   ├── partNumbers.js     # Parca No atama (PBS dugumleri) + tutarlilik kontrolu (#135)
 │   │   ├── partNo.js          # Parca No bicimi + blok bazli numara uretimi (#135)
 │   │   ├── traceability.js    # Traceability export/import (Excel + ReqIF/.reqifz/.xml)
@@ -181,9 +182,10 @@ node scripts/seed-coffee-project.mjs  # Load optional Espresso demo (backend mus
 | `backend/src/constants.js` | Single source of truth for taxonomy, hierarchy rules, link rules |
 | `backend/src/baselines.js` | Baseline tagging/freezing, module-scoped capture, restore (safety snapshot + single transaction), snapshot/live diff |
 | `backend/src/modules.js` | Baseline scope: module (nav page) definitions; mirrors `frontend/src/utils/constants.js` `BASELINE_MODULES` |
+| `backend/src/components.js` | User-defined components (`Component` table): CRUD, ordering (`sortIndex`), requirement links, one-off PBS import (#138) |
 | `backend/src/partNo.js` | Part No format parsing + branch-block allocation; lifetime-unique (audit blacklist) |
 | `backend/src/partNumbers.js` | Assigns `Requirement.partNo` per branch block, conflict guard (409), consistency report |
-| `backend/prisma/schema.prisma` | Full DB schema (User, SystemRole, Project, Requirement, TestCase, TraceabilityLink, GlossaryTerm, Approval, ProjectSnapshot, AuditLog, ProjectField, SavedView) — `Role`/`Personnel` removed in #97 |
+| `backend/prisma/schema.prisma` | Full DB schema (User, SystemRole, Project, Requirement, TestCase, TraceabilityLink, GlossaryTerm, Approval, ProjectSnapshot, AuditLog, ProjectField, SavedView, Component) — `Role`/`Personnel` removed in #97 |
 | `backend/src/seed.js` | Default Drone/IHA demo project (auto-runs on empty DB via Docker `migrate` service) |
 | `frontend/src/main.jsx` | Provider nesting order, font imports, `?reset` URL param clears localStorage |
 | `frontend/src/App.jsx` | Three-gate routing: Login → ProjectSelect (PM only) → Workspace |
@@ -240,6 +242,7 @@ node scripts/seed-coffee-project.mjs  # Load optional Espresso demo (backend mus
 | Add new entity type | Prisma schema → backend routes → `dataService.js` → `AppContext.jsx` actions → UI |
 | Change Part No format / branch blocks | `backend/src/partNo.js` + `Project.partNoFormat` / `partNoBlockStep` |
 | Add a component tree consistency rule | `backend/src/partNumbers.js` `checkPartNumbers` + `partno.code.*` i18n |
+| Change how components are created/ordered/linked | `backend/src/components.js` + `frontend/src/utils/components.js` (`buildManualComponents`) + `frontend/src/pages/Components.jsx` |
 | Change what a snapshot/baseline captures | `backend/src/baselines.js` `collectProjectState` + the `*_COLUMNS` restore lists |
 | Change baseline restore or diff rules | `backend/src/baselines.js` (`restoreSnapshot`, `diffSnapshots`); UI in `frontend/src/pages/Snapshots.jsx` + `utils/baselineDiff.js` |
 | Change which modules a baseline can cover | `backend/src/modules.js` `MODULE_DEFS` + `frontend/src/utils/constants.js` `BASELINE_MODULES` + `module.*` i18n (keep in sync) |
@@ -252,6 +255,7 @@ node scripts/seed-coffee-project.mjs  # Load optional Espresso demo (backend mus
 **Key invariants to preserve:**
 1. Project isolation — every query filters by `projectId`
 2. Backend owns cascade/approval recomputation — frontend only refreshes
-3. `text_id` never reused (audit log blacklist) — same rule for `Requirement.partNo` (`partNo.js` `usedPartNos`)
+3. `text_id` never reused (audit log blacklist) — same rule for `Requirement.partNo` / `Component.partNo` (`partNo.js` `usedPartNos`)
+   - Components are **user-created, never derived** (#138): a component exists without requirements; PBS/field-derived lists stay only as alternative *sources*
 4. JWT_SECRET mandatory at startup
 5. Non-PM users can only access their assigned project (`User.projectId`)

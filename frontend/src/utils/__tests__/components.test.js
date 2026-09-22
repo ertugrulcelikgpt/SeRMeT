@@ -9,6 +9,11 @@ import { describe, it, expect } from 'vitest'
 import {
   COMPONENT_SOURCE,
   FIELD_NONE_KEY,
+  PROJECT_ROOT_KEY,
+  buildManualComponentGraph,
+  buildManualComponentTree,
+  buildManualComponents,
+  componentSubtreeIds,
   buildComponentPrintHtml,
   buildComponentViewRows,
   buildComponents,
@@ -380,5 +385,87 @@ describe('dışa aktarım', () => {
   it('slugify Turkce karakterleri dosya adina uygun hale getirir', () => {
     expect(slugify('Basınç Pompası Ünitesi')).toBe('basinc-pompasi-unitesi')
     expect(slugify('')).toBe('bilesen')
+  })
+})
+
+// ============================================================================
+//  Issue #138 — ELLE tanimlanan bilesenler (turetme YOK).
+//  Bilesen kendi basina bir kayittir: gereksinim olmadan var olur, sirasi
+//  kullanicinin verdigi gibi kalir ve kendi altina alt bilesen alir.
+// ============================================================================
+describe('elle tanimlanan bilesenler (#138)', () => {
+  const COMPONENTS = [
+    { id: 'c1', name: 'Zeta', parentId: null, sortIndex: 0, partNo: '320.00.001' },
+    { id: 'c2', name: 'Alfa', parentId: null, sortIndex: 1 },
+    { id: 'c3', name: 'Donanım', parentId: 'c2', sortIndex: 0 },
+    { id: 'c4', name: 'Kentel', parentId: 'c3', sortIndex: 0 },
+  ]
+  const REQS = [
+    { id: 'r1', text_id: 'R-001', title: 'Kentel gereksinimi', componentId: 'c4' },
+    { id: 'r2', text_id: 'R-002', title: 'Alfa gereksinimi', componentId: 'c2' },
+    { id: 'r3', text_id: 'R-003', title: 'Bagsiz gereksinim' },
+  ]
+
+  it('sira KULLANICININ verdigi sortIndex; ada gore siralanmaz', () => {
+    const list = buildManualComponents(COMPONENTS, REQS)
+    expect(list.map((c) => c.label)).toEqual(['Zeta', 'Alfa', 'Donanım', 'Kentel'])
+  })
+
+  it('anahat (TID) numarasi elle kurulan kirilimi yansitir', () => {
+    const list = buildManualComponents(COMPONENTS, REQS)
+    const byLabel = Object.fromEntries(list.map((c) => [c.label, c]))
+    expect(byLabel['Zeta'].outline).toBe('1')
+    expect(byLabel['Alfa'].outline).toBe('2')
+    expect(byLabel['Donanım'].outline).toBe('2.1')
+    expect(byLabel['Kentel'].outline).toBe('2.1.1')
+    expect(byLabel['Kentel'].depth).toBe(2)
+  })
+
+  it('gereksinimi olmayan bilesen listede DURUR (bos liste ile)', () => {
+    const list = buildManualComponents(COMPONENTS, REQS)
+    const zeta = list.find((c) => c.label === 'Zeta')
+    expect(zeta).toBeTruthy()
+    expect(zeta.rows).toEqual([])
+    expect(zeta.partNo).toBe('320.00.001')
+  })
+
+  it('bir bilesenin satirlari kendi + ALT bilesenlerinin gereksinimleridir', () => {
+    const list = buildManualComponents(COMPONENTS, REQS)
+    const alfa = list.find((c) => c.label === 'Alfa')
+    expect(alfa.rows.map((r) => r.text_id).sort()).toEqual(['R-001', 'R-002'])
+    // Hicbir bilesene bagli olmayan gereksinim HICBIR listeye girmez.
+    expect(list.flatMap((c) => c.rows.map((r) => r.text_id))).not.toContain('R-003')
+  })
+
+  it('gereksinimsiz bir projede de bilesen listesi uretilir', () => {
+    const list = buildManualComponents([{ id: 'x', name: 'Tek Bilesen', parentId: null }], [])
+    expect(list).toHaveLength(1)
+    expect(list[0].rows).toEqual([])
+  })
+
+  it('ebeveyni listede olmayan bilesen KOK sayilir (gorunmez kalmaz)', () => {
+    const tree = buildManualComponentTree([{ id: 'c9', name: 'Oksuz', parentId: 'yok' }])
+    expect(tree.roots.map((c) => c.id)).toEqual(['c9'])
+  })
+
+  it('componentSubtreeIds kendisi dahil tum alt kirilimi verir', () => {
+    const tree = buildManualComponentTree(COMPONENTS)
+    expect(componentSubtreeIds(tree, 'c2')).toEqual(['c2', 'c3', 'c4'])
+    expect(componentSubtreeIds(tree, 'c1')).toEqual(['c1'])
+  })
+
+  it('harita grafigi bilesen kirilimini + bagli gereksinimleri tasir', () => {
+    const graph = buildManualComponentGraph(COMPONENTS, REQS, {})
+    expect(graph.rootIds).toEqual(['c1', 'c2'])
+    expect(graph.nodes.get('c1').kind).toBe('component')
+    expect(graph.children.get('c2')).toEqual(['c3', 'r2'])
+    // Bagsiz gereksinim haritaya GIRMEZ (bir bilesenin altinda degil).
+    expect(graph.nodes.has('r3')).toBe(false)
+  })
+
+  it('rootLabel verilirse tum kokler sanal proje dugumunun altinda toplanir', () => {
+    const graph = buildManualComponentGraph(COMPONENTS, REQS, { rootLabel: 'Proje' })
+    expect(graph.rootIds).toEqual([PROJECT_ROOT_KEY])
+    expect(graph.children.get(PROJECT_ROOT_KEY)).toEqual(['c1', 'c2'])
   })
 })
