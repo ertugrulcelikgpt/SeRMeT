@@ -321,6 +321,73 @@ describe('Gereksinim bağlama (sonradan)', () => {
     )
   })
 
+  it('bir bileşene TEK SEFERDE birden fazla gereksinim bağlanır', async () => {
+    appMock.requirements = [
+      { id: 'r1', text_id: 'R-001', title: 'Bir', type: 'System Requirement' },
+      { id: 'r2', text_id: 'R-002', title: 'Iki', type: 'System Requirement' },
+      { id: 'r3', text_id: 'R-003', title: 'Uc', type: 'System Requirement' },
+    ]
+    renderPage()
+    fireEvent.click(screen.getByTestId('comp-link-c1'))
+    const modal = await screen.findByTestId('comp-link-modal')
+    fireEvent.click(within(modal).getByTestId('comp-link-row-R-001'))
+    fireEvent.click(within(modal).getByTestId('comp-link-row-R-003'))
+    expect(within(modal).getByTestId('comp-link-selected-count')).toHaveTextContent('2')
+    fireEvent.click(within(modal).getByTestId('comp-link-save'))
+
+    await waitFor(() =>
+      expect(appMock.linkRequirementsToComponent).toHaveBeenCalledWith('c1', ['r1', 'r3']),
+    )
+  })
+
+  it('"tümünü seç" ile listedeki tüm gereksinimler tek istekte bağlanır', async () => {
+    appMock.requirements = [
+      { id: 'r1', text_id: 'R-001', title: 'Bir', type: 'System Requirement' },
+      { id: 'r2', text_id: 'R-002', title: 'Iki', type: 'System Requirement' },
+      { id: 'r3', text_id: 'R-003', title: 'Uc', type: 'System Requirement' },
+    ]
+    renderPage()
+    fireEvent.click(screen.getByTestId('comp-link-c1'))
+    const modal = await screen.findByTestId('comp-link-modal')
+    fireEvent.click(within(modal).getByTestId('comp-link-select-all'))
+    fireEvent.click(within(modal).getByTestId('comp-link-save'))
+
+    await waitFor(() =>
+      expect(appMock.linkRequirementsToComponent).toHaveBeenCalledWith('c1', ['r1', 'r2', 'r3']),
+    )
+  })
+
+  // Regresyon: AppContext her mutasyondan sonra tum koleksiyonlari tazeler.
+  // Modal acikken gelen bu tazeleme, kullanicinin isaretledigi kutulari
+  // SILMEMELIDIR — aksi halde tek seferde yalnizca tek bir gereksinim
+  // baglanabiliyordu.
+  it('modal açıkken veri tazelense de işaretlenen gereksinimler korunur', async () => {
+    const fresh = () => [
+      { id: 'r1', text_id: 'R-001', title: 'Bir', type: 'System Requirement' },
+      { id: 'r2', text_id: 'R-002', title: 'Iki', type: 'System Requirement' },
+    ]
+    appMock.requirements = fresh()
+    const { rerender } = renderPage()
+    fireEvent.click(screen.getByTestId('comp-link-c1'))
+    const modal = await screen.findByTestId('comp-link-modal')
+    fireEvent.click(within(modal).getByTestId('comp-link-row-R-001'))
+
+    // Arka planda tazeleme: ayni veri, YENI dizi kimligi.
+    appMock.requirements = fresh()
+    rerender(
+      <LanguageProvider>
+        <Components />
+      </LanguageProvider>,
+    )
+    expect(within(modal).getByTestId('comp-link-row-R-001')).toBeChecked()
+
+    fireEvent.click(within(modal).getByTestId('comp-link-row-R-002'))
+    fireEvent.click(within(modal).getByTestId('comp-link-save'))
+    await waitFor(() =>
+      expect(appMock.linkRequirementsToComponent).toHaveBeenCalledWith('c1', ['r1', 'r2']),
+    )
+  })
+
   it('bağ kaldırılabilir', async () => {
     renderPage()
     fireEvent.click(screen.getByTestId('comp-link-c1'))

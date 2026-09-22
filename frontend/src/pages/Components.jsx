@@ -1849,26 +1849,45 @@ function ComponentFormModal({ open, form, projectId, parentName, format, onClose
 //  Bilesen gereksinim olmadan da var olur; bag her zaman sonradan kurulabilir
 //  ve kaldirilabilir. Gereksinimin METNI degismez (kilitli kayitlar da
 //  baglanabilir — urun kirilimi bir siniflandirmadir).
+//
+//  COKLU SECIM: bir bilesene TEK SEFERDE istedigin kadar gereksinim baglanir
+//  (kutucuklar + "tumunu sec"). Secim, modal ACILDIGINDA mevcut baglardan
+//  kurulur ve SONRASINDA KENDILIGINDEN SIFIRLANMAZ: AppContext her mutasyondan
+//  sonra tum koleksiyonlari tazeledigi icin `requirements` dizisinin kimligi
+//  modal acikken degisebilir; eskiden bu, kullanicinin isaretledigi kutulari
+//  silip yalnizca son isaretin kalmasina yol aciyordu (bkz. testler).
 // ============================================================================
 function LinkRequirementsModal({ open, component, requirements, onClose, onSave, t }) {
   const [selected, setSelected] = useState(() => new Set())
   const [query, setQuery] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const componentId = component?.id || null
 
-  const initial = useMemo(() => {
+  // Bilesenin O ANDA bagli gereksinimleri (sunucu gercegi).
+  const linkedIds = useMemo(() => {
     const ids = new Set()
-    for (const r of requirements || []) if (r.componentId === component?.id) ids.add(r.id)
+    for (const r of requirements || [])
+      if (componentId && r.componentId === componentId) ids.add(r.id)
     return ids
-  }, [requirements, component])
+  }, [requirements, componentId])
 
+  // Kaydederken FARKI en guncel bag durumuna gore hesaplayabilmek icin ref'te
+  // tutulur; boylece arka plandaki tazelemeler secimi yeniden kurmaz.
+  const linkedRef = useRef(linkedIds)
+  useEffect(() => {
+    linkedRef.current = linkedIds
+  }, [linkedIds])
+
+  // Secim YALNIZCA modal acildiginda (ya da baska bir bilesene gecildiginde)
+  // sifirlanir — veri tazelendiginde DEGIL.
   useEffect(() => {
     if (!open) return
-    setSelected(new Set(initial))
+    setSelected(new Set(linkedRef.current))
     setQuery('')
     setError('')
     setBusy(false)
-  }, [open, initial])
+  }, [open, componentId])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -1893,12 +1912,28 @@ function LinkRequirementsModal({ open, component, requirements, onClose, onSave,
       return next
     })
 
+  // "Tumunu sec": aramayla SUZULMUS listeye uygulanir — 12 gereksinimi tek tek
+  // isaretlemek yerine arayip topluca baglamak icin. Ikinci tiklama ayni
+  // kumenin secimini kaldirir; listede olmayan secimlere dokunmaz.
+  const allFilteredSelected = filtered.length > 0 && filtered.every((r) => selected.has(r.id))
+  const toggleAllFiltered = () =>
+    setSelected((prev) => {
+      const next = new Set(prev)
+      for (const r of filtered) {
+        if (allFilteredSelected) next.delete(r.id)
+        else next.add(r.id)
+      }
+      return next
+    })
+
   const save = async () => {
     setBusy(true)
     setError('')
     try {
-      const add = [...selected].filter((id) => !initial.has(id))
-      const remove = [...initial].filter((id) => !selected.has(id))
+      // Fark, kaydetme anindaki GERCEK bag durumuna gore hesaplanir.
+      const linked = linkedRef.current
+      const add = [...selected].filter((id) => !linked.has(id))
+      const remove = [...linked].filter((id) => !selected.has(id))
       await onSave(add, remove)
     } catch (err) {
       setError(err?.message || t('comp.saveError'))
@@ -1922,6 +1957,24 @@ function LinkRequirementsModal({ open, component, requirements, onClose, onSave,
           aria-label={t('comp.linkSearch')}
           data-testid="comp-link-search"
         />
+        <div className="flex items-center justify-between gap-2 px-1">
+          <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300">
+            <input
+              type="checkbox"
+              checked={allFilteredSelected}
+              onChange={toggleAllFiltered}
+              disabled={filtered.length === 0}
+              data-testid="comp-link-select-all"
+            />
+            {t('comp.linkSelectAll')}
+          </label>
+          <span
+            className="text-[11px] font-semibold text-slate-500 dark:text-slate-400"
+            data-testid="comp-link-selected-count"
+          >
+            {t('comp.linkSelectedCount', { n: selected.size })}
+          </span>
+        </div>
         <div className="max-h-[50vh] overflow-y-auto rounded-lg border border-slate-200 dark:border-slate-800">
           {filtered.length === 0 ? (
             <p className="px-3 py-8 text-center text-sm text-slate-500 dark:text-slate-400">

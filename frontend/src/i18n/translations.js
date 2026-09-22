@@ -809,6 +809,8 @@ export const STRINGS = {
     'comp.linkSearch': 'Gereksinim ara…',
     'comp.linkNoRows': 'Bağlanabilecek gereksinim bulunamadı.',
     'comp.linkedElsewhere': 'başka bileşende',
+    'comp.linkSelectAll': 'Listedekilerin tümünü seç',
+    'comp.linkSelectedCount': '{n} gereksinim seçili',
     'comp.importFromPbs': 'Ürün ağacından içe aktar',
 
     // --- Etki Analizi (Impact Analysis) ---
@@ -1923,6 +1925,8 @@ export const STRINGS = {
     'comp.linkSearch': 'Search requirements…',
     'comp.linkNoRows': 'No requirements available to link.',
     'comp.linkedElsewhere': 'in another component',
+    'comp.linkSelectAll': 'Select all listed',
+    'comp.linkSelectedCount': '{n} requirement(s) selected',
     'comp.importFromPbs': 'Import from product tree',
 
     // --- Impact Analysis ---
