@@ -355,6 +355,15 @@ export default function Components() {
     [canOpenNode],
   )
 
+  // Issue #155: haritadaki kutunun kosesindeki "+" — Liste'deki "+" ile AYNI
+  // formu acar; ebeveyn tiklanan bilesendir (proje kokunde ust seviye).
+  // Kayittan sonra ebeveynin dali acilir ki yeni kutu hemen gorunsun.
+  const addChildFromMap = useCallback((record) => {
+    setComponentError('')
+    const parentId = record?.node?.kind === 'component' ? record.id : null
+    setComponentForm({ mode: 'create', parentId, component: null, expandKey: record?.key })
+  }, [])
+
   // --- Secim (iki gorunum ortak) -------------------------------------------
   //  Secim bir BILESEN anahtari ya da agactaki bir DUGUM id'si olabilir;
   //  yaprak secilirse tek satirlik bir liste cikar — bu da gecerli
@@ -605,6 +614,8 @@ export default function Components() {
         onToggle={toggle}
         onNodeClick={handleNodeClick}
         canOpenNode={canOpenNode}
+        onAddChild={canManageComponents ? addChildFromMap : null}
+        canAddChild={(n) => n.node.kind === 'component' || n.node.kind === 'project'}
         nodeDetail="label"
         className="min-h-[460px] flex-1"
       />
@@ -619,6 +630,7 @@ export default function Components() {
           {t('comp.legendComponent')}
         </span>
         <span data-testid="comp-map-hint">{t('comp.mapHint')}</span>
+        {canManageComponents && <span data-testid="comp-map-hint-add">{t('comp.mapHintAdd')}</span>}
       </div>
       {mapLayout.truncated && (
         <div
@@ -1045,6 +1057,8 @@ export default function Components() {
               parentId: componentForm?.parentId || null,
             })
             if (created?.id) setSelectedId(created.id)
+            const expandKey = componentForm?.expandKey
+            if (expandKey) setExpanded((prev) => new Set(prev).add(expandKey))
           }
           setComponentForm(null)
         }}

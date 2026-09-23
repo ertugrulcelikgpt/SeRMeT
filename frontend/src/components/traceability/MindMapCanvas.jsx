@@ -9,6 +9,12 @@
 //  `onNodeClick` verirse tiklamanin ne yapacagina kendisi karar verir
 //  (orn. ayni tiklamayla secimi de tasimak icin).
 //
+//  ALT KAYIT EKLEME (Issue #155): ust bilesen `onAddChild` verirse, bunu
+//  kabul eden (`canAddChild`) her kutunun sag ust kosesinde kucuk bir "+"
+//  belirir — kutunun ustune gelince ya da klavyeyle odaklaninca. Ac/kapa
+//  noktasindan (dal ucu) bilerek ayri durur. Prop verilmeyen haritalarda
+//  (Gereksinim Haritasi) hicbir sey degismez.
+//
 //  DUGUM ICERIGI iki kipte cizilir:
 //    nodeDetail='full'  (varsayilan, #122): ID + tip eki, baslik, istege
 //      bagli ozet satiri.
@@ -61,6 +67,9 @@ export default function MindMapCanvas({
   // Verilirse dugum tiklamasini TAMAMEN ust bilesen yonetir (detayi acmak
   // da dahil); verilmezse tiklama `onOpenNode` ile detayi acar.
   onNodeClick = null,
+  // Issue #155: verilirse kutunun kosesindeki "+" ile alt kayit eklenir.
+  onAddChild = null,
+  canAddChild = () => true,
   // 'full' | 'label' — bkz. dosya basligi.
   nodeDetail = 'full',
   // Issue #122 arama: verilen yol anahtarindaki dugum vurgulanir ve
@@ -354,6 +363,7 @@ export default function MindMapCanvas({
               return (
                 <g
                   key={n.key}
+                  className="group"
                   role="treeitem"
                   aria-expanded={n.hasChildren ? n.expanded : undefined}
                 >
@@ -484,6 +494,42 @@ export default function MindMapCanvas({
                         </text>
                       )}
                     </>
+                  )}
+                  {/* Issue #155: sag ust kosedeki "+" alt kayit ekler. Yalnizca
+                      kutunun ustune gelince / odaklaninca gorunur; boylece
+                      kalabalik haritada her kutuda bir dugme durmaz. */}
+                  {onAddChild && canAddChild(n) && (
+                    <g
+                      data-mindmap-hit="add"
+                      data-testid={`mindmap-add-${nodeKey}`}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={t('mindmap.addChild', { name: n.node.label })}
+                      className="opacity-0 transition-opacity focus:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100"
+                      style={{ cursor: 'pointer', outline: 'none' }}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onAddChild(n)
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'Enter' && e.key !== ' ') return
+                        e.preventDefault()
+                        onAddChild(n)
+                      }}
+                    >
+                      <title>{t('mindmap.addChild', { name: n.node.label })}</title>
+                      <circle cx={n.x + L.nodeWidth - 11} cy={top + 11} r={8} fill={n.color} />
+                      <path
+                        d={
+                          `M ${n.x + L.nodeWidth - 15} ${top + 11} H ${n.x + L.nodeWidth - 7}` +
+                          ` M ${n.x + L.nodeWidth - 11} ${top + 7} V ${top + 15}`
+                        }
+                        stroke={colors.nodeBg}
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                        pointerEvents="none"
+                      />
+                    </g>
                   )}
                   {/* Dalin ucundaki nokta: dali acar / kapatir. */}
                   {n.hasChildren && (
