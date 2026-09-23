@@ -346,6 +346,11 @@ export default function MindMapCanvas({
                 ? n.node.partNo || t('mindmap.componentTag')
                 : n.node.text_id || n.node.partNo || ''
               const kindLabel = t(isProduct ? 'mindmap.kindComponent' : 'mindmap.kindRequirement')
+              // Dugumun test/otomasyon kimligi: gereksinimde Text ID, kaydi
+              // olmayan bilesen/proje dugumunde dugum anahtari (Issue #147 —
+              // bilesenlerin text_id'si yoktur, hepsi ayni testid'ye
+              // dusuyordu).
+              const nodeKey = n.node.text_id || n.node.id || ''
               return (
                 <g
                   key={n.key}
@@ -354,7 +359,7 @@ export default function MindMapCanvas({
                 >
                   <rect
                     data-mindmap-hit="node"
-                    data-testid={`mindmap-node-${n.node.text_id}`}
+                    data-testid={`mindmap-node-${nodeKey}`}
                     role="button"
                     tabIndex={0}
                     aria-label={`${kindLabel}: ${badge} ${n.node.label}`.trim()}
@@ -484,7 +489,7 @@ export default function MindMapCanvas({
                   {n.hasChildren && (
                     <g
                       data-mindmap-hit="dot"
-                      data-testid={`mindmap-toggle-${n.node.text_id}`}
+                      data-testid={`mindmap-toggle-${nodeKey}`}
                       role="button"
                       tabIndex={0}
                       aria-label={t(

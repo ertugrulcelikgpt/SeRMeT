@@ -32,23 +32,25 @@
 //  BILESEN ARTIK TURETILMEZ (Issue #138): kullanici bilesenleri KENDISI
 //  olusturur. Yeni bir projede ekip once urunun bilesenlerini yazar
 //  (Su Pompasi Unitesi, AMTB, STC...), gereksinim ve baglanti agaci bunun
-//  USTUNE kurulur. Bu yuzden varsayilan kaynak "Bileşenlerim"dir (MANUAL):
-//    * listenin altindaki "+ Yeni bileşen ekle" ile istenildigi kadar
-//      bilesen eklenir (bos projede bile),
+//  USTUNE kurulur:
+//    * ust seritteki "+ Yeni bileşen ekle" ile istenildigi kadar bilesen
+//      eklenir (bos projede bile) — Issue #147'de gorunum dugumlerinin
+//      yanina tasindi, her iki gorunumde de elin altindadir,
 //    * bilesen adi duzenlenebilir, bilesen silinebilir (bagli gereksinim ya
 //      da alt bilesen varsa UYARI cikar; gereksinimler SILINMEZ),
 //    * bir bilesenin altina alt bilesen eklenir (elle urun kirilimi),
 //    * sira kullanicinin verdigi gibi kalir (yukari/asagi tasima),
 //    * gereksinimler SONRADAN baglanir; gereksinimi olmayan bilesen listede
 //      ve haritada GORUNUR (gizlenmez).
-//  MEVCUT PROJELER BOZULMAZ: PBS agacindan TURETILEN bilesenler kaynak
-//  secimi olarak KORUNUR; tek seferlik "Ürün ağacından içe aktar" aksiyonu
-//  turetilmis kirilimi kalici bilesenlere cevirir (bkz. utils/components.js,
-//  backend src/components.js).
 //
-//  ALAN (disiplin) KAYNAGI YOKTUR (Issue #143): Alan bir ETIKETTIR, urun
-//  kirilimi degil — bilesen gibi gosterilmesi ikinci ve yaniltici bir agac
-//  uretiyordu. Alan bilgisi gereksinim formunda ve filtrelerde durur.
+//  TEK KAYNAK: ELLE TANIMLI BILESENLER (Issue #147). "Ürün Ağacı" (PBS'ten
+//  TURETILEN) kaynagi ve kaynak secici KALDIRILDI — ayni ekranda iki farkli
+//  kirilim iki farkli "bilesen" kavrami uretiyordu. PBS kirilimi olan mevcut
+//  projeler icin tek seferlik "Ürün ağacından içe aktar" aksiyonu durur:
+//  turetilmis kirilimi kalici bilesenlere cevirir (bkz. utils/components.js,
+//  backend src/components.js). ALAN (disiplin) kaynagi ise #143'te
+//  kaldirilmisti; Alan bir ETIKETTIR, gereksinim formunda ve filtrelerde
+//  durur.
 //
 //  PARCA NO (Issue #135): her bilesen bir URUN'dur ve kimligini Parca No
 //  tasir — ayni ADA sahip iki dugum (AMTB/GY1 ve STC/GY1) FARKLI parcadir.
@@ -67,7 +69,6 @@ import MindMapCanvas from '../components/traceability/MindMapCanvas.jsx'
 import ViewModal from '../components/common/ViewModal.jsx'
 import {
   IconDownload,
-  IconSearch,
   IconComponent,
   IconMindMap,
   IconList,
@@ -85,7 +86,6 @@ import ReasonModal from '../components/common/ReasonModal.jsx'
 import {
   checkPartNumbers,
   ensurePartNumbers,
-  setPartNo,
   setPartNoConfig,
   suggestComponentPartNo,
 } from '../services/dataService.js'
@@ -94,11 +94,9 @@ import { getDisplayLabel } from '../utils/format.js'
 import { buildVerificationIndex } from '../utils/verification.js'
 import { collectExpandableKeys, defaultExpandedKeys, layoutMindMap } from '../utils/mindMap.js'
 import {
-  COMPONENT_SOURCE,
   ROOT_KEY,
   PROJECT_ROOT_KEY,
   VERIFICATION_METHOD_LABEL_KEY,
-  buildComponentGraph,
   buildComponentPrintHtml,
   buildComponentViewRows,
   buildComponents,
@@ -112,7 +110,6 @@ import {
   methodAttributeKeys,
   slugify,
   subtreeRows,
-  subtreeStats,
   summarizeComponent,
 } from '../utils/components.js'
 
@@ -171,12 +168,8 @@ export default function Components() {
   // yukaridan asagi SEKLIDIR; sikisik duzen bunu zincire cevirdigi icin
   // kardeslik iliskisi kayboluyordu (bkz. MAP_STYLE).
   const [mapStyle, setMapStyle] = useState(MAP_STYLE.TREE)
-  // Kaynak secimi: ELLE TANIMLI ya da PBS. Kullanici secmediyse (null)
-  // dolu olan kaynak acilir (bkz. `source`).
-  const [sourceChoice, setSourceChoice] = useState(null)
   const [selectedId, setSelectedId] = useState(null)
   const [expanded, setExpanded] = useState(() => new Set())
-  const [query, setQuery] = useState('')
   const [viewRow, setViewRow] = useState(null)
   const [exportError, setExportError] = useState('')
   // --- Parca No (#135) ------------------------------------------------------
@@ -240,6 +233,8 @@ export default function Components() {
   )
 
   const tree = useMemo(() => buildRequirementTree(visibleRequirements), [visibleRequirements])
+  // PBS kirilimi ARTIK BIR KAYNAK DEGILDIR (#147); yalnizca tek seferlik
+  // "Ürün ağacından içe aktar" aksiyonunun sunulup sunulmayacagini soyler.
   const pbsComponents = useMemo(
     () => buildComponents(visibleRequirements, { tree }),
     [visibleRequirements, tree],
@@ -256,23 +251,11 @@ export default function Components() {
     [manualComponentList, visibleRequirements, componentTree, tree],
   )
 
-  // Varsayilan kaynak: ELLE TANIMLI. Kullanici bilesen tanimlamadiysa ve proje
-  // zaten PBS uzerinden bilesen uretiyorsa (mevcut projeler) o kaynak acilir —
-  // hicbir sey kaybolmaz. Bos bir projede ise elle tanimli kaynak acilir:
-  // bos liste + "Yeni bileşen ekle".
-  // Issue #143: ALAN kaynagi kaldirildi; eski bir secim kalsa bile (yerel
-  // durum) elle tanimli kaynaga duser.
-  const source =
-    (sourceChoice === COMPONENT_SOURCE.MANUAL || sourceChoice === COMPONENT_SOURCE.PBS
-      ? sourceChoice
-      : null) ||
-    (manualComponents.length > 0
-      ? COMPONENT_SOURCE.MANUAL
-      : pbsComponents.length > 0
-        ? COMPONENT_SOURCE.PBS
-        : COMPONENT_SOURCE.MANUAL)
-  const isManual = source === COMPONENT_SOURCE.MANUAL
-  const components = isManual ? manualComponents : pbsComponents
+  // Issue #147: TEK kaynak vardir — ELLE tanimli bilesenler. "Ürün Ağacı"
+  // (PBS'ten TURETILEN) kaynagi kaldirildi; PBS kirilimi olan mevcut
+  // projeler tek seferlik "Ürün ağacından içe aktar" ile kalici bilesene
+  // cevrilir (bkz. runImport).
+  const components = manualComponents
 
   const verificationIndex = useMemo(
     () => buildVerificationIndex(links, testCases),
@@ -280,7 +263,6 @@ export default function Components() {
   )
   const satisfiesIndex = useMemo(() => buildSatisfiesIndex(links), [links])
   const methodKeys = useMemo(() => methodAttributeKeys(attributeDefs), [attributeDefs])
-  const stats = useMemo(() => subtreeStats(tree, verificationIndex), [tree, verificationIndex])
 
   const labelOf = (c) => c.label
   const summaryText = (s) => t('comp.summary', { n: s.total, v: s.verified })
@@ -291,26 +273,14 @@ export default function Components() {
   //  secim rozetinde ve Liste gorunumunde zaten tam haliyle durur.
   const projectLabel = activeProject?.name || t('comp.projectRoot')
   const graph = useMemo(() => {
-    const metaOf = (row, { childCount } = {}) =>
-      childCount > 0 ? summaryText(stats.get(row.id) || { total: 1, verified: 0 }) : ''
-    // Elle tanimli kaynakta harita, KULLANICININ kurdugu kirilimi gosterir:
-    // bilesen kutularinin altinda alt bilesenler ve bagli gereksinimler.
-    if (isManual) {
-      const summaryByKey = new Map(
-        manualComponents.map((c) => [c.key, summarizeComponent(c.rows, verificationIndex)]),
-      )
-      return buildManualComponentGraph(manualComponentList, visibleRequirements, {
-        componentTree,
-        componentMetaOf: (c) => summaryText(summaryByKey.get(c.id) || { total: 0, verified: 0 }),
-        rootLabel: projectLabel,
-        rootMeta: summaryText(summarizeComponent(visibleRequirements, verificationIndex)),
-      })
-    }
-    return buildComponentGraph(visibleRequirements, {
-      tree,
-      metaOf,
-      // Onlarca kok gereksinim tek bir proje dugumunun altinda toplanir:
-      // harita "kapali" baslar, kullanici inerek acar.
+    // Harita, KULLANICININ kurdugu urun kirilimini gosterir: proje kokunun
+    // altinda bilesenler ve alt bilesenleri (#144: gereksinim kutusu yoktur).
+    const summaryByKey = new Map(
+      manualComponents.map((c) => [c.key, summarizeComponent(c.rows, verificationIndex)]),
+    )
+    return buildManualComponentGraph(manualComponentList, visibleRequirements, {
+      componentTree,
+      componentMetaOf: (c) => summaryText(summaryByKey.get(c.id) || { total: 0, verified: 0 }),
       rootLabel: projectLabel,
       rootMeta: summaryText(summarizeComponent(visibleRequirements, verificationIndex)),
     })
@@ -318,13 +288,9 @@ export default function Components() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     visibleRequirements,
-    source,
-    isManual,
     manualComponentList,
     manualComponents,
     componentTree,
-    tree,
-    stats,
     verificationIndex,
     projectLabel,
     t,
@@ -445,28 +411,9 @@ export default function Components() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [components, selectedId, tree, projectLabel, t])
 
-  // Secili bilesenin PBS kaydi (varsa): Parca No yalnizca gercek bir dugum
-  // icin duzenlenebilir — sanal proje kokunun parcasi yok.
-  const selectedNode = useMemo(
-    () => (selection?.key ? tree.byId.get(selection.key) || null : null),
-    [selection, tree],
-  )
-  const canEditPartNo =
-    Boolean(selectedNode) && can('write', componentKeyOf('requirement', selectedNode.type))
-  // savePartNo referansi sabit kalsin diye secili dugum id'si ref'te tutulur.
-  const selectedNodeIdRef = useRef(null)
-  selectedNodeIdRef.current = selectedNode?.id || null
-
-  // Elle duzenleme. Sunucu cakismayi/bicim ihlalini 409/400 ile reddeder ve
-  // HICBIR SEY yazmaz; hata mesaji oldugu gibi kullaniciya gosterilir.
-  const savePartNo = useCallback(
-    async (payload) => {
-      await setPartNo(projectId, selectedNodeIdRef.current, payload)
-      await refresh?.()
-      await reloadPartNoCheck()
-    },
-    [projectId, refresh, reloadPartNoCheck],
-  )
+  // Issue #147: secilen kayit artik HER ZAMAN elle tanimli bir bilesendir ve
+  // numarasi bilesen formundan (ComponentFormModal) duzenlenir. PBS dugumune
+  // bagli satir ici Parca No editoru, PBS kaynagiyla birlikte kaldirildi.
 
   // --- Bilesen yonetimi (Issue #138) ----------------------------------------
   //  Bilesen bir GEREKSINIM degildir; yazma yetkisi gereksinim bilesenlerinden
@@ -501,7 +448,6 @@ export default function Components() {
     setComponentError('')
     try {
       await importComponentsFromPbs?.()
-      setSourceChoice(COMPONENT_SOURCE.MANUAL)
     } catch (err) {
       setComponentError(err?.message || t('comp.saveError'))
     }
@@ -542,26 +488,11 @@ export default function Components() {
       satisfiesIndex,
       verificationIndex,
       methodKeys,
-      // Issue #140: elle tanimli kaynakta bir GEREKSINIM asla bilesen
-      // sayilmaz — tablo da onu bilesen basligi gibi gostermez.
-      manual: isManual,
+      // Issue #140: bir GEREKSINIM asla bilesen sayilmaz — tablo da onu
+      // bilesen basligi gibi gostermez.
+      manual: true,
     })
-  }, [selection, tree, satisfiesIndex, verificationIndex, methodKeys, isManual])
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return components
-    return components.filter(
-      (c) =>
-        labelOf(c).toLowerCase().includes(q) ||
-        c.outline.includes(q) ||
-        // Issue #135: bilesenler Parca No ile de aranabilir — ayni adli iki
-        // bileseni birbirinden ayirmanin tek yolu budur.
-        (c.partNo || '').toLowerCase().includes(q) ||
-        (c.node?.text_id || '').toLowerCase().includes(q),
-    )
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [components, query, t])
+  }, [selection, tree, satisfiesIndex, verificationIndex, methodKeys])
 
   // --- Disa aktarim ---------------------------------------------------------
   const methodLabel = (code) => t(VERIFICATION_METHOD_LABEL_KEY[code] || 'comp.method.none')
@@ -662,22 +593,7 @@ export default function Components() {
       data-testid="comp-empty"
       className="card flex-1 px-4 py-16 text-center text-sm text-slate-500 dark:text-slate-400"
     >
-      {isManual ? t('comp.emptyManual') : t('comp.emptyPbs')}
-      {/* Issue #144: bilesen listesi artik LISTE gorunumundedir; bos
-          haritadan oraya tek tikla gecilir (yoksa yeni bilesen eklemenin
-          yolu gorunmez olurdu). */}
-      {isManual && view === VIEW.MAP && (
-        <div className="mt-4">
-          <button
-            type="button"
-            onClick={() => setView(VIEW.LIST)}
-            data-testid="comp-empty-golist"
-            className="btn-primary btn-sm"
-          >
-            {t('comp.openList')}
-          </button>
-        </div>
-      )}
+      {t('comp.emptyManual')}
     </div>
   )
 
@@ -714,92 +630,6 @@ export default function Components() {
         </div>
       )}
     </>
-  )
-
-  // Sol panel — TURETILMIS (PBS) bilesen listesi (Issue #129).
-  const derivedAside = (
-    <aside className="card flex max-h-[70vh] flex-col overflow-hidden p-0">
-      <div className="border-b border-slate-200 p-3 dark:border-slate-800">
-        <div className="relative">
-          <IconSearch
-            size={14}
-            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400"
-          />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t('comp.search')}
-            aria-label={t('comp.search')}
-            data-testid="comp-search"
-            className="input w-full !py-1.5 !pl-8 text-xs"
-          />
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-2">
-        {filtered.length === 0 && (
-          <p className="px-2 py-6 text-center text-xs text-slate-500 dark:text-slate-400">
-            {t('comp.noMatch')}
-          </p>
-        )}
-        <ul className="space-y-0.5">
-          {filtered.map((c) => {
-            const active = selection?.key === c.key
-            const s = summarizeComponent(c.rows, verificationIndex)
-            return (
-              <li key={c.key}>
-                <button
-                  type="button"
-                  onClick={() => setSelectedId(c.key)}
-                  data-testid={`comp-item-${c.key}`}
-                  aria-current={active ? 'true' : undefined}
-                  style={
-                    source === COMPONENT_SOURCE.PBS
-                      ? { paddingLeft: `${0.5 + Math.min(c.depth, 5) * 0.75}rem` }
-                      : undefined
-                  }
-                  className={
-                    'w-full rounded-lg py-1.5 pr-2 text-left transition-colors ' +
-                    (active
-                      ? 'bg-brand-50 dark:bg-brand-900/30'
-                      : 'hover:bg-slate-100 dark:hover:bg-slate-800')
-                  }
-                >
-                  <span className="flex items-center gap-1.5">
-                    {c.outline && (
-                      <span className="font-mono text-[10px] text-slate-400 tabular-nums">
-                        {c.outline}
-                      </span>
-                    )}
-                    {c.partNo && (
-                      <span
-                        data-testid={`comp-partno-${c.key}`}
-                        className="font-mono text-[10px] font-bold text-brand-600 tabular-nums dark:text-brand-400"
-                      >
-                        {c.partNo}
-                      </span>
-                    )}
-                    <span
-                      className={
-                        'flex-1 truncate text-xs font-semibold ' +
-                        (active
-                          ? 'text-brand-700 dark:text-brand-300'
-                          : 'text-slate-700 dark:text-slate-200')
-                      }
-                    >
-                      {labelOf(c)}
-                    </span>
-                  </span>
-                  <span className="mt-0.5 block truncate text-[11px] text-slate-400">
-                    {summaryText(s)}
-                  </span>
-                </button>
-              </li>
-            )
-          })}
-        </ul>
-      </div>
-    </aside>
   )
 
   const tableSection = (
@@ -1010,6 +840,22 @@ export default function Components() {
             {viewBtn(VIEW.MAP, t('comp.view.map'), IconMindMap)}
             {viewBtn(VIEW.LIST, t('comp.view.list'), IconList)}
           </div>
+          {/* Issue #147: bilesen eklemek sayfanin ANA aksiyonudur — gorunum
+              dugmelerinin yaninda, her iki gorunumde de elin altindadir
+              (daha once yalnizca Liste'deki panelin altindaydi). */}
+          {canManageComponents && (
+            <button
+              type="button"
+              onClick={() => {
+                setComponentError('')
+                setComponentForm({ mode: 'create', parentId: null, component: null })
+              }}
+              data-testid="comp-add-root"
+              className="btn-primary btn-sm"
+            >
+              <IconPlus size={14} /> {t('comp.addComponent')}
+            </button>
+          )}
           {partNoCheck && (
             <button
               type="button"
@@ -1065,33 +911,8 @@ export default function Components() {
         </div>
       )}
 
-      {/* Arac cubugu: kaynak + (haritada) dal kontrolleri + secim ozeti */}
+      {/* Arac cubugu: (haritada) dal kontrolleri + secim ozeti */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-1 rounded-xl border border-slate-200 p-1 dark:border-slate-800">
-          {[COMPONENT_SOURCE.MANUAL, COMPONENT_SOURCE.PBS].map((s) => (
-            <button
-              key={s}
-              type="button"
-              onClick={() => {
-                setSourceChoice(s)
-                setSelectedId(null)
-                seenRoots.current = new Set()
-                setExpanded(new Set())
-              }}
-              data-testid={`comp-source-${s}`}
-              aria-pressed={source === s}
-              className={
-                'rounded-lg px-2.5 py-1.5 text-[11px] font-semibold transition-colors ' +
-                (source === s
-                  ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300'
-                  : 'text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800')
-              }
-            >
-              {t(s === COMPONENT_SOURCE.MANUAL ? 'comp.source.manual' : 'comp.source.pbs')}
-            </button>
-          ))}
-        </div>
-
         {view === VIEW.MAP && !isEmpty && (
           <>
             <div
@@ -1148,17 +969,6 @@ export default function Components() {
             <span className="text-slate-400">· {summaryText(selectionSummary)}</span>
           </span>
         )}
-
-        {selectedNode && (
-          <PartNoEditor
-            key={selectedNode.id}
-            node={selectedNode}
-            format={partNoCheck?.format || DEFAULT_PART_NO_FORMAT}
-            canEdit={canEditPartNo}
-            onSave={savePartNo}
-            t={t}
-          />
-        )}
       </div>
 
       {partNoPanelOpen && partNoCheck && <PartNoIssuePanel check={partNoCheck} t={t} />}
@@ -1172,7 +982,7 @@ export default function Components() {
         ) : (
           mapBlock
         )
-      ) : isManual ? (
+      ) : (
         <div className="grid flex-1 gap-4 lg:grid-cols-[20rem_minmax(0,1fr)]">
           <ManualComponentPanel
             componentTree={componentTree}
@@ -1203,13 +1013,6 @@ export default function Components() {
             t={t}
           />
           <div className="flex min-w-0 flex-col gap-2">{tableSection}</div>
-        </div>
-      ) : isEmpty ? (
-        emptyCard
-      ) : (
-        <div className="grid flex-1 gap-4 lg:grid-cols-[18rem_minmax(0,1fr)]">
-          {derivedAside}
-          {tableSection}
         </div>
       )}
 
@@ -1289,112 +1092,6 @@ export default function Components() {
         onClose={() => setViewRow(null)}
       />
     </div>
-  )
-}
-
-// ============================================================================
-//  Parca No duzenleyici (Issue #135)
-//  Secili bilesenin numarasini YERINDE degistirir — ayri bir sayfa/modal
-//  yoktur. Iki alan vardir:
-//    Parca No  — bu dugumun kendi numarasi.
-//    Blok      — bu dalin COCUKLARINA verecegi onek (orn. AMTB -> "320");
-//                bos birakilirsa dugumun kendi numarasinin blogu kullanilir.
-//  Sunucu cakismayi/bicim ihlalini reddeder (409/400) ve hicbir sey yazmaz;
-//  hata burada oldugu gibi gosterilir, alan acik kalir.
-// ============================================================================
-function PartNoEditor({ node, format, canEdit, onSave, t }) {
-  const [open, setOpen] = useState(false)
-  const [partNo, setPartNo] = useState(node.partNo || '')
-  const [block, setBlock] = useState(node.partNoBlock || '')
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
-
-  if (!open) {
-    return (
-      <span
-        data-testid="partno-current"
-        className="flex items-center gap-1.5 rounded-lg bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300"
-      >
-        <span className="text-slate-400">{t('partno.label')}</span>
-        <span className="font-mono text-brand-600 dark:text-brand-400">
-          {node.partNo || t('partno.none')}
-        </span>
-        {canEdit && (
-          <button
-            type="button"
-            onClick={() => {
-              setPartNo(node.partNo || '')
-              setBlock(node.partNoBlock || '')
-              setError('')
-              setOpen(true)
-            }}
-            title={t('partno.edit')}
-            aria-label={t('partno.edit')}
-            data-testid="partno-edit"
-            className="rounded p-0.5 text-slate-400 hover:text-brand-600 dark:hover:text-brand-400"
-          >
-            <IconEdit size={13} />
-          </button>
-        )}
-      </span>
-    )
-  }
-
-  const submit = async (e) => {
-    e.preventDefault()
-    setBusy(true)
-    setError('')
-    try {
-      await onSave({ partNo, partNoBlock: block })
-      setOpen(false)
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <form
-      onSubmit={submit}
-      data-testid="partno-form"
-      className="flex flex-wrap items-center gap-1.5 rounded-lg bg-slate-100 px-2 py-1 dark:bg-slate-800"
-    >
-      <input
-        value={partNo}
-        onChange={(e) => setPartNo(e.target.value)}
-        aria-label={t('partno.label')}
-        placeholder={format}
-        data-testid="partno-input"
-        className="input w-28 !py-1 font-mono text-[11px]"
-      />
-      <input
-        value={block}
-        onChange={(e) => setBlock(e.target.value)}
-        aria-label={t('partno.blockLabel')}
-        title={t('partno.blockHint')}
-        placeholder={t('partno.blockLabel')}
-        data-testid="partno-block-input"
-        className="input w-20 !py-1 font-mono text-[11px]"
-      />
-      <button
-        type="submit"
-        disabled={busy}
-        className="btn-primary btn-sm"
-        data-testid="partno-save"
-      >
-        {t('partno.save')}
-      </button>
-      <button type="button" onClick={() => setOpen(false)} className="btn-secondary btn-sm">
-        {t('partno.cancel')}
-      </button>
-      <span className="text-[10px] text-slate-400">{t('partno.hint', { format })}</span>
-      {error && (
-        <span data-testid="partno-error" className="text-[11px] font-semibold text-rose-600">
-          {error}
-        </span>
-      )}
-    </form>
   )
 }
 
@@ -1697,30 +1394,19 @@ function ManualComponentPanel({
         )}
       </div>
 
-      {canWrite && (
-        <div className="space-y-2 border-t border-slate-200 p-2 dark:border-slate-800">
-          {/* Kabul kriteri: ekleme aksiyonu LISTENIN ALTINDADIR ve arka arkaya
-              birden fazla bilesen eklemeye izin verir. */}
+      {/* Issue #147: "Yeni bileşen ekle" sayfanin ust seridine tasindi.
+          Burada yalnizca mevcut projeler icin tek seferlik gecis kalir:
+          PBS'ten turetilen kirilimi kalici bilesenlere cevirir. */}
+      {canWrite && canImport && components.length === 0 && (
+        <div className="border-t border-slate-200 p-2 dark:border-slate-800">
           <button
             type="button"
-            onClick={() => onAdd(null)}
-            data-testid="comp-add-root"
-            className="btn-primary btn-sm w-full justify-center"
+            onClick={onImport}
+            data-testid="comp-import-pbs"
+            className="btn-secondary btn-sm w-full justify-center"
           >
-            <IconPlus size={14} /> {t('comp.addComponent')}
+            {t('comp.importFromPbs')}
           </button>
-          {canImport && components.length === 0 && (
-            // Mevcut projeler icin tek seferlik gecis: turetilmis kirilimi
-            // kalici bilesenlere cevirir (hicbir sey kaybolmaz).
-            <button
-              type="button"
-              onClick={onImport}
-              data-testid="comp-import-pbs"
-              className="btn-secondary btn-sm w-full justify-center"
-            >
-              {t('comp.importFromPbs')}
-            </button>
-          )}
         </div>
       )}
     </aside>

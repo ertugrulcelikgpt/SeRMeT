@@ -7,7 +7,6 @@
 // ============================================================================
 import { describe, it, expect } from 'vitest'
 import {
-  COMPONENT_SOURCE,
   PROJECT_ROOT_KEY,
   buildManualComponentGraph,
   buildManualComponentTree,
@@ -113,7 +112,7 @@ describe('buildRequirementTree — TİD (anahat) numaralari', () => {
 
 describe('buildComponents — bilesen listesi', () => {
   it('PBS: alt kirilimi olan her dugum bir bilesendir', () => {
-    const list = buildComponents(REQS, { source: COMPONENT_SOURCE.PBS })
+    const list = buildComponents(REQS)
     expect(list.map((c) => c.label)).toEqual([
       'Kahve Makinesi',
       'Su Deposu Alt Sistemi',
@@ -124,7 +123,7 @@ describe('buildComponents — bilesen listesi', () => {
   })
 
   it('bilesenin gereksinimleri SEVIYEDEN BAGIMSIZ tek listede gelir', () => {
-    const list = buildComponents(REQS, { source: COMPONENT_SOURCE.PBS })
+    const list = buildComponents(REQS)
     const pump = componentByLabel(list, 'Basınç Pompası Ünitesi')
     expect(pump.rows.map((r) => r.text_id)).toEqual([
       'EH-TİD-SYS-002', // bilesenin kendi gereksinimi
@@ -137,20 +136,24 @@ describe('buildComponents — bilesen listesi', () => {
   })
 
   it('bilesenler agactaki yerini (anahat + derinlik) tasir', () => {
-    const list = buildComponents(REQS, { source: COMPONENT_SOURCE.PBS })
+    const list = buildComponents(REQS)
     const pump = componentByLabel(list, 'Basınç Pompası Ünitesi')
     expect(pump.outline).toBe('1.2')
     expect(pump.depth).toBe(1)
   })
 
-  it('Alan (disiplin) bir bilesen kaynagi DEGILDIR (Issue #143)', () => {
-    expect(COMPONENT_SOURCE.FIELD).toBeUndefined()
-    expect(Object.values(COMPONENT_SOURCE)).toEqual(['manual', 'pbs'])
+  it('PBS turetimi bir GORUNUM KAYNAGI degildir (Issue #143, #147)', async () => {
+    // Alan (#143) ve ardindan PBS (#147) kaynaklari kaldirildi; ekranda tek
+    // kaynak elle tanimli bilesenlerdir. buildComponents yalnizca "Ürün
+    // ağacından içe aktar" gecisi icin turetim yapar.
+    const mod = await import('../components.js')
+    expect(mod.COMPONENT_SOURCE).toBeUndefined()
+    expect(mod.buildComponentGraph).toBeUndefined()
   })
 
   it('urun agaci kurulmamis projede PBS hic bilesen uretmez', () => {
     const flat = REQS.map((r) => ({ ...r, parentId: null }))
-    expect(buildComponents(flat, { source: COMPONENT_SOURCE.PBS })).toHaveLength(0)
+    expect(buildComponents(flat)).toHaveLength(0)
   })
 })
 
@@ -197,10 +200,7 @@ describe('buildComponentViewRows — TİD tablosu satirlari', () => {
     verificationIndex: buildVerificationIndex(LINKS, TESTS),
     methodKeys: ['verification_method'],
   }
-  const pump = componentByLabel(
-    buildComponents(REQS, { source: COMPONENT_SOURCE.PBS, tree }),
-    'Basınç Pompası Ünitesi',
-  )
+  const pump = componentByLabel(buildComponents(REQS, { tree }), 'Basınç Pompası Ünitesi')
   const rows = buildComponentViewRows(pump.rows, ctx)
 
   it('her satir TID No / Text ID / Baslik / Metin tasir', () => {
@@ -257,10 +257,7 @@ describe('TİD tablosu düzeni (kullanım kılavuzu s.7)', () => {
   })
 
   it('girinti secime goredir: alt bilesen secilince tablo soldan baslar', () => {
-    const pump = componentByLabel(
-      buildComponents(REQS, { source: COMPONENT_SOURCE.PBS, tree }),
-      'Basınç Pompası Ünitesi',
-    )
+    const pump = componentByLabel(buildComponents(REQS, { tree }), 'Basınç Pompası Ünitesi')
     const rows = buildComponentViewRows(pump.rows, ctx)
     expect(rows[0].depth).toBe(0) // bilesenin kendisi
     expect(rows[1].depth).toBe(1) // altindakiler
@@ -294,10 +291,7 @@ describe('birleşik doğrulama yöntemi (T/CoC, CoC/M)', () => {
 describe('summarizeComponent', () => {
   it('gereksinim sayisi ve DOGRULANMIS sayisini dondurur', () => {
     const index = buildVerificationIndex(LINKS, TESTS)
-    const pump = componentByLabel(
-      buildComponents(REQS, { source: COMPONENT_SOURCE.PBS }),
-      'Basınç Pompası Ünitesi',
-    )
+    const pump = componentByLabel(buildComponents(REQS), 'Basınç Pompası Ünitesi')
     // Yalnizca h2'nin onayli bir testi var.
     expect(summarizeComponent(pump.rows, index)).toEqual({ total: 3, verified: 1 })
   })
@@ -322,10 +316,7 @@ describe('dışa aktarım', () => {
     'Doğrulama',
   ]
   const rows = buildComponentViewRows(
-    componentByLabel(
-      buildComponents(REQS, { source: COMPONENT_SOURCE.PBS, tree }),
-      'Basınç Pompası Ünitesi',
-    ).rows,
+    componentByLabel(buildComponents(REQS, { tree }), 'Basınç Pompası Ünitesi').rows,
     ctx,
   )
 

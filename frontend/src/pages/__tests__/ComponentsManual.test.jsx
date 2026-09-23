@@ -339,7 +339,7 @@ describe('Bileşen ile gereksinim ayrımı', () => {
   it('haritadaki TUM kutular bilesendir: koseli ve kendi renginde (#144)', () => {
     renderPage()
     // URUN dugumleri (proje koku + bilesenler): koseli kutu, camgobegi renk.
-    const products = screen.getAllByTestId('mindmap-node-')
+    const products = screen.getAllByTestId(/^mindmap-node-/)
     expect(products.length).toBeGreaterThan(0)
     for (const box of products) {
       expect(box).toHaveAttribute('rx', '3')
@@ -350,7 +350,7 @@ describe('Bileşen ile gereksinim ayrımı', () => {
   it('harita GEREKSINIM kutusu cizmez; gereksinimler Liste gorunumundedir (#144)', () => {
     renderPage()
     // Tum dallar acilsa bile haritada gereksinim kutusu YOKTUR.
-    for (const dot of screen.getAllByTestId('mindmap-toggle-')) fireEvent.click(dot)
+    for (const dot of screen.getAllByTestId(/^mindmap-toggle-/)) fireEvent.click(dot)
     expect(screen.queryByTestId('mindmap-node-R-001')).not.toBeInTheDocument()
     expect(screen.queryByTestId('mindmap-node-R-002')).not.toBeInTheDocument()
     // Bagli gereksinim sayisi bilesenin ozet satirinda durur.
@@ -496,7 +496,7 @@ describe('Gereksinim bağlama (sonradan)', () => {
 })
 
 describe('Mevcut projeler bozulmaz', () => {
-  it('elle bileşen yokken ve PBS kırılımı varken PBS kaynağı açılır', () => {
+  it('kaynak secici YOKTUR: bilesenler tek kaynaktir (#147)', () => {
     appMock.components = []
     appMock.requirements = [
       { id: 'u1', text_id: 'R-001', title: 'Sistem', type: 'User Requirement' },
@@ -509,15 +509,10 @@ describe('Mevcut projeler bozulmaz', () => {
       },
     ]
     renderPage()
-    expect(screen.getByTestId('comp-source-pbs')).toHaveAttribute('aria-pressed', 'true')
-    // Turetilmis bilesen kaybolmadi.
-    expect(screen.getByTestId('comp-counts')).toHaveTextContent('1 bileşen')
-  })
-
-  it('elle tanımlı bileşen varsa varsayılan kaynak "Bileşenlerim" olur', () => {
-    appMock.components = [comp('c1', 'AMTB', { sortIndex: 0 })]
-    renderPage()
-    expect(screen.getByTestId('comp-source-manual')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByTestId('comp-source-pbs')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('comp-source-manual')).not.toBeInTheDocument()
+    // PBS kirilimi bir bilesen kaynagi degildir: bilesen sayisi 0'dir.
+    expect(screen.getByTestId('comp-counts')).toHaveTextContent('0 bileşen')
   })
 
   it('PBS kırılımı olan projede tek seferlik içe aktarma sunulur', async () => {
@@ -533,7 +528,6 @@ describe('Mevcut projeler bozulmaz', () => {
       },
     ]
     renderList()
-    fireEvent.click(screen.getByTestId('comp-source-manual'))
     fireEvent.click(await screen.findByTestId('comp-import-pbs'))
     await waitFor(() => expect(appMock.importComponentsFromPbs).toHaveBeenCalled())
   })

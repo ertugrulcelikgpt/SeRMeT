@@ -731,7 +731,6 @@ export const STRINGS = {
     'mindmap.resetZoom': 'Yakınlaştırmayı sıfırla',
 
     // --- Bileşenler (Issue #129: bileşen bazlı görünüm) ---
-    'comp.source': 'Bileşen kaynağı',
     'comp.view': 'Görünüm',
     'comp.view.map': 'Harita',
     'comp.canvasLabel': 'Bileşen haritası',
@@ -747,14 +746,10 @@ export const STRINGS = {
       'Kutuya tıkla: kayıt detayı (ID + açıklama) · dal ucundaki noktaya tıkla: aç / kapat · tekerlek veya sürükle: kaydır · Ctrl + tekerlek: yakınlaştır',
     'comp.mapCounts': '{visible} / {total} düğüm',
     'comp.projectRoot': 'Proje',
-    'comp.source.pbs': 'Ürün Ağacı',
     'comp.search': 'Bileşen ara…',
     'comp.summary': '{n} gereksinim · {v} doğrulandı',
     'comp.componentCount': '{n} bileşen',
     'comp.reqCount': '{n} gereksinim',
-    'comp.empty': 'Bu projede bileşen bulunamadı.',
-    'comp.emptyPbs':
-      'Ürün ağacında alt kırılım yok. Bağlantı Ağacı sayfasından kırılım oluşturun ya da “Bileşenlerim” kaynağında kendi bileşenlerinizi tanımlayın.',
     'comp.noMatch': 'Aramayla eşleşen bileşen yok.',
     'comp.noRows': 'Bu bileşende gereksinim yok.',
     'comp.selectHint': 'Soldaki listeden bir bileşen seçin.',
@@ -782,13 +777,11 @@ export const STRINGS = {
     'comp.printTitle': 'Bileşen Bazlı Gereksinim Listesi',
 
     // --- Elle tanımlanan bileşenler (Issue #138) ---
-    'comp.source.manual': 'Bileşenlerim',
     'comp.manualTitle': 'Bileşenler',
     'comp.manualEmpty':
-      'Henüz bileşen yok. Aşağıdaki “Yeni bileşen ekle” ile ürün bileşenlerinizi tanımlayın.',
+      'Henüz bileşen yok. Yukarıdaki “Yeni bileşen ekle” ile ürün bileşenlerinizi tanımlayın.',
     'comp.emptyManual':
-      'Henüz bileşen tanımlanmadı. Liste görünümündeki “Yeni bileşen ekle” ile başlayın; gereksinimleri sonradan bağlayabilirsiniz.',
-    'comp.openList': 'Bileşen listesini aç',
+      'Henüz bileşen tanımlanmadı. Yukarıdaki “Yeni bileşen ekle” ile başlayın; gereksinimleri sonradan bağlayabilirsiniz.',
     'comp.addComponent': 'Yeni bileşen ekle',
     'comp.addChild': 'Alt bileşen ekle',
     'comp.addTitle': 'Yeni Bileşen',
@@ -1854,7 +1847,6 @@ export const STRINGS = {
     'mindmap.resetZoom': 'Reset zoom',
 
     // --- Components (Issue #129: component-based view) ---
-    'comp.source': 'Component source',
     'comp.view': 'View',
     'comp.view.map': 'Map',
     'comp.canvasLabel': 'Component map',
@@ -1870,14 +1862,10 @@ export const STRINGS = {
       'Click a box: record details (ID + description) · click the dot at the branch end: expand / collapse · wheel or drag: pan · Ctrl + wheel: zoom',
     'comp.mapCounts': '{visible} / {total} nodes',
     'comp.projectRoot': 'Project',
-    'comp.source.pbs': 'Product tree',
     'comp.search': 'Search components…',
     'comp.summary': '{n} requirements · {v} verified',
     'comp.componentCount': '{n} components',
     'comp.reqCount': '{n} requirements',
-    'comp.empty': 'No components found in this project.',
-    'comp.emptyPbs':
-      'The product tree has no breakdown yet. Build one on the Link Tree page or define your own components under “My components”.',
     'comp.noMatch': 'No component matches the search.',
     'comp.noRows': 'This component has no requirements.',
     'comp.selectHint': 'Pick a component from the list on the left.',
@@ -1905,13 +1893,11 @@ export const STRINGS = {
     'comp.printTitle': 'Component-based requirement list',
 
     // --- User-defined components (Issue #138) ---
-    'comp.source.manual': 'My components',
     'comp.manualTitle': 'Components',
     'comp.manualEmpty':
-      'No components yet. Use “Add new component” below to define your product components.',
+      'No components yet. Use “Add new component” above to define your product components.',
     'comp.emptyManual':
-      'No components defined yet. Start with “Add new component” in the List view; requirements can be linked later.',
-    'comp.openList': 'Open component list',
+      'No components defined yet. Start with “Add new component” above; requirements can be linked later.',
     'comp.addComponent': 'Add new component',
     'comp.addChild': 'Add sub-component',
     'comp.addTitle': 'New component',
