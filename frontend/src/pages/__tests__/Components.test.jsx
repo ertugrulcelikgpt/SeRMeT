@@ -90,6 +90,34 @@ const PUMP_SW = {
 }
 const TEST = { id: 'tc1', text_id: 'TC-SUB-001', title: 'Basınç testi', status: 'Approved' }
 
+// Issue #144: harita YALNIZCA urun agacini cizer — bir dugum ancak ALT
+// KIRILIMI varsa (yani bir bilesense) kutu olur, yaprak gereksinimler
+// haritaya girmez. Harita testleri bu yuzden kirilimi derinlestirir:
+//   Kahve Makinesi -> Su Deposu (+ yaprak) ve Pompa Ünitesi -> Pompa basıncı
+// boylece haritada hem KARDES iki bilesen hem de ucuncu bir seviye bulunur.
+const TANK_SW = {
+  id: 'w2',
+  parentId: 's1',
+  text_id: 'EH-TİD-SW-002',
+  title: 'Depo hacmi',
+  type: 'Software Requirement',
+}
+const PUMP_HW_CHILD = {
+  id: 'h2',
+  parentId: 'h1',
+  text_id: 'EH-TİD-HW-002',
+  title: 'Pompa gürültüsü',
+  type: 'Hardware Requirement',
+}
+const deepenTree = () => {
+  appMock.requirements = [...appMock.requirements, TANK_SW, PUMP_HW_CHILD]
+}
+// Yalnizca KARDES iki bilesen (ikisi de haritanin yapragi) — duzen testleri
+// icin: Su Deposu ve Pompa Ünitesi ayni seviyede durur.
+const siblingTree = () => {
+  appMock.requirements = [...appMock.requirements, TANK_SW]
+}
+
 const renderPage = () =>
   render(
     <LanguageProvider>
@@ -148,8 +176,19 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
     renderPage()
     expandDot('EH-TİD-1')
     const parent = Number(mapNode('EH-TİD-1').getAttribute('y'))
-    const child = Number(mapNode('EH-TİD-SYS-001').getAttribute('y'))
+    const child = Number(mapNode('EH-TİD-SYS-002').getAttribute('y'))
     expect(child).toBeGreaterThan(parent)
+  })
+
+  it('haritada YAPRAK gereksinim kutusu yoktur; yalnizca bilesenler cizilir (#144)', () => {
+    renderPage()
+    fireEvent.click(screen.getByTestId('comp-expand-all'))
+    // Alt kirilimi olan dugumler (bilesenler) cizilir...
+    expect(mapNode('EH-TİD-SYS-002')).toBeInTheDocument()
+    // ...yaprak gereksinimler cizilmez: onlar Liste gorunumundeki tablodadir.
+    expect(mapNode('EH-TİD-SYS-001')).not.toBeInTheDocument()
+    expect(mapNode('EH-TİD-HW-001')).not.toBeInTheDocument()
+    expect(mapNode('EH-TİD-SW-001')).not.toBeInTheDocument()
   })
 
   // Issue #140: kutu KENDI KIMLIGINI tasir — gereksinim kutusunda kaydin
@@ -176,11 +215,11 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
   })
 
   it('dal ucundaki nokta dali acar, tekrar tiklayinca kapatir', () => {
+    deepenTree()
     renderPage()
     expandDot('EH-TİD-1')
     expandDot('EH-TİD-SYS-002')
     expect(mapNode('EH-TİD-HW-001')).toBeInTheDocument()
-    expect(mapNode('EH-TİD-SW-001')).toBeInTheDocument()
 
     expandDot('EH-TİD-SYS-002')
     expect(mapNode('EH-TİD-HW-001')).not.toBeInTheDocument()
@@ -189,6 +228,7 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
   })
 
   it('"Tümünü Aç" / "Tümünü Kapat" tum kirilimi yonetir', () => {
+    deepenTree()
     renderPage()
     fireEvent.click(screen.getByTestId('comp-expand-all'))
     expect(mapNode('EH-TİD-HW-001')).toBeInTheDocument()
@@ -215,11 +255,15 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
   })
 
   it('okuma izni olmayan seviye haritada da cizilmez', () => {
+    deepenTree()
     authMock.value = { can: (_perm, component) => component !== 'req-subsystem' }
     renderPage()
     fireEvent.click(screen.getByTestId('comp-expand-all'))
     expect(mapNode('EH-TİD-HW-001')).not.toBeInTheDocument()
-    expect(mapNode('EH-TİD-SYS-002')).toBeInTheDocument()
+    // Gorunur kirilimi kalmayan dugum artik bir BILESEN degildir (#144):
+    // pompa unitesinin altindaki her sey gizlenince kutusu da dusmustur.
+    expect(mapNode('EH-TİD-SYS-002')).not.toBeInTheDocument()
+    expect(mapNode('EH-TİD-1')).toBeInTheDocument()
   })
 
   it('proje dugumu secilince kapsam TUM projedir', () => {
@@ -235,17 +279,17 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
 })
 
 describe('Bileşenler — harita düzeni (ürün ağacı / feature tree)', () => {
-  const expandPump = () => {
-    expandDot('EH-TİD-1')
-    expandDot('EH-TİD-SYS-002')
-  }
+  // Issue #144: duzen artik KARDES BILESENLER uzerinden olculur (haritada
+  // yaprak gereksinim kutusu yoktur).
+  beforeEach(() => siblingTree())
+  const expandPump = () => expandDot('EH-TİD-1')
 
   it('varsayilan duzen AGAC: kardesler ust kutunun altinda YAN YANA durur', () => {
     renderPage()
     expect(screen.getByTestId('comp-mapstyle-tree')).toHaveAttribute('aria-pressed', 'true')
     expandPump()
-    const hw = mapNode('EH-TİD-HW-001')
-    const sw = mapNode('EH-TİD-SW-001')
+    const hw = mapNode('EH-TİD-SYS-001')
+    const sw = mapNode('EH-TİD-SYS-002')
     // Ayni seviyedeki iki kardes ayni satirda (y esit), farkli sutunlarda.
     expect(Number(hw.getAttribute('y'))).toBe(Number(sw.getAttribute('y')))
     expect(Number(hw.getAttribute('x'))).not.toBe(Number(sw.getAttribute('x')))
@@ -254,9 +298,9 @@ describe('Bileşenler — harita düzeni (ürün ağacı / feature tree)', () =>
   it('agac duzeninde ust kutu cocuklarinin TAM ORTASINDA durur', () => {
     renderPage()
     expandPump()
-    const parent = Number(mapNode('EH-TİD-SYS-002').getAttribute('x'))
-    const left = Number(mapNode('EH-TİD-HW-001').getAttribute('x'))
-    const right = Number(mapNode('EH-TİD-SW-001').getAttribute('x'))
+    const parent = Number(mapNode('EH-TİD-1').getAttribute('x'))
+    const left = Number(mapNode('EH-TİD-SYS-001').getAttribute('x'))
+    const right = Number(mapNode('EH-TİD-SYS-002').getAttribute('x'))
     expect(parent).toBeCloseTo((Math.min(left, right) + Math.max(left, right)) / 2, 5)
   })
 
@@ -265,8 +309,8 @@ describe('Bileşenler — harita düzeni (ürün ağacı / feature tree)', () =>
     fireEvent.click(screen.getByTestId('comp-mapstyle-compact'))
     expect(screen.getByTestId('comp-mapstyle-compact')).toHaveAttribute('aria-pressed', 'true')
     expandPump()
-    const hw = mapNode('EH-TİD-HW-001')
-    const sw = mapNode('EH-TİD-SW-001')
+    const hw = mapNode('EH-TİD-SYS-001')
+    const sw = mapNode('EH-TİD-SYS-002')
     expect(Number(hw.getAttribute('x'))).toBe(Number(sw.getAttribute('x')))
     expect(Number(hw.getAttribute('y'))).not.toBe(Number(sw.getAttribute('y')))
   })
@@ -275,10 +319,10 @@ describe('Bileşenler — harita düzeni (ürün ağacı / feature tree)', () =>
     renderPage()
     expandPump()
     fireEvent.click(screen.getByTestId('comp-mapstyle-compact'))
-    expect(mapNode('EH-TİD-HW-001')).toBeInTheDocument()
+    expect(mapNode('EH-TİD-SYS-001')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('comp-mapstyle-tree'))
-    const hw = mapNode('EH-TİD-HW-001')
-    const sw = mapNode('EH-TİD-SW-001')
+    const hw = mapNode('EH-TİD-SYS-001')
+    const sw = mapNode('EH-TİD-SYS-002')
     expect(Number(hw.getAttribute('y'))).toBe(Number(sw.getAttribute('y')))
   })
 

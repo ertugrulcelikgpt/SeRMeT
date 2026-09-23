@@ -396,14 +396,17 @@ export function buildManualComponents(components, requirements, { componentTree,
 }
 
 /**
- * ELLE tanimli bilesen kirilimini harita grafigine cevirir. Bilesen kutulari
- * kirilimi, altlarindaki gereksinim kutulari da bagli kayitlari gosterir.
- * Gereksinimi olmayan bilesen de haritada DURUR (gizlenmez).
+ * ELLE tanimli bilesen kirilimini harita grafigine cevirir.
+ *
+ * Issue #144: harita YALNIZCA URUN AGACIDIR — kutular bilesenlerdir,
+ * gereksinim kutulari haritaya GIRMEZ. Bagli gereksinimler bilesenin ozet
+ * satirinda ("3 gereksinim · 1 doğrulandı") sayilir ve Liste gorunumunde
+ * tablo olarak acilir. Gereksinimi olmayan bilesen de haritada DURUR.
  */
 export function buildManualComponentGraph(
   components,
   requirements,
-  { componentTree, metaOf = null, componentMetaOf = null, rootLabel = '', rootMeta = '' } = {},
+  { componentTree, componentMetaOf = null, rootLabel = '', rootMeta = '' } = {},
 ) {
   const ct = componentTree || buildManualComponentTree(components)
   const nodes = new Map()
@@ -438,33 +441,12 @@ export function buildManualComponentGraph(
     })
   }
 
-  for (const r of requirements || []) {
-    if (!r?.componentId || !ct.byId.has(r.componentId)) continue
-    const label = getDisplayLabel(r, { max: 120 })
-    nodes.set(r.id, {
-      id: r.id,
-      kind: 'requirement',
-      type: r.type,
-      text_id: r.text_id || '',
-      label: label.text,
-      labelIsFallback: label.isFallback,
-      level: levelOfType(r.type),
-      typeSuffix: TYPE_SUFFIX[r.type] || '',
-      outline: '',
-      partNo: r.partNo || '',
-      meta: metaOf ? metaOf(r) : '',
-      row: r,
-    })
-  }
-
   for (const c of components || []) {
     if (!c?.id) continue
     const kids = (ct.childrenOf.get(c.id) || []).map((k) => k.id)
-    const reqs = (byComponent.get(c.id) || []).map((r) => r.id)
-    const all = [...kids, ...reqs]
-    if (all.length > 0) {
-      children.set(c.id, all)
-      linkCount += all.length
+    if (kids.length > 0) {
+      children.set(c.id, kids)
+      linkCount += kids.length
     }
   }
 
@@ -529,6 +511,10 @@ export function subtreeStats(tree, verificationIndex) {
 /**
  * PBS agacini mind map motorunun graf sekline cevirir.
  *
+ * Issue #144: harita URUN AGACIDIR. PBS kaynaginda bilesen = ALT KIRILIMI
+ * OLAN dugum; yaprak gereksinimler haritaya girmez (bilesenin ozet satirinda
+ * sayilir, Liste gorunumunde tablo olarak acilir).
+ *
  * @param {Array} requirements
  * @param {object} opts
  *   tree            hazir buildRequirementTree ciktisi (tekrar kurulmasin)
@@ -568,20 +554,27 @@ export function buildComponentGraph(
     }
   }
 
+  // Bilesen = alt kirilimi olan dugum. Once bunlar isaretlenir, sonra
+  // yalnizca bilesenden bilesene giden dallar kurulur.
+  const isComponent = (id) => (t.childrenOf.get(id) || []).length > 0
+
   for (const r of requirements || []) {
-    if (!r?.id) continue
+    if (!r?.id || !isComponent(r.id)) continue
     const kids = t.childrenOf.get(r.id) || []
     nodes.set(r.id, toNode(r, kids.length))
+  }
+
+  for (const r of requirements || []) {
+    if (!r?.id || !isComponent(r.id)) continue
+    const kids = (t.childrenOf.get(r.id) || []).filter((k) => isComponent(k.id)).map((k) => k.id)
     if (kids.length > 0) {
-      children.set(
-        r.id,
-        kids.map((k) => k.id),
-      )
+      children.set(r.id, kids)
       linkCount += kids.length
     }
   }
 
-  return withProjectRoot({ nodes, children, rootIds: t.roots.map((r) => r.id), linkCount })
+  const rootIds = t.roots.filter((r) => isComponent(r.id)).map((r) => r.id)
+  return withProjectRoot({ nodes, children, rootIds, linkCount })
 
   /** Istenmisse koklerin uzerine sanal proje dugumunu ekler. */
   function withProjectRoot(graph) {

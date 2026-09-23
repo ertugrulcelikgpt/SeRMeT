@@ -451,13 +451,15 @@ describe('elle tanimlanan bilesenler (#138)', () => {
     expect(componentSubtreeIds(tree, 'c1')).toEqual(['c1'])
   })
 
-  it('harita grafigi bilesen kirilimini + bagli gereksinimleri tasir', () => {
+  it('harita grafigi YALNIZCA bilesen kirilimini tasir (#144)', () => {
     const graph = buildManualComponentGraph(COMPONENTS, REQS, {})
     expect(graph.rootIds).toEqual(['c1', 'c2'])
     expect(graph.nodes.get('c1').kind).toBe('component')
-    expect(graph.children.get('c2')).toEqual(['c3', 'r2'])
-    // Bagsiz gereksinim haritaya GIRMEZ (bir bilesenin altinda degil).
+    expect(graph.children.get('c2')).toEqual(['c3'])
+    // Gereksinimler haritaya GIRMEZ: bagli olan da (r2), bagsiz olan da (r3).
+    expect(graph.nodes.has('r2')).toBe(false)
     expect(graph.nodes.has('r3')).toBe(false)
+    expect([...graph.nodes.values()].every((n) => n.kind === 'component')).toBe(true)
   })
 
   it('rootLabel verilirse tum kokler sanal proje dugumunun altinda toplanir', () => {
