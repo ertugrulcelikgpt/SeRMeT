@@ -543,6 +543,75 @@ describe('Harita görünümü', () => {
     // Harita varsayilan gorunumdur; bilesen kutusu erisilebilir adiyla bulunur
     // (kaydi olmadigi icin text_id bos, etiket bilesen adidir).
     expect(screen.getByTestId('mindmap-canvas')).toBeInTheDocument()
-    expect(await screen.findByLabelText(/Su Pompası Ünitesi/)).toBeInTheDocument()
+    expect(
+      await screen.findByLabelText(/^Bileşen \(ürün\):.*Su Pompası Ünitesi/),
+    ).toBeInTheDocument()
+  })
+})
+
+// Issue #155: alt bilesen Liste'ye gecmeden HARITA uzerinden eklenir.
+describe('Harita: alt bileşen ekleme', () => {
+  beforeEach(() => {
+    appMock.components = [
+      comp('c1', 'Su Pompası Ünitesi', { sortIndex: 0 }),
+      comp('c2', 'Tank', { sortIndex: 1 }),
+    ]
+  })
+
+  it('kutunun köşesindeki + ile açılan form ebeveyni doğru kaydeder', async () => {
+    renderPage()
+    fireEvent.click(await screen.findByTestId('mindmap-add-c1'))
+    fireEvent.change(await screen.findByTestId('comp-name-input'), {
+      target: { value: 'Donanım' },
+    })
+    fireEvent.click(screen.getByTestId('comp-form-save'))
+    await waitFor(() =>
+      expect(appMock.addComponent).toHaveBeenCalledWith({
+        name: 'Donanım',
+        partNo: expect.any(String),
+        parentId: 'c1',
+      }),
+    )
+  })
+
+  it('proje kökündeki + üst seviye bileşen ekler', async () => {
+    renderPage()
+    fireEvent.click(await screen.findByTestId('mindmap-add-__project__'))
+    fireEvent.change(await screen.findByTestId('comp-name-input'), {
+      target: { value: 'STC' },
+    })
+    fireEvent.click(screen.getByTestId('comp-form-save'))
+    await waitFor(() =>
+      expect(appMock.addComponent).toHaveBeenCalledWith({
+        name: 'STC',
+        partNo: expect.any(String),
+        parentId: null,
+      }),
+    )
+  })
+
+  it('kayıttan sonra ebeveynin dalı açılır ve yeni kutu görünür', async () => {
+    const { rerender } = renderPage()
+    fireEvent.click(await screen.findByTestId('mindmap-add-c1'))
+    fireEvent.change(await screen.findByTestId('comp-name-input'), {
+      target: { value: 'Donanım' },
+    })
+    fireEvent.click(screen.getByTestId('comp-form-save'))
+    await waitFor(() => expect(appMock.addComponent).toHaveBeenCalledTimes(1))
+    appMock.components = [...appMock.components, comp('new-1', 'Donanım', { parentId: 'c1' })]
+    rerender(
+      <LanguageProvider>
+        <Components />
+      </LanguageProvider>,
+    )
+    expect(await screen.findByTestId('mindmap-node-new-1')).toBeInTheDocument()
+  })
+
+  it('yazma yetkisi yoksa haritada + görünmez', async () => {
+    authMock.value = { can: () => false, isPM: false }
+    renderPage()
+    expect(await screen.findByTestId('mindmap-node-c1')).toBeInTheDocument()
+    expect(screen.queryByTestId('mindmap-add-c1')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('comp-map-hint-add')).not.toBeInTheDocument()
   })
 })

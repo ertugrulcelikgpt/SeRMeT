@@ -726,6 +726,8 @@ export const STRINGS = {
     'mindmap.kindComponent': 'Bileşen (ürün)',
     'mindmap.kindRequirement': 'Gereksinim',
     'mindmap.collapseBranch': '{id} dalını kapat',
+    // Issue #155: kutunun sag ust kosesindeki "+" — alt kayit ekler.
+    'mindmap.addChild': '{name} altına alt bileşen ekle',
     'mindmap.zoomIn': 'Yakınlaştır',
     'mindmap.zoomOut': 'Uzaklaştır',
     'mindmap.fit': 'Ekrana sığdır',
@@ -745,6 +747,7 @@ export const STRINGS = {
       'Alt kırılımı olmayan kardeşler üst kutunun altında zincir olur; harita daralır, aşağı uzar.',
     'comp.mapHint':
       'Kutuya tıkla: kayıt detayı (ID + açıklama) · dal ucundaki noktaya tıkla: aç / kapat · tekerlek veya sürükle: kaydır · Ctrl + tekerlek: yakınlaştır',
+    'comp.mapHintAdd': 'Kutunun üzerine gel, köşedeki + ile alt bileşen ekle',
     'comp.mapCounts': '{visible} / {total} düğüm',
     'comp.projectRoot': 'Proje',
     'comp.search': 'Bileşen ara…',
@@ -1843,6 +1846,7 @@ export const STRINGS = {
     'mindmap.kindComponent': 'Component (product)',
     'mindmap.kindRequirement': 'Requirement',
     'mindmap.collapseBranch': 'Collapse branch {id}',
+    'mindmap.addChild': 'Add sub-component under {name}',
     'mindmap.zoomIn': 'Zoom in',
     'mindmap.zoomOut': 'Zoom out',
     'mindmap.fit': 'Fit to screen',
@@ -1862,6 +1866,7 @@ export const STRINGS = {
       'Siblings with no breakdown chain below the parent box; the map narrows and grows downward.',
     'comp.mapHint':
       'Click a box: record details (ID + description) · click the dot at the branch end: expand / collapse · wheel or drag: pan · Ctrl + wheel: zoom',
+    'comp.mapHintAdd': 'Hover a box and use the + in its corner to add a sub-component',
     'comp.mapCounts': '{visible} / {total} nodes',
     'comp.projectRoot': 'Project',
     'comp.search': 'Search components…',
