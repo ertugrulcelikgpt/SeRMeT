@@ -114,6 +114,16 @@ describe('Gereksinim Haritası — dallanma ve aç/kapa', () => {
     expect(node('REQ-USR-001')).toBeInTheDocument()
   })
 
+  it('gereksinim kutusunda Text ID yaninda Parca No YAZMAZ (#143)', () => {
+    appMock.requirements = [{ ...USER, partNo: '010.00.005' }, SYS, SW]
+    renderPage()
+    expect(screen.getByTestId('mindmap-node-REQ-USR-001')).toBeInTheDocument()
+    // Ust satir YALNIZCA gereksinimin kendi kodudur; urun kimligi olan Parca
+    // No haritada bir gereksinim satirina yazilmaz.
+    expect(screen.getByText('REQ-USR-001')).toBeInTheDocument()
+    expect(screen.queryByText('010.00.005')).not.toBeInTheDocument()
+  })
+
   it('kapali dugum, altindaki kayit sayisini gosterir', () => {
     renderPage()
     expect(toggle('REQ-SYS-001')).toHaveAttribute('aria-label', expect.stringContaining('2'))

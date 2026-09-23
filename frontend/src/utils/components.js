@@ -30,22 +30,9 @@
 // ============================================================================
 import { LINK_TYPE, TYPE_SUFFIX } from './constants.js'
 import { getDisplayLabel, stripHtml } from './format.js'
-import { levelOfType } from './mindMap.js'
 import { VERIFICATION, verificationOf } from './verification.js'
 
 export const ROOT_KEY = '__root__'
-
-/**
- * Bilesen listesinin kaynagi.
- *   MANUAL — kullanicinin ELLE tanimladigi bilesenler (Issue #138, varsayilan)
- *   PBS    — gereksinim agacindan TURETILMIS bilesenler (Issue #129, korunur)
- *
- * Issue #143: ALAN (disiplin) kaynagi KALDIRILDI. Urun kirilimi elle tanimli
- * bilesenler ve PBS agaci uzerinden yurur; Alan bir disiplin ETIKETIDIR,
- * urun kirilimi degildir — bilesen gibi gosterilmesi ikinci bir (yanlis)
- * kirilim uretiyordu. Alan bilgisi gereksinim formunda ve filtrelerde durur.
- */
-export const COMPONENT_SOURCE = { MANUAL: 'manual', PBS: 'pbs' }
 
 /**
  * Haritanin tepesindeki SANAL proje dugumu. Kok gereksinimler (User
@@ -253,11 +240,16 @@ export function subtreeRows(tree, nodeId) {
 // --- Bilesen listesi --------------------------------------------------------
 
 /**
- * Secilebilir bilesenler.
+ * PBS agacindan TURETILEN bilesen adaylari.
  *
- * PBS kaynagi: ALT KIRILIMI OLAN her dugum bir bilesendir ("Basınç Pompası
- * Ünitesi" gibi). Bilesenin gereksinimleri = dugumun KENDISI + tum alt agaci
- * (User / System / Sub-system hepsi bir arada — istenen tam olarak budur).
+ * ALT KIRILIMI OLAN her dugum bir bilesendir ("Basınç Pompası Ünitesi" gibi);
+ * bilesenin gereksinimleri = dugumun KENDISI + tum alt agaci (User / System /
+ * Sub-system hepsi bir arada).
+ *
+ * Issue #147: bu artik bir GORUNUM KAYNAGI degildir — ekranda tek kaynak
+ * ELLE tanimli bilesenlerdir. Tek kullanimi, mevcut projelerde "Ürün
+ * ağacından içe aktar" aksiyonunun sunulup sunulmayacagini soylemek ve o
+ * gecisin icerigini uretmektir.
  *
  * @returns {Array<{key,label,outline,depth,node,rows}>}
  */
@@ -506,99 +498,6 @@ export function subtreeStats(tree, verificationIndex) {
   }
   for (const root of tree.roots) visit(root.id, new Set())
   return stats
-}
-
-/**
- * PBS agacini mind map motorunun graf sekline cevirir.
- *
- * Issue #144: harita URUN AGACIDIR. PBS kaynaginda bilesen = ALT KIRILIMI
- * OLAN dugum; yaprak gereksinimler haritaya girmez (bilesenin ozet satirinda
- * sayilir, Liste gorunumunde tablo olarak acilir).
- *
- * @param {Array} requirements
- * @param {object} opts
- *   tree            hazir buildRequirementTree ciktisi (tekrar kurulmasin)
- *   metaOf          (row, { childCount }) => string — dugumun ucuncu satiri
- *                   (orn. "6 gereksinim · 2 doğrulandı")
- *   rootLabel       verilirse tum kokler bu SANAL proje dugumunun altina
- *                   toplanir (bkz. PROJECT_ROOT_KEY)
- *   rootMeta        proje dugumunun ozet satiri
- * @returns {{nodes:Map, children:Map, rootIds:string[], linkCount:number}}
- */
-export function buildComponentGraph(
-  requirements,
-  { tree, metaOf = null, rootLabel = '', rootMeta = '' } = {},
-) {
-  const t = tree || buildRequirementTree(requirements)
-  const nodes = new Map()
-  const children = new Map()
-  let linkCount = 0
-
-  const toNode = (r, childCount) => {
-    const label = getDisplayLabel(r, { max: 120 })
-    return {
-      id: r.id,
-      kind: 'requirement',
-      type: r.type,
-      text_id: r.text_id || '',
-      label: label.text,
-      labelIsFallback: label.isFallback,
-      level: levelOfType(r.type),
-      typeSuffix: TYPE_SUFFIX[r.type] || '',
-      outline: t.infoById.get(r.id)?.outline || '',
-      // Issue #135: urun kimligi. Harita kutusunda isimle birlikte yazilir;
-      // ayni adli iki dugumu (AMTB/GY1 vs STC/GY1) ayiran sey budur.
-      partNo: r.partNo || '',
-      meta: metaOf ? metaOf(r, { childCount }) : '',
-      row: r,
-    }
-  }
-
-  // Bilesen = alt kirilimi olan dugum. Once bunlar isaretlenir, sonra
-  // yalnizca bilesenden bilesene giden dallar kurulur.
-  const isComponent = (id) => (t.childrenOf.get(id) || []).length > 0
-
-  for (const r of requirements || []) {
-    if (!r?.id || !isComponent(r.id)) continue
-    const kids = t.childrenOf.get(r.id) || []
-    nodes.set(r.id, toNode(r, kids.length))
-  }
-
-  for (const r of requirements || []) {
-    if (!r?.id || !isComponent(r.id)) continue
-    const kids = (t.childrenOf.get(r.id) || []).filter((k) => isComponent(k.id)).map((k) => k.id)
-    if (kids.length > 0) {
-      children.set(r.id, kids)
-      linkCount += kids.length
-    }
-  }
-
-  const rootIds = t.roots.filter((r) => isComponent(r.id)).map((r) => r.id)
-  return withProjectRoot({ nodes, children, rootIds, linkCount })
-
-  /** Istenmisse koklerin uzerine sanal proje dugumunu ekler. */
-  function withProjectRoot(graph) {
-    if (!rootLabel || graph.rootIds.length === 0) return graph
-    graph.nodes.set(PROJECT_ROOT_KEY, {
-      id: PROJECT_ROOT_KEY,
-      kind: 'project', // kaydi olmayan SANAL dugum: detayi acilmaz
-      type: null,
-      text_id: '',
-      label: rootLabel,
-      labelIsFallback: false,
-      level: 'user',
-      typeSuffix: '',
-      outline: '',
-      meta: rootMeta,
-      row: null,
-    })
-    graph.children.set(PROJECT_ROOT_KEY, graph.rootIds)
-    return {
-      ...graph,
-      rootIds: [PROJECT_ROOT_KEY],
-      linkCount: graph.linkCount + graph.rootIds.length,
-    }
-  }
 }
 
 /** "2.10" > "2.9" olacak sekilde anahat numarasi karsilastirmasi. */

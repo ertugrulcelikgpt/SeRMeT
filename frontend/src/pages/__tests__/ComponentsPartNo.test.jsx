@@ -21,8 +21,15 @@ const { appMock, authMock, api } = vi.hoisted(() => ({
     testCases: [],
     links: [],
     attributeDefs: [],
+    components: [],
     theme: 'light',
     refresh: vi.fn(),
+    addComponent: vi.fn(),
+    editComponent: vi.fn(),
+    removeComponent: vi.fn(),
+    reorderComponents: vi.fn(),
+    linkRequirementsToComponent: vi.fn(),
+    importComponentsFromPbs: vi.fn(),
   },
   authMock: { value: { can: () => true, isPM: true } },
   api: {
@@ -51,12 +58,31 @@ vi.mock('../../components/common/ViewModal.jsx', () => ({ default: () => null })
 import Components from '../Components.jsx'
 
 // Issue'daki ornek agac: ayni adli GY1'ler AMTB ve STC dallarinda.
+// Issue #147: kirilim ELLE tanimli bilesenlerden olusur; gereksinimler bu
+// bilesenlere baglidir ve kendi Parca No'larini tabloda tasir.
+const comp = (id, name, extra = {}) => ({
+  id,
+  projectId: 'p1',
+  name,
+  parentId: null,
+  partNo: '',
+  sortIndex: 0,
+  ...extra,
+})
+const COMPONENTS = [
+  comp('sys', 'Sistem', { partNo: '100.00.001' }),
+  comp('amtb', 'AMTB', { parentId: 'sys', partNo: '100.00.002', sortIndex: 0 }),
+  comp('stc', 'STC', { parentId: 'sys', partNo: '100.00.003', sortIndex: 1 }),
+  comp('a-gy1', 'GY1', { parentId: 'amtb', partNo: '320.00.001' }),
+  comp('s-gy1', 'GY1', { parentId: 'stc', partNo: '340.00.001' }),
+]
 const SISTEM = {
   id: 'sys',
   text_id: 'R-001',
   title: 'Sistem',
   type: 'User Requirement',
   partNo: '100.00.001',
+  componentId: 'sys',
 }
 const AMTB = {
   id: 'amtb',
@@ -66,6 +92,7 @@ const AMTB = {
   type: 'System Requirement',
   partNo: '100.00.002',
   partNoBlock: '320',
+  componentId: 'amtb',
 }
 const STC = {
   id: 'stc',
@@ -75,6 +102,7 @@ const STC = {
   type: 'System Requirement',
   partNo: '100.00.003',
   partNoBlock: '340',
+  componentId: 'stc',
 }
 const AMTB_GY1 = {
   id: 'a-gy1',
@@ -83,6 +111,7 @@ const AMTB_GY1 = {
   title: 'GY1',
   type: 'Software Requirement',
   partNo: '320.00.001',
+  componentId: 'a-gy1',
 }
 const STC_GY1 = {
   id: 's-gy1',
@@ -91,6 +120,7 @@ const STC_GY1 = {
   title: 'GY1',
   type: 'Software Requirement',
   partNo: '340.00.001',
+  componentId: 's-gy1',
 }
 
 const CLEAN_CHECK = {
@@ -113,6 +143,7 @@ const showList = () => fireEvent.click(screen.getByTestId('comp-view-list'))
 
 beforeEach(() => {
   appMock.requirements = [SISTEM, AMTB, STC, AMTB_GY1, STC_GY1]
+  appMock.components = COMPONENTS
   appMock.testCases = []
   appMock.links = []
   appMock.refresh = vi.fn()
@@ -174,65 +205,31 @@ describe('Parça No — görünürlük', () => {
     expect(amtbGy1).not.toBe(stcGy1)
   })
 
-  it('haritada gereksinim kutusu Parça No YAZMAZ, numara ipucunda kalır (#143)', async () => {
+  it('haritada bilesen kutusu Parca No tasir (urun kimligi)', async () => {
     renderPage()
-    await waitFor(() => expect(screen.getByTestId('mindmap-node-R-001')).toBeInTheDocument())
-    // Kutunun ust satirinda gereksinimin KENDI kodu durur (#140); urun
-    // kimligi olan Parca No gereksinim satirina yazilmaz (#143).
-    expect(screen.getByText('R-001')).toBeInTheDocument()
-    expect(screen.queryByText('100.00.001')).not.toBeInTheDocument()
-    expect(screen.getByTestId('mindmap-node-R-001').querySelector('title')?.textContent).toContain(
-      '100.00.001',
-    )
-  })
-})
-
-describe('Parça No — arama', () => {
-  it('bileşenler Parça No ile aranabilir', async () => {
-    renderPage()
-    showList()
-    await waitFor(() => expect(screen.getByTestId('comp-item-amtb')).toBeInTheDocument())
-    fireEvent.change(screen.getByTestId('comp-search'), { target: { value: '100.00.003' } })
-    expect(screen.queryByTestId('comp-item-amtb')).not.toBeInTheDocument()
-    expect(screen.getByTestId('comp-item-stc')).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByTestId('mindmap-node-sys')).toBeInTheDocument())
+    expect(screen.getByText('100.00.001')).toBeInTheDocument()
   })
 })
 
 describe('Parça No — elle düzenleme', () => {
-  const openEditor = async () => {
+  // Issue #147: numara, bilesen formundan (Yeni bileşen ekle / Düzenle)
+  // degistirilir; PBS dugumune bagli satir ici editor kaldirildi.
+  it('bilesen formu secili bilesenin numarasini tasir', async () => {
     renderPage()
     showList()
     await waitFor(() => expect(screen.getByTestId('comp-item-amtb')).toBeInTheDocument())
-    fireEvent.click(screen.getByTestId('comp-item-amtb'))
-    fireEvent.click(screen.getByTestId('partno-edit'))
-  }
-
-  it('seçili bileşenin numarası aynı sayfada değiştirilebilir', async () => {
-    await openEditor()
-    fireEvent.change(screen.getByTestId('partno-input'), { target: { value: '100.00.099' } })
-    fireEvent.click(screen.getByTestId('partno-save'))
-    await waitFor(() =>
-      expect(api.setPartNo).toHaveBeenCalledWith('p1', 'amtb', {
-        partNo: '100.00.099',
-        partNoBlock: '320',
-      }),
-    )
+    fireEvent.click(screen.getByTestId('comp-edit-amtb'))
+    expect(await screen.findByTestId('comp-partno-input')).toHaveValue('100.00.002')
   })
 
-  it('çakışma kaydedilmez; sunucunun uyarısı gösterilir ve form açık kalır', async () => {
-    api.setPartNo.mockRejectedValue(new Error('Parca No 100.00.003 zaten kullanilmis'))
-    await openEditor()
-    fireEvent.change(screen.getByTestId('partno-input'), { target: { value: '100.00.003' } })
-    fireEvent.click(screen.getByTestId('partno-save'))
-    await waitFor(() => expect(screen.getByTestId('partno-error')).toHaveTextContent(/zaten/i))
-    expect(screen.getByTestId('partno-form')).toBeInTheDocument()
-  })
-
-  it('yazma izni olmayan kullanıcıya düzenleme düğmesi gösterilmez', async () => {
+  it('yazma izni olmayan kullaniciya duzenleme aksiyonlari gosterilmez', async () => {
     authMock.value = { can: () => false, isPM: false }
     renderPage()
+    showList()
     await waitFor(() => expect(screen.getByTestId('comp-counts')).toBeInTheDocument())
-    expect(screen.queryByTestId('partno-edit')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('comp-add-root')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('comp-edit-amtb')).not.toBeInTheDocument()
   })
 })
 

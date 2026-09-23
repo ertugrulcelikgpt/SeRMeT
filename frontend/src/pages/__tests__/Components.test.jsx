@@ -1,15 +1,16 @@
 // ============================================================================
-//  Components.test.jsx — "Bileşenler" sayfasi (Issue #129).
+//  Components.test.jsx — "Bileşenler" sayfasi (Issue #129, #144, #147).
 //
 //  Kapsam (kabul kriterleri):
-//   - HARITA gorunumu varsayilandir: kutuda yalnizca ISIM yazar, kutuya
-//     tiklayinca kaydin detayi (ID + aciklama) acilir, dal ucundaki nokta
-//     dali acar/kapatir
-//   - Bilesen secilince O BILESENE ait TUM gereksinimler (User/System/
+//   - HARITA gorunumu varsayilandir ve YALNIZCA urun agacini cizer (#144):
+//     kutular bilesendir, kutuya tiklayinca secim tasinir, dal ucundaki
+//     nokta dali acar/kapatir
+//   - Bilesen kaynagi TEKTIR: elle tanimli bilesenler (#147) — "Ürün Ağacı"
+//     kaynagi ve kaynak secici ekranda YOKTUR
+//   - Bilesen secilince O BILESENE bagli TUM gereksinimler (User/System/
 //     Sub-system birlikte) tek listede gorunur
-//   - Liste sutunlari: TID No / Text ID / Baslik / Gereksinim Metni /
-//     Bagli SGD / Dogrulama yontemi
-//   - Bilesen adinin yaninda gereksinim sayisi + dogrulanma ozeti
+//   - Liste sutunlari: TID No / Parca No / Text ID / Baslik / Gereksinim
+//     Metni / Bagli SGD / Dogrulama yontemi
 //   - Kayda tiklayinca detay (ViewModal) acilir
 //   - Liste CSV / PDF olarak disa aktarilabilir
 // ============================================================================
@@ -20,12 +21,20 @@ import { LanguageProvider } from '../../context/LanguageContext.jsx'
 
 const { appMock, authMock } = vi.hoisted(() => ({
   appMock: {
+    projectId: 'p1',
     requirements: [],
     testCases: [],
     links: [],
     attributeDefs: [],
+    components: [],
     theme: 'dark',
     refresh: () => {},
+    addComponent: vi.fn(),
+    editComponent: vi.fn(),
+    removeComponent: vi.fn(),
+    reorderComponents: vi.fn(),
+    linkRequirementsToComponent: vi.fn(),
+    importComponentsFromPbs: vi.fn(),
   },
   authMock: { value: { can: () => true } },
 }))
@@ -55,14 +64,41 @@ vi.mock('../../components/common/ViewModal.jsx', () => ({
 
 import Components from '../Components.jsx'
 
-const USER = { id: 'u1', text_id: 'EH-TİD-1', title: 'Kahve Makinesi', type: 'User Requirement' }
+//  URUN KIRILIMI (elle tanimli bilesenler — tek kaynak, #147):
+//    Kahve Makinesi (c1)
+//      ├─ Su Deposu Alt Sistemi (c2)
+//      └─ Basınç Pompası Ünitesi (c3)
+//  Gereksinimler bu bilesenlere BAGLIDIR; kendi (PBS) hiyerarsileri TID
+//  numarasini ve tablodaki girintiyi belirlemeye devam eder.
+const comp = (id, name, extra = {}) => ({
+  id,
+  projectId: 'p1',
+  name,
+  parentId: null,
+  partNo: '',
+  sortIndex: 0,
+  ...extra,
+})
+const COMPONENTS = [
+  comp('c1', 'Kahve Makinesi', { partNo: '100.00.001', sortIndex: 0 }),
+  comp('c2', 'Su Deposu Alt Sistemi', { parentId: 'c1', partNo: '100.00.002', sortIndex: 0 }),
+  comp('c3', 'Basınç Pompası Ünitesi', { parentId: 'c1', partNo: '100.00.003', sortIndex: 1 }),
+]
+
+const USER = {
+  id: 'u1',
+  text_id: 'EH-TİD-1',
+  title: 'Kahve Makinesi',
+  type: 'User Requirement',
+  componentId: 'c1',
+}
 const TANK = {
   id: 's1',
   parentId: 'u1',
   text_id: 'EH-TİD-SYS-001',
   title: 'Su Deposu Alt Sistemi',
   type: 'System Requirement',
-  field: 'Donanim',
+  componentId: 'c2',
 }
 const PUMP = {
   id: 's2',
@@ -70,7 +106,7 @@ const PUMP = {
   text_id: 'EH-TİD-SYS-002',
   title: 'Basınç Pompası Ünitesi',
   type: 'System Requirement',
-  field: 'Donanim',
+  componentId: 'c3',
 }
 const PUMP_HW = {
   id: 'h1',
@@ -80,6 +116,7 @@ const PUMP_HW = {
   description: '<p>Pompa <b>9 bar</b> basınç üretmelidir.</p>',
   type: 'Hardware Requirement',
   attributes: { verification_method: 'Test' },
+  componentId: 'c3',
 }
 const PUMP_SW = {
   id: 'w1',
@@ -87,36 +124,9 @@ const PUMP_SW = {
   text_id: 'EH-TİD-SW-001',
   title: 'Pompa sürücüsü',
   type: 'Software Requirement',
+  componentId: 'c3',
 }
 const TEST = { id: 'tc1', text_id: 'TC-SUB-001', title: 'Basınç testi', status: 'Approved' }
-
-// Issue #144: harita YALNIZCA urun agacini cizer — bir dugum ancak ALT
-// KIRILIMI varsa (yani bir bilesense) kutu olur, yaprak gereksinimler
-// haritaya girmez. Harita testleri bu yuzden kirilimi derinlestirir:
-//   Kahve Makinesi -> Su Deposu (+ yaprak) ve Pompa Ünitesi -> Pompa basıncı
-// boylece haritada hem KARDES iki bilesen hem de ucuncu bir seviye bulunur.
-const TANK_SW = {
-  id: 'w2',
-  parentId: 's1',
-  text_id: 'EH-TİD-SW-002',
-  title: 'Depo hacmi',
-  type: 'Software Requirement',
-}
-const PUMP_HW_CHILD = {
-  id: 'h2',
-  parentId: 'h1',
-  text_id: 'EH-TİD-HW-002',
-  title: 'Pompa gürültüsü',
-  type: 'Hardware Requirement',
-}
-const deepenTree = () => {
-  appMock.requirements = [...appMock.requirements, TANK_SW, PUMP_HW_CHILD]
-}
-// Yalnizca KARDES iki bilesen (ikisi de haritanin yapragi) — duzen testleri
-// icin: Su Deposu ve Pompa Ünitesi ayni seviyede durur.
-const siblingTree = () => {
-  appMock.requirements = [...appMock.requirements, TANK_SW]
-}
 
 const renderPage = () =>
   render(
@@ -127,6 +137,7 @@ const renderPage = () =>
 
 beforeEach(() => {
   appMock.requirements = [USER, TANK, PUMP, PUMP_HW, PUMP_SW]
+  appMock.components = COMPONENTS
   appMock.testCases = [TEST]
   appMock.links = [
     { type: 'Satisfies', fromId: 'u1', toId: 's1' },
@@ -155,11 +166,13 @@ afterEach(() => {
 const showList = () => fireEvent.click(screen.getByTestId('comp-view-list'))
 const selectPump = () => {
   showList()
-  fireEvent.click(screen.getByTestId('comp-item-s2'))
+  fireEvent.click(screen.getByTestId('comp-item-c3'))
 }
-const mapNode = (textId) => screen.queryByTestId(`mindmap-node-${textId}`)
-// Dal ucundaki nokta: dali acar/kapatir (kutu tiklamasi detayi acar).
-const expandDot = (textId) => fireEvent.click(screen.getByTestId(`mindmap-toggle-${textId}`))
+// Harita kutulari BILESENDIR; kimlikleri bilesen id'sidir (proje kokunun
+// anahtari __project__).
+const mapNode = (key) => screen.queryByTestId(`mindmap-node-${key}`)
+// Dal ucundaki nokta: dali acar/kapatir (kutu tiklamasi secimi tasir).
+const expandDot = (key) => fireEvent.click(screen.getByTestId(`mindmap-toggle-${key}`))
 
 describe('Bileşenler — harita görünümü (varsayılan)', () => {
   it('harita TEK proje dugumuyle acilir; kirilim inerek acilir', () => {
@@ -167,109 +180,95 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
     expect(screen.getByTestId('comp-view-map')).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByTestId('mindmap-canvas')).toBeInTheDocument()
     // Tepede proje dugumu + ilk seviye; derin dallar KAPALI baslar.
-    expect(screen.getByTestId('mindmap-node-')).toBeInTheDocument() // proje dugumu
-    expect(mapNode('EH-TİD-1')).toBeInTheDocument()
-    expect(mapNode('EH-TİD-SYS-002')).not.toBeInTheDocument()
+    expect(mapNode('__project__')).toBeInTheDocument()
+    expect(mapNode('c1')).toBeInTheDocument()
+    expect(mapNode('c3')).not.toBeInTheDocument()
   })
 
   it('harita YUKARIDAN ASAGI dallanir: cocuk dugum ustunun ALTINDA durur', () => {
     renderPage()
-    expandDot('EH-TİD-1')
-    const parent = Number(mapNode('EH-TİD-1').getAttribute('y'))
-    const child = Number(mapNode('EH-TİD-SYS-002').getAttribute('y'))
+    expandDot('c1')
+    const parent = Number(mapNode('c1').getAttribute('y'))
+    const child = Number(mapNode('c3').getAttribute('y'))
     expect(child).toBeGreaterThan(parent)
   })
 
-  it('haritada YAPRAK gereksinim kutusu yoktur; yalnizca bilesenler cizilir (#144)', () => {
+  it('haritada GEREKSINIM kutusu yoktur; yalnizca bilesenler cizilir (#144)', () => {
     renderPage()
     fireEvent.click(screen.getByTestId('comp-expand-all'))
-    // Alt kirilimi olan dugumler (bilesenler) cizilir...
-    expect(mapNode('EH-TİD-SYS-002')).toBeInTheDocument()
-    // ...yaprak gereksinimler cizilmez: onlar Liste gorunumundeki tablodadir.
-    expect(mapNode('EH-TİD-SYS-001')).not.toBeInTheDocument()
+    expect(mapNode('c2')).toBeInTheDocument()
+    expect(mapNode('c3')).toBeInTheDocument()
+    expect(mapNode('EH-TİD-SYS-002')).not.toBeInTheDocument()
     expect(mapNode('EH-TİD-HW-001')).not.toBeInTheDocument()
-    expect(mapNode('EH-TİD-SW-001')).not.toBeInTheDocument()
   })
 
-  // Issue #140: kutu KENDI KIMLIGINI tasir — gereksinim kutusunda kaydin
-  // Text ID'si, bilesen kutusunda Parca No / "BİLEŞEN" etiketi. Boylece bir
-  // gereksinim, urun kimligi tasiyan bir bilesen gibi okunmaz. Aciklama
-  // metni yine kutuda DEGILDIR (ipucunda ve detayda okunur).
-  it('kutuda kaydin KENDI ID si ve ismi yazar (aciklama kutuda degil)', () => {
+  it('kutuda bilesenin Parca No su ve adi yazar (aciklama kutuda degil)', () => {
     renderPage()
-    expandDot('EH-TİD-1')
+    expandDot('c1')
     expect(screen.getAllByText('Basınç Pompası Ünitesi').length).toBeGreaterThan(0)
-    expect(screen.getByText('EH-TİD-SYS-002')).toBeInTheDocument()
-    expect(mapNode('EH-TİD-SYS-002')).toHaveTextContent('EH-TİD-SYS-002')
-    // Aciklama (gereksinim metni) kutuda yazmaz.
+    expect(screen.getByText('100.00.003')).toBeInTheDocument()
+    // Gereksinim metni kutuda yazmaz.
     expect(screen.queryByText(/9 bar basınç üretmelidir/i)).not.toBeInTheDocument()
   })
 
-  it('KUTUYA TIKLAYINCA kaydin detayi (ID + aciklama) acilir', () => {
+  it('KUTUYA TIKLAYINCA secim o bilesene gecer (harita urun agacidir)', () => {
     renderPage()
-    expandDot('EH-TİD-1')
-    fireEvent.click(mapNode('EH-TİD-SYS-002'))
-    const modal = screen.getByTestId('view-modal')
-    expect(modal).toHaveTextContent('EH-TİD-SYS-002')
-    expect(modal).toHaveAttribute('data-can-write', 'false')
+    expandDot('c1')
+    fireEvent.click(mapNode('c3'))
+    expect(screen.getByTestId('comp-selection')).toHaveTextContent('Basınç Pompası Ünitesi')
+    // Bilesen bir GEREKSINIM kaydi degildir: detay modali acilmaz.
+    expect(screen.queryByTestId('view-modal')).not.toBeInTheDocument()
   })
 
   it('dal ucundaki nokta dali acar, tekrar tiklayinca kapatir', () => {
-    deepenTree()
     renderPage()
-    expandDot('EH-TİD-1')
-    expandDot('EH-TİD-SYS-002')
-    expect(mapNode('EH-TİD-HW-001')).toBeInTheDocument()
+    expandDot('c1')
+    expect(mapNode('c2')).toBeInTheDocument()
+    expect(mapNode('c3')).toBeInTheDocument()
 
-    expandDot('EH-TİD-SYS-002')
-    expect(mapNode('EH-TİD-HW-001')).not.toBeInTheDocument()
-    // Kardes dal etkilenmez — dallar TEK TEK acilip kapanir.
-    expect(mapNode('EH-TİD-SYS-001')).toBeInTheDocument()
+    expandDot('c1')
+    expect(mapNode('c2')).not.toBeInTheDocument()
+    // Proje dugumu (ust dal) etkilenmez — dallar TEK TEK acilip kapanir.
+    expect(mapNode('c1')).toBeInTheDocument()
   })
 
   it('"Tümünü Aç" / "Tümünü Kapat" tum kirilimi yonetir', () => {
-    deepenTree()
     renderPage()
     fireEvent.click(screen.getByTestId('comp-expand-all'))
-    expect(mapNode('EH-TİD-HW-001')).toBeInTheDocument()
+    expect(mapNode('c3')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('comp-collapse-all'))
     // Her sey kapali: geriye yalnizca proje dugumu kalir.
-    expect(mapNode('EH-TİD-1')).not.toBeInTheDocument()
-    expect(screen.getByTestId('mindmap-node-')).toBeInTheDocument()
+    expect(mapNode('c1')).not.toBeInTheDocument()
+    expect(mapNode('__project__')).toBeInTheDocument()
   })
 
   it('haritadaki secim Liste gorunumune tasinir (tek secim, iki gorunum)', () => {
     renderPage()
-    expandDot('EH-TİD-1')
-    fireEvent.click(mapNode('EH-TİD-SYS-002'))
+    expandDot('c1')
+    fireEvent.click(mapNode('c3'))
     expect(screen.getByTestId('comp-selection')).toHaveTextContent('Basınç Pompası Ünitesi')
     showList()
     expect(screen.getByTestId('comp-selected-title')).toHaveTextContent('Basınç Pompası Ünitesi')
     expect(screen.getByTestId('comp-row-EH-TİD-HW-001')).toBeInTheDocument()
   })
 
-  it('Alan kaynagi ekranda YOKTUR (Issue #143)', () => {
+  it('kaynak secici ekranda YOKTUR: tek kaynak elle tanimli bilesenler (#147)', () => {
     renderPage()
+    expect(screen.queryByTestId('comp-source-manual')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('comp-source-pbs')).not.toBeInTheDocument()
     expect(screen.queryByTestId('comp-source-field')).not.toBeInTheDocument()
-    expect(screen.queryByText('Alansız')).not.toBeInTheDocument()
   })
 
-  it('okuma izni olmayan seviye haritada da cizilmez', () => {
-    deepenTree()
-    authMock.value = { can: (_perm, component) => component !== 'req-subsystem' }
+  it('"Yeni bileşen ekle" gorunum dugumlerinin yaninda, HER gorunumde durur (#147)', () => {
     renderPage()
-    fireEvent.click(screen.getByTestId('comp-expand-all'))
-    expect(mapNode('EH-TİD-HW-001')).not.toBeInTheDocument()
-    // Gorunur kirilimi kalmayan dugum artik bir BILESEN degildir (#144):
-    // pompa unitesinin altindaki her sey gizlenince kutusu da dusmustur.
-    expect(mapNode('EH-TİD-SYS-002')).not.toBeInTheDocument()
-    expect(mapNode('EH-TİD-1')).toBeInTheDocument()
+    expect(screen.getByTestId('comp-add-root')).toBeInTheDocument()
+    showList()
+    expect(screen.getByTestId('comp-add-root')).toBeInTheDocument()
   })
 
   it('proje dugumu secilince kapsam TUM projedir', () => {
     renderPage()
-    // Proje dugumu bir KAYIT degildir: text_id'si bostur.
-    fireEvent.click(screen.getByTestId('mindmap-node-'))
+    fireEvent.click(mapNode('__project__'))
     expect(screen.getByTestId('comp-selection')).toHaveTextContent('Kahve Makinesi Projesi')
     expect(screen.getByTestId('comp-selection')).toHaveTextContent('5 gereksinim · 1 doğrulandı')
     showList()
@@ -279,28 +278,26 @@ describe('Bileşenler — harita görünümü (varsayılan)', () => {
 })
 
 describe('Bileşenler — harita düzeni (ürün ağacı / feature tree)', () => {
-  // Issue #144: duzen artik KARDES BILESENLER uzerinden olculur (haritada
-  // yaprak gereksinim kutusu yoktur).
-  beforeEach(() => siblingTree())
-  const expandPump = () => expandDot('EH-TİD-1')
+  // Kardes iki bilesen: Su Deposu (c2) ve Pompa Ünitesi (c3), ustleri c1.
+  const expandPump = () => expandDot('c1')
 
   it('varsayilan duzen AGAC: kardesler ust kutunun altinda YAN YANA durur', () => {
     renderPage()
     expect(screen.getByTestId('comp-mapstyle-tree')).toHaveAttribute('aria-pressed', 'true')
     expandPump()
-    const hw = mapNode('EH-TİD-SYS-001')
-    const sw = mapNode('EH-TİD-SYS-002')
+    const tank = mapNode('c2')
+    const pump = mapNode('c3')
     // Ayni seviyedeki iki kardes ayni satirda (y esit), farkli sutunlarda.
-    expect(Number(hw.getAttribute('y'))).toBe(Number(sw.getAttribute('y')))
-    expect(Number(hw.getAttribute('x'))).not.toBe(Number(sw.getAttribute('x')))
+    expect(Number(tank.getAttribute('y'))).toBe(Number(pump.getAttribute('y')))
+    expect(Number(tank.getAttribute('x'))).not.toBe(Number(pump.getAttribute('x')))
   })
 
   it('agac duzeninde ust kutu cocuklarinin TAM ORTASINDA durur', () => {
     renderPage()
     expandPump()
-    const parent = Number(mapNode('EH-TİD-1').getAttribute('x'))
-    const left = Number(mapNode('EH-TİD-SYS-001').getAttribute('x'))
-    const right = Number(mapNode('EH-TİD-SYS-002').getAttribute('x'))
+    const parent = Number(mapNode('c1').getAttribute('x'))
+    const left = Number(mapNode('c2').getAttribute('x'))
+    const right = Number(mapNode('c3').getAttribute('x'))
     expect(parent).toBeCloseTo((Math.min(left, right) + Math.max(left, right)) / 2, 5)
   })
 
@@ -309,21 +306,19 @@ describe('Bileşenler — harita düzeni (ürün ağacı / feature tree)', () =>
     fireEvent.click(screen.getByTestId('comp-mapstyle-compact'))
     expect(screen.getByTestId('comp-mapstyle-compact')).toHaveAttribute('aria-pressed', 'true')
     expandPump()
-    const hw = mapNode('EH-TİD-SYS-001')
-    const sw = mapNode('EH-TİD-SYS-002')
-    expect(Number(hw.getAttribute('x'))).toBe(Number(sw.getAttribute('x')))
-    expect(Number(hw.getAttribute('y'))).not.toBe(Number(sw.getAttribute('y')))
+    const tank = mapNode('c2')
+    const pump = mapNode('c3')
+    expect(Number(tank.getAttribute('x'))).toBe(Number(pump.getAttribute('x')))
+    expect(Number(tank.getAttribute('y'))).not.toBe(Number(pump.getAttribute('y')))
   })
 
   it('duzen secimi acik dallari korur; geri donulunce agac duzeni gelir', () => {
     renderPage()
     expandPump()
     fireEvent.click(screen.getByTestId('comp-mapstyle-compact'))
-    expect(mapNode('EH-TİD-SYS-001')).toBeInTheDocument()
+    expect(mapNode('c2')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('comp-mapstyle-tree'))
-    const hw = mapNode('EH-TİD-SYS-001')
-    const sw = mapNode('EH-TİD-SYS-002')
-    expect(Number(hw.getAttribute('y'))).toBe(Number(sw.getAttribute('y')))
+    expect(Number(mapNode('c2').getAttribute('y'))).toBe(Number(mapNode('c3').getAttribute('y')))
   })
 
   it('duzen secimi yalnizca haritada gorunur (Liste gorunumunde yok)', () => {
@@ -334,48 +329,34 @@ describe('Bileşenler — harita düzeni (ürün ağacı / feature tree)', () =>
 })
 
 describe('Bileşenler — bileşen listesi', () => {
-  it('urun agacindaki alt kirilimli dugumler bilesen olarak listelenir', () => {
+  it('elle tanimli bilesenler kirilimiyla listelenir; gereksinim bilesen degildir', () => {
     renderPage()
     showList()
-    expect(screen.getByTestId('comp-item-u1')).toHaveTextContent('Kahve Makinesi')
-    expect(screen.getByTestId('comp-item-s2')).toHaveTextContent('Basınç Pompası Ünitesi')
-    // Yaprak kayit bilesen degildir.
+    expect(screen.getByTestId('comp-item-c1')).toHaveTextContent('Kahve Makinesi')
+    expect(screen.getByTestId('comp-item-c3')).toHaveTextContent('Basınç Pompası Ünitesi')
     expect(screen.queryByTestId('comp-item-h1')).not.toBeInTheDocument()
   })
 
-  it('bilesen adinin yaninda gereksinim sayisi ve dogrulanma ozeti gorunur', () => {
+  it('bilesen adinin yaninda bagli gereksinim sayisi gorunur', () => {
     renderPage()
     showList()
-    // Pompa unitesi: kendisi + 2 alt gereksinim; yalnizca HW-001 dogrulanmis.
-    expect(screen.getByTestId('comp-item-s2')).toHaveTextContent('3 gereksinim · 1 doğrulandı')
-  })
-
-  it('arama ile bilesen listesi daraltilir', () => {
-    renderPage()
-    showList()
-    fireEvent.change(screen.getByTestId('comp-search'), { target: { value: 'pompa' } })
-    expect(screen.getByTestId('comp-item-s2')).toBeInTheDocument()
-    expect(screen.queryByTestId('comp-item-s1')).not.toBeInTheDocument()
-  })
-
-  it('urun agaci kurulmamissa elle tanimli kaynak acilir (Alan kaynagi yok)', () => {
-    appMock.requirements = appMock.requirements.map((r) => ({ ...r, parentId: null }))
-    renderPage()
-    showList()
-    expect(screen.getByTestId('comp-source-manual')).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.queryByTestId('comp-item-Donanim')).not.toBeInTheDocument()
+    // Pompa unitesi: 3 bagli gereksinim (kendi sistem gereksinimi + ikisi).
+    expect(screen.getByTestId('comp-item-c3')).toHaveTextContent('3 gereksinim')
+    // Dogrulanma ozeti secili bilesenin basliginda tam haliyle durur.
+    fireEvent.click(screen.getByTestId('comp-item-c3'))
+    expect(screen.getByTestId('comp-selected-summary')).toHaveTextContent(
+      '3 gereksinim · 1 doğrulandı',
+    )
   })
 
   it('okuma izni olmayan seviye listeye HIC girmez', () => {
-    // Alt sistem gereksinimleri gizlenince pompa unitesinin altinda gorunur
-    // bir kirilim kalmaz: ne bilesen olarak, ne de satir olarak listelenir.
+    // Alt sistem gereksinimleri gizlenince pompa unitesinin altinda yalnizca
+    // kendi sistem gereksinimi kalir; gizli kayitlar tabloya da girmez.
     authMock.value = { can: (_perm, component) => component !== 'req-subsystem' }
     renderPage()
     showList()
-    expect(screen.queryByTestId('comp-item-s2')).not.toBeInTheDocument()
+    expect(screen.getByTestId('comp-item-c3')).toHaveTextContent('1 gereksinim')
     expect(screen.queryByTestId('comp-row-EH-TİD-HW-001')).not.toBeInTheDocument()
-    // Geriye yalnizca kok bilesen kalir: kendisi + iki sistem gereksinimi.
-    expect(screen.getByTestId('comp-item-u1')).toHaveTextContent('3 gereksinim')
   })
 })
 
@@ -450,6 +431,7 @@ describe('Bileşenler — seçilen bileşenin gereksinimleri', () => {
 
   it('bos projede bilgilendirme gosterilir', () => {
     appMock.requirements = []
+    appMock.components = []
     appMock.links = []
     renderPage()
     expect(screen.getByTestId('comp-empty')).toBeInTheDocument()
@@ -468,10 +450,12 @@ describe('Bileşenler — TİD tablosu (liste görünümü)', () => {
     expect(screen.getByTestId('comp-row-EH-TİD-SYS-001')).toBeInTheDocument()
   })
 
-  it('alt kirilimi olan kayit BASLIK satiri olarak isaretlenir', () => {
+  it('hicbir GEREKSINIM satiri bilesen basligi gibi isaretlenmez (#140)', () => {
     renderPage()
     showList()
-    expect(screen.getByTestId('comp-row-EH-TİD-SYS-002')).toHaveAttribute('data-component', 'true')
+    // Alt kirilimi olan bir gereksinim de (SYS-002) yalnizca bir kayittir;
+    // bilesen tablonun BASLIGIDIR, satiri degil.
+    expect(screen.getByTestId('comp-row-EH-TİD-SYS-002')).not.toHaveAttribute('data-component')
     expect(screen.getByTestId('comp-row-EH-TİD-HW-001')).not.toHaveAttribute('data-component')
   })
 
@@ -498,7 +482,7 @@ describe('Bileşenler — TİD tablosu (liste görünümü)', () => {
   it('bilesen secilince tablo o bilesene daralir', () => {
     renderPage()
     showList()
-    fireEvent.click(screen.getByTestId('comp-item-s2'))
+    fireEvent.click(screen.getByTestId('comp-item-c3'))
     expect(screen.getByTestId('comp-row-EH-TİD-HW-001')).toBeInTheDocument()
     expect(screen.queryByTestId('comp-row-EH-TİD-SYS-001')).not.toBeInTheDocument()
   })
