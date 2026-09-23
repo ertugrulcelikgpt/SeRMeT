@@ -754,7 +754,7 @@ export const STRINGS = {
     'comp.reqCount': '{n} gereksinim',
     'comp.empty': 'Bu projede bileşen bulunamadı.',
     'comp.emptyPbs':
-      'Ürün ağacında alt kırılım yok. Bağlantı Ağacı sayfasından kırılım oluşturun ya da "Alan" kaynağına geçin.',
+      'Ürün ağacında alt kırılım yok. Bağlantı Ağacı sayfasından kırılım oluşturun ya da “Bileşenlerim” kaynağında kendi bileşenlerinizi tanımlayın.',
     'comp.noMatch': 'Aramayla eşleşen bileşen yok.',
     'comp.noRows': 'Bu bileşende gereksinim yok.',
     'comp.selectHint': 'Soldaki listeden bir bileşen seçin.',
@@ -787,7 +787,8 @@ export const STRINGS = {
     'comp.manualEmpty':
       'Henüz bileşen yok. Aşağıdaki “Yeni bileşen ekle” ile ürün bileşenlerinizi tanımlayın.',
     'comp.emptyManual':
-      'Henüz bileşen tanımlanmadı. Soldaki “Yeni bileşen ekle” ile başlayın; gereksinimleri sonradan bağlayabilirsiniz.',
+      'Henüz bileşen tanımlanmadı. Liste görünümündeki “Yeni bileşen ekle” ile başlayın; gereksinimleri sonradan bağlayabilirsiniz.',
+    'comp.openList': 'Bileşen listesini aç',
     'comp.addComponent': 'Yeni bileşen ekle',
     'comp.addChild': 'Alt bileşen ekle',
     'comp.addTitle': 'Yeni Bileşen',
@@ -818,7 +819,6 @@ export const STRINGS = {
     'comp.kindRequirement': 'Gereksinim',
     'comp.requirementsOf': 'Bu bileşene bağlı gereksinimler',
     'comp.legendComponent': 'Köşeli kutu: bileşen (ürün)',
-    'comp.legendRequirement': 'Yuvarlak kutu: gereksinim',
     'comp.linkSelectedCount': '{n} gereksinim seçili',
     'comp.importFromPbs': 'Ürün ağacından içe aktar',
 
@@ -1877,7 +1877,7 @@ export const STRINGS = {
     'comp.reqCount': '{n} requirements',
     'comp.empty': 'No components found in this project.',
     'comp.emptyPbs':
-      'The product tree has no breakdown yet. Build one on the Link Tree page or switch to the "Field" source.',
+      'The product tree has no breakdown yet. Build one on the Link Tree page or define your own components under “My components”.',
     'comp.noMatch': 'No component matches the search.',
     'comp.noRows': 'This component has no requirements.',
     'comp.selectHint': 'Pick a component from the list on the left.',
@@ -1910,7 +1910,8 @@ export const STRINGS = {
     'comp.manualEmpty':
       'No components yet. Use “Add new component” below to define your product components.',
     'comp.emptyManual':
-      'No components defined yet. Start with “Add new component” on the left; requirements can be linked later.',
+      'No components defined yet. Start with “Add new component” in the List view; requirements can be linked later.',
+    'comp.openList': 'Open component list',
     'comp.addComponent': 'Add new component',
     'comp.addChild': 'Add sub-component',
     'comp.addTitle': 'New component',
@@ -1940,7 +1941,6 @@ export const STRINGS = {
     'comp.kindRequirement': 'Requirement',
     'comp.requirementsOf': 'Requirements linked to this component',
     'comp.legendComponent': 'Square box: component (product)',
-    'comp.legendRequirement': 'Rounded box: requirement',
     'comp.linkSelectedCount': '{n} requirement(s) selected',
     'comp.importFromPbs': 'Import from product tree',
 

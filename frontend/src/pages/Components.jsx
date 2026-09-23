@@ -662,11 +662,22 @@ export default function Components() {
       data-testid="comp-empty"
       className="card flex-1 px-4 py-16 text-center text-sm text-slate-500 dark:text-slate-400"
     >
-      {isManual
-        ? t('comp.emptyManual')
-        : source === COMPONENT_SOURCE.PBS
-          ? t('comp.emptyPbs')
-          : t('comp.empty')}
+      {isManual ? t('comp.emptyManual') : t('comp.emptyPbs')}
+      {/* Issue #144: bilesen listesi artik LISTE gorunumundedir; bos
+          haritadan oraya tek tikla gecilir (yoksa yeni bilesen eklemenin
+          yolu gorunmez olurdu). */}
+      {isManual && view === VIEW.MAP && (
+        <div className="mt-4">
+          <button
+            type="button"
+            onClick={() => setView(VIEW.LIST)}
+            data-testid="comp-empty-golist"
+            className="btn-primary btn-sm"
+          >
+            {t('comp.openList')}
+          </button>
+        </div>
+      )}
     </div>
   )
 
@@ -682,8 +693,8 @@ export default function Components() {
         nodeDetail="label"
         className="min-h-[460px] flex-1"
       />
-      {/* Issue #140: haritadaki iki kutu tipinin ne oldugunu soyleyen kucuk
-          gosterge — bilesen bir URUNDUR, gereksinim ona bagli bir kayittir. */}
+      {/* Issue #144: harita YALNIZCA urun agacidir — kutular bilesendir,
+          gereksinimler Liste gorunumundeki tabloda durur. */}
       <div
         className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-slate-400"
         data-testid="comp-map-legend"
@@ -691,10 +702,6 @@ export default function Components() {
         <span className="inline-flex items-center gap-1.5">
           <span className="inline-block h-3 w-3 rounded-[2px] bg-teal-600" />
           {t('comp.legendComponent')}
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="inline-block h-3 w-3 rounded-full bg-indigo-500" />
-          {t('comp.legendRequirement')}
         </span>
         <span data-testid="comp-map-hint">{t('comp.mapHint')}</span>
       </div>
@@ -1156,10 +1163,16 @@ export default function Components() {
 
       {partNoPanelOpen && partNoCheck && <PartNoIssuePanel check={partNoCheck} t={t} />}
 
-      {isManual ? (
-        /* Elle tanimli kaynak: SOL panel bilesen yoneticisidir (ekle /
-           duzenle / sil / sirala / alt bilesen), sag taraf secili gorunum.
-           Bos projede de acilir: bos liste + "Yeni bileşen ekle". */
+      {/* Issue #144: HARITA yalnizca urun agacidir ve tum genisligi kullanir;
+          BILESEN LISTESI (ekle / duzenle / sil / sirala / bagla) Liste
+          gorunumunde, secili bilesenin gereksinim tablosunun yaninda acilir. */}
+      {view === VIEW.MAP ? (
+        isEmpty ? (
+          emptyCard
+        ) : (
+          mapBlock
+        )
+      ) : isManual ? (
         <div className="grid flex-1 gap-4 lg:grid-cols-[20rem_minmax(0,1fr)]">
           <ManualComponentPanel
             componentTree={componentTree}
@@ -1189,14 +1202,10 @@ export default function Components() {
             error={componentError}
             t={t}
           />
-          <div className="flex min-w-0 flex-col gap-2">
-            {isEmpty ? emptyCard : view === VIEW.MAP ? mapBlock : tableSection}
-          </div>
+          <div className="flex min-w-0 flex-col gap-2">{tableSection}</div>
         </div>
       ) : isEmpty ? (
         emptyCard
-      ) : view === VIEW.MAP ? (
-        mapBlock
       ) : (
         <div className="grid flex-1 gap-4 lg:grid-cols-[18rem_minmax(0,1fr)]">
           {derivedAside}

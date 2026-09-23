@@ -89,6 +89,15 @@ const renderPage = () =>
     </LanguageProvider>,
   )
 
+// Issue #144: BILESEN LISTESI (ekle / duzenle / sil / sirala / bagla) artik
+// LISTE gorunumundedir; harita yalnizca urun agacini cizer. Paneli kullanan
+// testler sayfayi acar ve "Liste" dugmesine basar.
+const renderList = () => {
+  const out = renderPage()
+  fireEvent.click(screen.getByTestId('comp-view-list'))
+  return out
+}
+
 beforeEach(() => {
   appMock.requirements = []
   appMock.components = []
@@ -115,14 +124,14 @@ afterEach(() => {
 
 describe('Boş proje: bileşen oluşturma', () => {
   it('hiç gereksinimi olmayan projede boş liste + "Yeni bileşen ekle" ile açılır', () => {
-    renderPage()
+    renderList()
     expect(screen.getByTestId('comp-manual-panel')).toBeInTheDocument()
     expect(screen.getByTestId('comp-manual-empty')).toBeInTheDocument()
     expect(screen.getByTestId('comp-add-root')).toBeInTheDocument()
   })
 
   it('ad (ve Parça No) verilerek bileşen oluşturulur', async () => {
-    renderPage()
+    renderList()
     fireEvent.click(screen.getByTestId('comp-add-root'))
     const nameInput = await screen.findByTestId('comp-name-input')
     fireEvent.change(nameInput, { target: { value: 'Su Pompası Ünitesi' } })
@@ -141,7 +150,7 @@ describe('Boş proje: bileşen oluşturma', () => {
   })
 
   it('Parça No ÖNERİLİR ama zorunlu değildir: alan boşaltılabilir', async () => {
-    renderPage()
+    renderList()
     fireEvent.click(screen.getByTestId('comp-add-root'))
     const partNoInput = await screen.findByTestId('comp-partno-input')
     // Sunucudan gelen oneri alana on-doldurulur.
@@ -160,7 +169,7 @@ describe('Boş proje: bileşen oluşturma', () => {
   })
 
   it('adsız bileşen kaydedilmez', async () => {
-    renderPage()
+    renderList()
     fireEvent.click(screen.getByTestId('comp-add-root'))
     fireEvent.click(await screen.findByTestId('comp-form-save'))
     expect(await screen.findByTestId('comp-form-error')).toBeInTheDocument()
@@ -169,7 +178,7 @@ describe('Boş proje: bileşen oluşturma', () => {
 
   it('ekleme aksiyonu listenin ALTINDADIR ve arka arkaya kullanılabilir', async () => {
     appMock.components = [comp('c1', 'Birinci', { sortIndex: 0 })]
-    renderPage()
+    renderList()
     // Bir bilesen varken de ekleme aksiyonu durur (ikinci, ucuncu... eklenir).
     fireEvent.click(screen.getByTestId('comp-add-root'))
     fireEvent.change(await screen.findByTestId('comp-name-input'), {
@@ -191,13 +200,13 @@ describe('Liste: kırılım, sıra ve boş bileşenler', () => {
   })
 
   it('gereksinimi olmayan bileşenler listede görünür (gizlenmez)', () => {
-    renderPage()
+    renderList()
     expect(screen.getByTestId('comp-item-c1')).toHaveTextContent('Zeta')
     expect(screen.getByTestId('comp-item-c1')).toHaveTextContent('0 gereksinim')
   })
 
   it('elle kurulmuş kırılım gösterilir (alt bileşen üstünün altında)', () => {
-    renderPage()
+    renderList()
     const child = screen.getByTestId('comp-item-c3')
     // Anahat numarasi kirilimi yansitir: Alfa = 2, Donanim = 2.1
     expect(child).toHaveTextContent('2.1')
@@ -205,7 +214,7 @@ describe('Liste: kırılım, sıra ve boş bileşenler', () => {
   })
 
   it('sıra kullanıcının verdiği gibi kalır (alfabetik değil)', () => {
-    renderPage()
+    renderList()
     const items = screen.getAllByTestId(/^comp-item-/)
     expect(items.map((el) => el.dataset.testid)).toEqual([
       'comp-item-c1',
@@ -215,18 +224,18 @@ describe('Liste: kırılım, sıra ve boş bileşenler', () => {
   })
 
   it('aşağı taşıma yeni sırayı kaydeder', async () => {
-    renderPage()
+    renderList()
     fireEvent.click(screen.getByTestId('comp-down-c1'))
     await waitFor(() => expect(appMock.reorderComponents).toHaveBeenCalledWith(null, ['c2', 'c1']))
   })
 
   it('en üstteki bileşen yukarı taşınamaz', () => {
-    renderPage()
+    renderList()
     expect(screen.getByTestId('comp-up-c1')).toBeDisabled()
   })
 
   it('bir bileşenin altına alt bileşen eklenebilir', async () => {
-    renderPage()
+    renderList()
     fireEvent.click(screen.getByTestId('comp-add-child-c1'))
     fireEvent.change(await screen.findByTestId('comp-name-input'), {
       target: { value: 'Kentel' },
@@ -248,7 +257,7 @@ describe('Düzenleme ve silme', () => {
   })
 
   it('bileşen adı düzenlenebilir', async () => {
-    renderPage()
+    renderList()
     fireEvent.click(screen.getByTestId('comp-edit-c1'))
     const nameInput = await screen.findByTestId('comp-name-input')
     expect(nameInput.value).toBe('Eski Ad')
@@ -263,7 +272,7 @@ describe('Düzenleme ve silme', () => {
   })
 
   it('bileşen gerekçe ile silinir', async () => {
-    renderPage()
+    renderList()
     fireEvent.click(screen.getByTestId('comp-delete-c1'))
     fireEvent.change(await screen.findByTestId('reason-modal-textarea'), {
       target: { value: 'Ürün kırılımı değişti' },
@@ -284,7 +293,7 @@ describe('Düzenleme ve silme', () => {
         componentId: 'c1',
       },
     ]
-    renderPage()
+    renderList()
     fireEvent.click(screen.getByTestId('comp-delete-c1'))
     const warning = await screen.findByText(/gereksinimi var/i)
     expect(warning).toBeInTheDocument()
@@ -327,7 +336,7 @@ describe('Bileşen ile gereksinim ayrımı', () => {
     ]
   })
 
-  it('haritada bileşen kutusu köşelidir ve kendi rengindedir; gereksinim kutusu değil', () => {
+  it('haritadaki TUM kutular bilesendir: koseli ve kendi renginde (#144)', () => {
     renderPage()
     // URUN dugumleri (proje koku + bilesenler): koseli kutu, camgobegi renk.
     const products = screen.getAllByTestId('mindmap-node-')
@@ -336,38 +345,16 @@ describe('Bileşen ile gereksinim ayrımı', () => {
       expect(box).toHaveAttribute('rx', '3')
       expect(box.getAttribute('stroke')).toBe('#0d9488')
     }
-    // Bilesen dallarini acinca cikan GEREKSINIM kutulari yuvarlaktir ve
-    // kendi seviye rengini tasir (urun rengini DEGIL).
-    const toggles = screen.getAllByTestId('mindmap-toggle-')
-    for (const dot of toggles.slice(1)) fireEvent.click(dot)
-    const requirement = screen.getByTestId('mindmap-node-R-001')
-    expect(requirement).toHaveAttribute('rx', '10')
-    expect(requirement.getAttribute('stroke')).not.toBe('#0d9488')
   })
 
-  it('gereksinim kutusu KENDI Text ID sini tasir (urun kimligi degil)', () => {
+  it('harita GEREKSINIM kutusu cizmez; gereksinimler Liste gorunumundedir (#144)', () => {
     renderPage()
-    const toggles = screen.getAllByTestId('mindmap-toggle-')
-    for (const dot of toggles.slice(1)) fireEvent.click(dot)
-    // Gereksinim: kendi ID'si. Bilesen: Parca No / "BİLEŞEN" etiketi.
-    expect(screen.getByText('R-001')).toBeInTheDocument()
-    expect(screen.getByText('R-002')).toBeInTheDocument()
-    expect(screen.getAllByText('010.00.001').length).toBeGreaterThan(0)
-  })
-
-  it('gereksinim kutusunda Text ID yaninda Parca No YAZMAZ (Issue #143)', () => {
-    appMock.requirements = appMock.requirements.map((r) =>
-      r.id === 'r1' ? { ...r, partNo: '010.00.005' } : r,
-    )
-    renderPage()
-    const toggles = screen.getAllByTestId('mindmap-toggle-')
-    for (const dot of toggles.slice(1)) fireEvent.click(dot)
-    const box = screen.getByTestId('mindmap-node-R-001')
-    // Kutunun ust satiri YALNIZCA gereksinim kodudur; numara yalnizca
-    // kutunun ipucunda (title) kalir.
-    expect(screen.getByText('R-001')).toBeInTheDocument()
-    expect(screen.queryByText('010.00.005')).not.toBeInTheDocument()
-    expect(box.querySelector('title')?.textContent).toContain('010.00.005')
+    // Tum dallar acilsa bile haritada gereksinim kutusu YOKTUR.
+    for (const dot of screen.getAllByTestId('mindmap-toggle-')) fireEvent.click(dot)
+    expect(screen.queryByTestId('mindmap-node-R-001')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('mindmap-node-R-002')).not.toBeInTheDocument()
+    // Bagli gereksinim sayisi bilesenin ozet satirinda durur.
+    expect(screen.getAllByText(/2 gereksinim/).length).toBeGreaterThan(0)
   })
 
   it('bileşen kutusu ÜRÜN olduğunu söyler (Parça No / BİLEŞEN etiketi)', () => {
@@ -416,7 +403,7 @@ describe('Gereksinim bağlama (sonradan)', () => {
   })
 
   it('bileşen gereksinim olmadan var olur; gereksinim sonradan bağlanır', async () => {
-    renderPage()
+    renderList()
     fireEvent.click(screen.getByTestId('comp-link-c1'))
     const modal = await screen.findByTestId('comp-link-modal')
     // Zaten bagli olan isaretli gelir.
@@ -435,7 +422,7 @@ describe('Gereksinim bağlama (sonradan)', () => {
       { id: 'r2', text_id: 'R-002', title: 'Iki', type: 'System Requirement' },
       { id: 'r3', text_id: 'R-003', title: 'Uc', type: 'System Requirement' },
     ]
-    renderPage()
+    renderList()
     fireEvent.click(screen.getByTestId('comp-link-c1'))
     const modal = await screen.findByTestId('comp-link-modal')
     fireEvent.click(within(modal).getByTestId('comp-link-row-R-001'))
@@ -454,7 +441,7 @@ describe('Gereksinim bağlama (sonradan)', () => {
       { id: 'r2', text_id: 'R-002', title: 'Iki', type: 'System Requirement' },
       { id: 'r3', text_id: 'R-003', title: 'Uc', type: 'System Requirement' },
     ]
-    renderPage()
+    renderList()
     fireEvent.click(screen.getByTestId('comp-link-c1'))
     const modal = await screen.findByTestId('comp-link-modal')
     fireEvent.click(within(modal).getByTestId('comp-link-select-all'))
@@ -475,7 +462,7 @@ describe('Gereksinim bağlama (sonradan)', () => {
       { id: 'r2', text_id: 'R-002', title: 'Iki', type: 'System Requirement' },
     ]
     appMock.requirements = fresh()
-    const { rerender } = renderPage()
+    const { rerender } = renderList()
     fireEvent.click(screen.getByTestId('comp-link-c1'))
     const modal = await screen.findByTestId('comp-link-modal')
     fireEvent.click(within(modal).getByTestId('comp-link-row-R-001'))
@@ -497,7 +484,7 @@ describe('Gereksinim bağlama (sonradan)', () => {
   })
 
   it('bağ kaldırılabilir', async () => {
-    renderPage()
+    renderList()
     fireEvent.click(screen.getByTestId('comp-link-c1'))
     const modal = await screen.findByTestId('comp-link-modal')
     fireEvent.click(within(modal).getByTestId('comp-link-row-R-002'))
@@ -545,7 +532,7 @@ describe('Mevcut projeler bozulmaz', () => {
         type: 'System Requirement',
       },
     ]
-    renderPage()
+    renderList()
     fireEvent.click(screen.getByTestId('comp-source-manual'))
     fireEvent.click(await screen.findByTestId('comp-import-pbs'))
     await waitFor(() => expect(appMock.importComponentsFromPbs).toHaveBeenCalled())
