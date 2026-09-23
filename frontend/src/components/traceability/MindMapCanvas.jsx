@@ -336,15 +336,15 @@ export default function MindMapCanvas({
               // Kutunun ust satirindaki KIMLIK. Iki kayit tipi kendi
               // kimligiyle gorunur (Issue #140):
               //   URUN (bilesen/proje) -> Parca No, yoksa "BILESEN" etiketi.
-              //   GEREKSINIM           -> KENDI Text ID'si (EH-SYS-012...).
-              // Gereksinim kutusunda daha once yalnizca Parca No yaziyordu;
-              // bu, urun kimligi oldugu icin gereksinimi bilesen gibi
-              // gosteriyordu. Parca No'su olan gereksinimde numara ID'nin
-              // yanina SOLUK bir ek olarak yazilir (#135 korunur).
+              //   GEREKSINIM           -> YALNIZCA kendi Text ID'si.
+              // Issue #143: gereksinim kutusunda Text ID'nin yanindaki Parca
+              // No eki KALDIRILDI. Parca No URUN kimligidir; gereksinim
+              // satirinda ikinci bir numara olarak durmasi kutuyu dolduruyor
+              // ve gereksinim kodunu okumayi zorlastiriyordu. Numara, kutunun
+              // uzerine gelince cikan ipucunda durmaya devam eder.
               const badge = isProduct
                 ? n.node.partNo || t('mindmap.componentTag')
                 : n.node.text_id || n.node.partNo || ''
-              const badgeExtra = !isProduct && n.node.text_id ? n.node.partNo || '' : ''
               const kindLabel = t(isProduct ? 'mindmap.kindComponent' : 'mindmap.kindRequirement')
               return (
                 <g
@@ -424,8 +424,6 @@ export default function MindMapCanvas({
                         pointerEvents="none"
                       >
                         {badge}
-                        {badgeExtra && <tspan fill={colors.subText}> · </tspan>}
-                        {badgeExtra && <tspan fill={colors.subText}>{badgeExtra}</tspan>}
                       </text>
                       <text
                         x={n.x + 16}

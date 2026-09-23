@@ -8,7 +8,6 @@
 import { describe, it, expect } from 'vitest'
 import {
   COMPONENT_SOURCE,
-  FIELD_NONE_KEY,
   PROJECT_ROOT_KEY,
   buildManualComponentGraph,
   buildManualComponentTree,
@@ -144,16 +143,14 @@ describe('buildComponents — bilesen listesi', () => {
     expect(pump.depth).toBe(1)
   })
 
-  it('Alan kaynagi: her Alan bir bilesendir, alansizlar en sonda toplanir', () => {
-    const list = buildComponents(REQS, { source: COMPONENT_SOURCE.FIELD })
-    expect(list.map((c) => c.key)).toEqual(['Donanim', 'Yazilim', FIELD_NONE_KEY])
-    expect(list[0].rows.map((r) => r.text_id)).toEqual(['EH-TİD-SYS-001', 'EH-TİD-SYS-002'])
+  it('Alan (disiplin) bir bilesen kaynagi DEGILDIR (Issue #143)', () => {
+    expect(COMPONENT_SOURCE.FIELD).toBeUndefined()
+    expect(Object.values(COMPONENT_SOURCE)).toEqual(['manual', 'pbs'])
   })
 
   it('urun agaci kurulmamis projede PBS hic bilesen uretmez', () => {
     const flat = REQS.map((r) => ({ ...r, parentId: null }))
     expect(buildComponents(flat, { source: COMPONENT_SOURCE.PBS })).toHaveLength(0)
-    expect(buildComponents(flat, { source: COMPONENT_SOURCE.FIELD }).length).toBeGreaterThan(0)
   })
 })
 

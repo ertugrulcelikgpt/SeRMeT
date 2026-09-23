@@ -41,10 +41,14 @@
 //    * sira kullanicinin verdigi gibi kalir (yukari/asagi tasima),
 //    * gereksinimler SONRADAN baglanir; gereksinimi olmayan bilesen listede
 //      ve haritada GORUNUR (gizlenmez).
-//  MEVCUT PROJELER BOZULMAZ: PBS agacindan TURETILEN bilesenler ve ALAN
-//  (field) gruplamasi kaynak secimi olarak KORUNUR; tek seferlik "Ürün
-//  ağacından içe aktar" aksiyonu turetilmis kirilimi kalici bilesenlere
-//  cevirir (bkz. utils/components.js, backend src/components.js).
+//  MEVCUT PROJELER BOZULMAZ: PBS agacindan TURETILEN bilesenler kaynak
+//  secimi olarak KORUNUR; tek seferlik "Ürün ağacından içe aktar" aksiyonu
+//  turetilmis kirilimi kalici bilesenlere cevirir (bkz. utils/components.js,
+//  backend src/components.js).
+//
+//  ALAN (disiplin) KAYNAGI YOKTUR (Issue #143): Alan bir ETIKETTIR, urun
+//  kirilimi degil — bilesen gibi gosterilmesi ikinci ve yaniltici bir agac
+//  uretiyordu. Alan bilgisi gereksinim formunda ve filtrelerde durur.
 //
 //  PARCA NO (Issue #135): her bilesen bir URUN'dur ve kimligini Parca No
 //  tasir — ayni ADA sahip iki dugum (AMTB/GY1 ve STC/GY1) FARKLI parcadir.
@@ -91,7 +95,6 @@ import { buildVerificationIndex } from '../utils/verification.js'
 import { collectExpandableKeys, defaultExpandedKeys, layoutMindMap } from '../utils/mindMap.js'
 import {
   COMPONENT_SOURCE,
-  FIELD_NONE_KEY,
   ROOT_KEY,
   PROJECT_ROOT_KEY,
   VERIFICATION_METHOD_LABEL_KEY,
@@ -168,9 +171,8 @@ export default function Components() {
   // yukaridan asagi SEKLIDIR; sikisik duzen bunu zincire cevirdigi icin
   // kardeslik iliskisi kayboluyordu (bkz. MAP_STYLE).
   const [mapStyle, setMapStyle] = useState(MAP_STYLE.TREE)
-  // Kaynak secimi: kullanici secmediyse (null) PBS varsayilandir; PBS hic
-  // bilesen uretmiyorsa (agac kurulmamis) Alan kaynagina DUSULUR — ekran
-  // bos bir liste yerine calisir halde acilir.
+  // Kaynak secimi: ELLE TANIMLI ya da PBS. Kullanici secmediyse (null)
+  // dolu olan kaynak acilir (bkz. `source`).
   const [sourceChoice, setSourceChoice] = useState(null)
   const [selectedId, setSelectedId] = useState(null)
   const [expanded, setExpanded] = useState(() => new Set())
@@ -239,14 +241,9 @@ export default function Components() {
 
   const tree = useMemo(() => buildRequirementTree(visibleRequirements), [visibleRequirements])
   const pbsComponents = useMemo(
-    () => buildComponents(visibleRequirements, { source: COMPONENT_SOURCE.PBS, tree }),
+    () => buildComponents(visibleRequirements, { tree }),
     [visibleRequirements, tree],
   )
-  const fieldComponents = useMemo(
-    () => buildComponents(visibleRequirements, { source: COMPONENT_SOURCE.FIELD, tree }),
-    [visibleRequirements, tree],
-  )
-
   // Issue #138: elle tanimli bilesenler. Gereksinimden BAGIMSIZ bir
   // koleksiyondur — bos projede bile dolu olabilir, bos bilesen gizlenmez.
   const manualComponentList = useMemo(() => manualRows || [], [manualRows])
@@ -260,24 +257,22 @@ export default function Components() {
   )
 
   // Varsayilan kaynak: ELLE TANIMLI. Kullanici bilesen tanimlamadiysa ve proje
-  // zaten PBS/Alan uzerinden bilesen uretiyorsa (mevcut projeler) o kaynak
-  // acilir — hicbir sey kaybolmaz. Bos bir projede ise elle tanimli kaynak
-  // acilir: bos liste + "Yeni bileşen ekle".
+  // zaten PBS uzerinden bilesen uretiyorsa (mevcut projeler) o kaynak acilir —
+  // hicbir sey kaybolmaz. Bos bir projede ise elle tanimli kaynak acilir:
+  // bos liste + "Yeni bileşen ekle".
+  // Issue #143: ALAN kaynagi kaldirildi; eski bir secim kalsa bile (yerel
+  // durum) elle tanimli kaynaga duser.
   const source =
-    sourceChoice ||
+    (sourceChoice === COMPONENT_SOURCE.MANUAL || sourceChoice === COMPONENT_SOURCE.PBS
+      ? sourceChoice
+      : null) ||
     (manualComponents.length > 0
       ? COMPONENT_SOURCE.MANUAL
       : pbsComponents.length > 0
         ? COMPONENT_SOURCE.PBS
-        : fieldComponents.length > 0
-          ? COMPONENT_SOURCE.FIELD
-          : COMPONENT_SOURCE.MANUAL)
+        : COMPONENT_SOURCE.MANUAL)
   const isManual = source === COMPONENT_SOURCE.MANUAL
-  const components = isManual
-    ? manualComponents
-    : source === COMPONENT_SOURCE.FIELD
-      ? fieldComponents
-      : pbsComponents
+  const components = isManual ? manualComponents : pbsComponents
 
   const verificationIndex = useMemo(
     () => buildVerificationIndex(links, testCases),
@@ -287,7 +282,7 @@ export default function Components() {
   const methodKeys = useMemo(() => methodAttributeKeys(attributeDefs), [attributeDefs])
   const stats = useMemo(() => subtreeStats(tree, verificationIndex), [tree, verificationIndex])
 
-  const labelOf = (c) => (c.key === FIELD_NONE_KEY ? t('comp.fieldNone') : c.label)
+  const labelOf = (c) => c.label
   const summaryText = (s) => t('comp.summary', { n: s.total, v: s.verified })
 
   // --- Harita grafigi -------------------------------------------------------
@@ -312,11 +307,8 @@ export default function Components() {
       })
     }
     return buildComponentGraph(visibleRequirements, {
-      source,
       tree,
       metaOf,
-      groupMetaOf: (g) => summaryText(summarizeComponent(g.rows, verificationIndex)),
-      fieldNoneLabel: t('comp.fieldNone'),
       // Onlarca kok gereksinim tek bir proje dugumunun altinda toplanir:
       // harita "kapali" baslar, kullanici inerek acar.
       rootLabel: projectLabel,
@@ -389,7 +381,7 @@ export default function Components() {
 
   // Kutuya tiklamak KAYDIN DETAYINI acar (ID + aciklama + oznitelikler) ve
   // ayni tiklamayla secimi tasir; dal acma/kapama dal ucundaki noktadadir.
-  // Kaydi olmayan sanal dugumler (proje / Alan grubu) yalnizca secilir.
+  // Kaydi olmayan sanal dugumler (proje kokü) yalnizca secilir.
   const handleNodeClick = useCallback(
     (record) => {
       if (record?.id) setSelectedId(record.id)
@@ -399,8 +391,8 @@ export default function Components() {
   )
 
   // --- Secim (iki gorunum ortak) -------------------------------------------
-  //  Secim bir BILESEN anahtari (Alan modu) ya da agactaki bir DUGUM id'si
-  //  olabilir; yaprak secilirse tek satirlik bir liste cikar — bu da gecerli
+  //  Secim bir BILESEN anahtari ya da agactaki bir DUGUM id'si olabilir;
+  //  yaprak secilirse tek satirlik bir liste cikar — bu da gecerli
   //  bir "bu kaydin kirilimi" gorunumudur.
   const selection = useMemo(() => {
     // Sanal proje dugumu secildiyse kapsam TUM projedir (disa aktarim da).
@@ -454,7 +446,7 @@ export default function Components() {
   }, [components, selectedId, tree, projectLabel, t])
 
   // Secili bilesenin PBS kaydi (varsa): Parca No yalnizca gercek bir dugum
-  // icin duzenlenebilir — sanal proje kokunun ya da Alan grubunun parcasi yok.
+  // icin duzenlenebilir — sanal proje kokunun parcasi yok.
   const selectedNode = useMemo(
     () => (selection?.key ? tree.byId.get(selection.key) || null : null),
     [selection, tree],
@@ -662,7 +654,7 @@ export default function Components() {
   )
 
   // --- Gorunum bloklari ------------------------------------------------------
-  //  Ayni bloklar hem TURETILMIS (PBS/Alan) hem de ELLE tanimli (#138)
+  //  Ayni bloklar hem TURETILMIS (PBS) hem de ELLE tanimli (#138)
   //  kaynakta kullanilir; fark yalnizca SOL panelde (turetilmis liste vs.
   //  bilesen yoneticisi).
   const emptyCard = (
@@ -717,7 +709,7 @@ export default function Components() {
     </>
   )
 
-  // Sol panel — TURETILMIS (PBS / Alan) bilesen listesi (Issue #129).
+  // Sol panel — TURETILMIS (PBS) bilesen listesi (Issue #129).
   const derivedAside = (
     <aside className="card flex max-h-[70vh] flex-col overflow-hidden p-0">
       <div className="border-b border-slate-200 p-3 dark:border-slate-800">
@@ -1069,7 +1061,7 @@ export default function Components() {
       {/* Arac cubugu: kaynak + (haritada) dal kontrolleri + secim ozeti */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex items-center gap-1 rounded-xl border border-slate-200 p-1 dark:border-slate-800">
-          {[COMPONENT_SOURCE.MANUAL, COMPONENT_SOURCE.PBS, COMPONENT_SOURCE.FIELD].map((s) => (
+          {[COMPONENT_SOURCE.MANUAL, COMPONENT_SOURCE.PBS].map((s) => (
             <button
               key={s}
               type="button"
@@ -1088,13 +1080,7 @@ export default function Components() {
                   : 'text-slate-500 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800')
               }
             >
-              {t(
-                s === COMPONENT_SOURCE.MANUAL
-                  ? 'comp.source.manual'
-                  : s === COMPONENT_SOURCE.PBS
-                    ? 'comp.source.pbs'
-                    : 'comp.source.field',
-              )}
+              {t(s === COMPONENT_SOURCE.MANUAL ? 'comp.source.manual' : 'comp.source.pbs')}
             </button>
           ))}
         </div>
@@ -1286,6 +1272,7 @@ export default function Components() {
         row={viewRow}
         canWrite={false}
         showStatus={false}
+        showField={false}
         showVerification
         commentEntityType="requirement"
         baselineEntityType="requirement"
