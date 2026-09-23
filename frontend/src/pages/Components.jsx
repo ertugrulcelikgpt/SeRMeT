@@ -74,7 +74,6 @@ import {
   IconList,
   IconEdit,
   IconAlert,
-  IconCheckCircle,
   IconPlus,
   IconTrash,
   IconChevron,
@@ -856,7 +855,8 @@ export default function Components() {
               <IconPlus size={14} /> {t('comp.addComponent')}
             </button>
           )}
-          {partNoCheck && (
+          {/* Bulgu yoksa "temiz" onay butonu gosterilmez (Issue #151). */}
+          {partNoCheck?.total > 0 && (
             <button
               type="button"
               onClick={() => setPartNoPanelOpen((v) => !v)}
@@ -865,10 +865,8 @@ export default function Components() {
                 'btn-secondary btn-sm ' + (partNoCheck.errorCount > 0 ? '!text-rose-600' : '')
               }
             >
-              {partNoCheck.errorCount > 0 ? <IconAlert size={14} /> : <IconCheckCircle size={14} />}
-              {partNoCheck.total > 0
-                ? t('partno.issues', { n: partNoCheck.total })
-                : t('partno.noIssues')}
+              <IconAlert size={14} />
+              {t('partno.issues', { n: partNoCheck.total })}
             </button>
           )}
           {isPM && (
@@ -971,7 +969,7 @@ export default function Components() {
         )}
       </div>
 
-      {partNoPanelOpen && partNoCheck && <PartNoIssuePanel check={partNoCheck} t={t} />}
+      {partNoPanelOpen && partNoCheck?.total > 0 && <PartNoIssuePanel check={partNoCheck} t={t} />}
 
       {/* Issue #144: HARITA yalnizca urun agacidir ve tum genisligi kullanir;
           BILESEN LISTESI (ekle / duzenle / sil / sirala / bagla) Liste
@@ -1097,16 +1095,6 @@ export default function Components() {
 
 // --- Tutarlilik bulgulari: raporlanabilir duz liste --------------------------
 function PartNoIssuePanel({ check, t }) {
-  if (check.total === 0) {
-    return (
-      <div
-        data-testid="partno-panel"
-        className="rounded-lg bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300"
-      >
-        {t('partno.noIssues')}
-      </div>
-    )
-  }
   const tone = (severity) =>
     severity === 'error'
       ? 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
