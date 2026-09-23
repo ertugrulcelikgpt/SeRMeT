@@ -234,9 +234,12 @@ describe('Parça No — elle düzenleme', () => {
 })
 
 describe('Parça No — tutarlılık kontrolü', () => {
-  it('bulgu yoksa rozet "temiz" der', async () => {
+  // Issue #151: bulgu yoksa "temiz" onay butonu gosterilmez.
+  it('bulgu yoksa rozet gosterilmez', async () => {
     renderPage()
-    await waitFor(() => expect(screen.getByTestId('partno-issues')).toHaveTextContent(/temiz/i))
+    await waitFor(() => expect(api.checkPartNumbers).toHaveBeenCalled())
+    await waitFor(() => expect(screen.getByTestId('partno-settings')).toBeInTheDocument())
+    expect(screen.queryByTestId('partno-issues')).not.toBeInTheDocument()
   })
 
   it('ihlaller rozette sayılır ve panelde listelenir', async () => {

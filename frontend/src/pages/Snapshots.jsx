@@ -691,7 +691,7 @@ export default function SnapshotsPage() {
       const detail = await getSnapshot(projectId, snap.id)
       setSelectedSnapshot(detail)
     } catch (e) {
-      alert(e?.message || 'Snapshot detayı yüklenemedi')
+      alert(e?.message || 'Baseline detayı yüklenemedi')
     }
   }
 

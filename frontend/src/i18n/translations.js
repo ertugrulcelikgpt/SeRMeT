@@ -12,6 +12,8 @@ export const STRINGS = {
     'common.guest': 'Misafir',
     'common.close': 'Kapat',
     'common.unknown': 'Bilinmiyor',
+    'common.create': 'Kaydet',
+    'common.cancel': 'İptal',
 
     // --- Dil seçimi ---
     'lang.label': 'Dil / Language',
@@ -52,7 +54,7 @@ export const STRINGS = {
     'nav.documents': 'AI Belge Analizi',
     'nav.documentLibrary': 'Dökümanlar',
     'nav.audit': 'Değişiklik Tarihçesi',
-    'nav.snapshots': 'Snapshotlar',
+    'nav.snapshots': 'Baseline’lar',
     'nav.suspect': 'Şüpheli Bağlar',
     'nav.admin': 'Admin Paneli',
     'page.admin.title': 'Admin Paneli',
@@ -142,9 +144,8 @@ export const STRINGS = {
     'page.suspect.title': 'Şüpheli Bağlar',
     'page.suspect.sub': 'İçerik değişiminden etkilenen Satisfies/Verifies bağlarını doğrulayın',
 
-    'page.snapshots.title': 'Snapshotlar (Sürümler)',
-    'page.snapshots.sub':
-      'Proje anlık görüntülerini yönetin — baseline alın, inceleyin, arşivleyin',
+    'page.snapshots.title': 'Baseline’lar (Ana Hat)',
+    'page.snapshots.sub': 'Proje ana hatlarını yönetin — baseline alın, inceleyin, arşivleyin',
 
     // --- Doküman Kütüphanesi (Dökümanlar sekmesi) ---
     'docs.uploadBtn': 'Belge yüklemek için tıklayın veya dosyayı buraya sürükleyin',
@@ -522,10 +523,10 @@ export const STRINGS = {
     'audit.reason': 'Gerekçe',
 
     // --- Snapshotlar (Issue #8) ---
-    'snapshot.new': 'Yeni Snapshot',
+    'snapshot.new': 'Yeni Baseline',
     // --- Baseline: etiket / geri yukleme / fark (Issue #128) ---------------
-    'snapshot.thLabel': 'Sürüm Etiketi',
-    'snapshot.labelLabel': 'Sürüm Etiketi',
+    'snapshot.thLabel': 'Baseline Etiketi',
+    'snapshot.labelLabel': 'Baseline Etiketi',
     'snapshot.labelPlaceholder': 'v1.0 · SRR · PDR · CDR',
     'snapshot.labelHint': 'Teslim/gözden geçirme noktasının kısa kodu. Zorunlu değildir.',
     'snapshot.descLabel': 'Açıklama',
@@ -537,17 +538,17 @@ export const STRINGS = {
     'snapshot.reasonPrefix': 'Gerekçe',
     'snapshot.baselineBadge': 'Baseline',
     'snapshot.safetyBadge': 'Güvenlik kopyası',
-    'snapshot.createFailed': 'Snapshot oluşturulamadı.',
-    'snapshot.updateFailed': 'Snapshot güncellenemedi.',
+    'snapshot.createFailed': 'Baseline oluşturulamadı.',
+    'snapshot.updateFailed': 'Baseline güncellenemedi.',
     'snapshot.previewFailed': 'Önizleme alınamadı.',
     'snapshot.save': 'Kaydet',
     'snapshot.editMeta': 'Etiketi düzenle',
     'snapshot.editMetaTitle': 'Baseline Bilgilerini Düzenle',
-    'snapshot.editMetaSub': 'Yalnızca etiket bilgileri değişir; snapshot içeriği aynı kalır.',
+    'snapshot.editMetaSub': 'Yalnızca etiket bilgileri değişir; baseline içeriği aynı kalır.',
     'snapshot.deleteBaseline': 'Baseline’ı sil (özel izin)',
     'snapshot.deleteBaselineWarning':
       'Bu bir BASELINE. Silmek dondurulmuş bir teslim noktasını kaldırır ve geri alınamaz.',
-    'snapshot.restore': 'Bu sürüme geri dön',
+    'snapshot.restore': 'Güncel baseline’a geri dön',
     'snapshot.restorePreviewTitle': 'Geri Yükleme Önizlemesi',
     'snapshot.restoreExplain':
       'Aşağıdaki değişiklikler uygulanacak. Onaylamadan hiçbir şey yazılmaz.',
@@ -642,16 +643,16 @@ export const STRINGS = {
     'baselines.unchanged': 'Bu sürümden bu yana değişmedi.',
     'baselines.liveDeleted': 'Bu kayıt canlı projede silinmiş; aşağıda dondurulmuş hali görünüyor.',
     'baselines.empty': '—',
-    'snapshot.newTitle': 'Yeni Snapshot Oluştur',
+    'snapshot.newTitle': 'Yeni Baseline Oluştur',
     'snapshot.newSub': 'Mevcut proje durumunun bir kopyasını (baseline) oluşturun.',
-    'snapshot.nameLabel': 'Snapshot Adı',
+    'snapshot.nameLabel': 'Baseline Adı',
     'snapshot.namePlaceholder': 'Örn: Beta Release, Milestone 1, Sprint 5 sonu',
     'snapshot.nameHint': 'Kısa, anlamlı bir isim girin (max 100 karakter).',
     'snapshot.confirmDelete':
-      '"{name}" snapshot\'ını silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.',
-    'snapshot.emptyTitle': 'Henüz snapshot yok',
+      '"{name}" baseline’ını silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.',
+    'snapshot.emptyTitle': 'Henüz baseline yok',
     'snapshot.emptyDesc':
-      'Proje durumunu dondurmak için bir snapshot alın. Bu, belirli bir andaki tüm gereksinimleri, test senaryolarını, sözlük terimlerini ve izlenebilirlik bağlarını salt-okunur bir kopyası olarak saklar.',
+      'Proje durumunu dondurmak için bir baseline alın. Bu, belirli bir andaki tüm gereksinimleri, test senaryolarını, sözlük terimlerini ve izlenebilirlik bağlarını salt-okunur bir kopyası olarak saklar.',
     'snapshot.totalItems': 'Toplam {count} öğe',
     'snapshot.createdAt': 'Oluşturulma: {date}',
     'snapshot.snapshotId': 'ID: {id}',
@@ -661,7 +662,7 @@ export const STRINGS = {
     'snapshot.tabLinks': 'İzlenebilirlik Bağları',
     'snapshot.notOnAnyPage': 'Hiçbir menü sayfasına ait değil',
     'snapshot.sectionEmpty': 'Bu sayfada hiç kayıt yok.',
-    'snapshot.noItems': 'Bu snapshot içinde {type} yok.',
+    'snapshot.noItems': 'Bu baseline içinde {type} yok.',
     'snapshot.thName': 'Ad',
     'snapshot.thCreatedBy': 'Oluşturan',
     'snapshot.thCreatedAt': 'Tarih',
@@ -678,8 +679,8 @@ export const STRINGS = {
     'snapshot.thLinkDetail': 'Kaynak → Hedef',
     'snapshot.view': 'Görüntüle',
     'snapshot.delete': 'Sil',
-    'snapshot.modalTitle': 'Snapshot Detayı',
-    'snapshot.modalSub': 'Bu snapshot, proje durumunun o anki salt-okunur kopyasıdır.',
+    'snapshot.modalTitle': 'Baseline Detayı',
+    'snapshot.modalSub': 'Bu baseline, proje durumunun o anki salt-okunur kopyasıdır.',
 
     // --- İzlenebilirlik matrisi ---
     'mtx.insufficient': 'Bu matris için yeterli gereksinim bulunmuyor.',
@@ -777,7 +778,7 @@ export const STRINGS = {
     'comp.printTitle': 'Bileşen Bazlı Gereksinim Listesi',
 
     // --- Elle tanımlanan bileşenler (Issue #138) ---
-    'comp.manualTitle': 'Bileşenler',
+    'comp.manualTitle': 'Ürün Ağacı',
     'comp.manualEmpty':
       'Henüz bileşen yok. Yukarıdaki “Yeni bileşen ekle” ile ürün bileşenlerinizi tanımlayın.',
     'comp.emptyManual':
@@ -961,7 +962,7 @@ export const STRINGS = {
     'partno.blockLabel': 'Alt parça bloğu',
     'partno.blockHint':
       'Bu dalın çocuklarına vereceği önek (örn. 320). Boşsa kendi bloğu kullanılır.',
-    'partno.settings': 'Parça No Ayarları',
+    'partno.settings': 'Ürün Ağacı Ayarları',
     'partno.formatLabel': 'Parça No Biçimi',
     'partno.formatHint': "'N' rakam, diğer karakterler ayıraçtır (örn. NNN.NN.NNN).",
     'partno.blockStepLabel': 'Kök Blok Adımı',
@@ -969,7 +970,6 @@ export const STRINGS = {
       'Yeni kök dallara blok atanırken kullanılan adım (örn. 10 → 010, 020…).',
     'partno.assigned': '{n} bileşene Parça No atandı.',
     'partno.issues': '{n} Parça No bulgusu',
-    'partno.noIssues': 'Parça No kontrolü temiz.',
     'partno.issue.severity': 'Seviye',
     'partno.issue.code': 'Tür',
     'partno.issue.message': 'Açıklama',
@@ -984,7 +984,7 @@ export const STRINGS = {
     'partno.code.CYCLE': 'Döngü',
     'partno.code.MAX_DEPTH': 'Derinlik aşımı',
     'partno.code.MISSING_PART_NO': 'Parça No yok',
-    'nav.components': 'Bileşenler',
+    'nav.components': 'Ürün Ağacı',
     // Issue #140: bilesene bagli gereksinimler menude otomatik gorunur.
     'nav.componentRequirements': '{name} Gereksinimleri',
     'nav.myWork': 'Bana Atananlar',
@@ -1040,7 +1040,7 @@ export const STRINGS = {
     // --- Ürün Ağacı (PBS) ---
     'page.pbsTree.title': 'Bağlantı Ağacı',
     'page.pbsTree.sub': 'Hiyerarşik ürün ağacı — alt kırılımlar açtıkça yüklenir',
-    'page.components.title': 'Bileşenler',
+    'page.components.title': 'Ürün Ağacı',
     'page.components.sub': 'Bileşen bazlı görünüm — seçilen bileşenin tüm gereksinimleri',
     'page.myWork.title': 'Bana Atananlar',
     'page.myWork.sub': 'Sorumlusu olduğunuz gereksinimler ve test senaryoları',
@@ -1300,6 +1300,8 @@ export const STRINGS = {
     'common.guest': 'Guest',
     'common.close': 'Close',
     'common.unknown': 'Unknown',
+    'common.create': 'Save',
+    'common.cancel': 'Cancel',
 
     // --- Language ---
     'lang.label': 'Language / Dil',
@@ -1893,7 +1895,7 @@ export const STRINGS = {
     'comp.printTitle': 'Component-based requirement list',
 
     // --- User-defined components (Issue #138) ---
-    'comp.manualTitle': 'Components',
+    'comp.manualTitle': 'Product Tree',
     'comp.manualEmpty':
       'No components yet. Use “Add new component” above to define your product components.',
     'comp.emptyManual':
@@ -2077,7 +2079,7 @@ export const STRINGS = {
     'partno.hint': 'Format: {format}',
     'partno.blockLabel': 'Child block',
     'partno.blockHint': 'Prefix this branch gives its children (e.g. 320). Blank: its own block.',
-    'partno.settings': 'Part No Settings',
+    'partno.settings': 'Product Tree Settings',
     'partno.formatLabel': 'Part No Format',
     'partno.formatHint': "'N' is a digit, any other character is a separator (e.g. NNN.NN.NNN).",
     'partno.blockStepLabel': 'Root Block Step',
@@ -2085,7 +2087,6 @@ export const STRINGS = {
       'Step used when assigning blocks to new root branches (10 → 010, 020…).',
     'partno.assigned': 'Part No assigned to {n} component(s).',
     'partno.issues': '{n} Part No finding(s)',
-    'partno.noIssues': 'Part No check is clean.',
     'partno.issue.severity': 'Severity',
     'partno.issue.code': 'Type',
     'partno.issue.message': 'Message',
@@ -2100,7 +2101,7 @@ export const STRINGS = {
     'partno.code.CYCLE': 'Cycle',
     'partno.code.MAX_DEPTH': 'Max depth exceeded',
     'partno.code.MISSING_PART_NO': 'Missing Part No',
-    'nav.components': 'Components',
+    'nav.components': 'Product Tree',
     'nav.componentRequirements': '{name} Requirements',
     'nav.myWork': 'My Assignments',
     'myWork.records': 'assigned records',
@@ -2154,7 +2155,7 @@ export const STRINGS = {
     // --- Product Tree (PBS) ---
     'page.pbsTree.title': 'Link Tree',
     'page.pbsTree.sub': 'Hierarchical product breakdown — children load as you expand',
-    'page.components.title': 'Components',
+    'page.components.title': 'Product Tree',
     'page.components.sub': 'Component-based view — every requirement of the selected component',
     'page.myWork.title': 'My Assignments',
     'page.myWork.sub': 'Requirements and test cases you are responsible for',
@@ -2406,14 +2407,14 @@ export const STRINGS = {
     'bulk.link.skipNote': '{count} tests that already verify a requirement will be skipped.',
 
     // --- Snapshots ---
-    'nav.snapshots': 'Snapshots',
+    'nav.snapshots': 'Baselines',
     'nav.suspect': 'Suspect Links',
-    'page.snapshots.title': 'Snapshots (Versions)',
-    'page.snapshots.sub': 'Manage project snapshots — create baselines, review, archive',
-    'snapshot.new': 'New Snapshot',
+    'page.snapshots.title': 'Baselines',
+    'page.snapshots.sub': 'Manage project baselines — create, review, archive',
+    'snapshot.new': 'New Baseline',
     // --- Baseline: tag / restore / diff (Issue #128) -----------------------
-    'snapshot.thLabel': 'Version Tag',
-    'snapshot.labelLabel': 'Version Tag',
+    'snapshot.thLabel': 'Baseline Tag',
+    'snapshot.labelLabel': 'Baseline Tag',
     'snapshot.labelPlaceholder': 'v1.0 · SRR · PDR · CDR',
     'snapshot.labelHint': 'Short code for the delivery/review point. Optional.',
     'snapshot.descLabel': 'Description',
@@ -2425,17 +2426,17 @@ export const STRINGS = {
     'snapshot.reasonPrefix': 'Reason',
     'snapshot.baselineBadge': 'Baseline',
     'snapshot.safetyBadge': 'Safety copy',
-    'snapshot.createFailed': 'Could not create snapshot.',
-    'snapshot.updateFailed': 'Could not update snapshot.',
+    'snapshot.createFailed': 'Could not create baseline.',
+    'snapshot.updateFailed': 'Could not update baseline.',
     'snapshot.previewFailed': 'Could not load preview.',
     'snapshot.save': 'Save',
     'snapshot.editMeta': 'Edit tag',
     'snapshot.editMetaTitle': 'Edit Baseline Details',
-    'snapshot.editMetaSub': 'Only the tag details change; the snapshot content stays the same.',
+    'snapshot.editMetaSub': 'Only the tag details change; the baseline content stays the same.',
     'snapshot.deleteBaseline': 'Delete baseline (special permission)',
     'snapshot.deleteBaselineWarning':
       'This is a BASELINE. Deleting removes a frozen delivery point and cannot be undone.',
-    'snapshot.restore': 'Restore this version',
+    'snapshot.restore': 'Restore to current baseline',
     'snapshot.restorePreviewTitle': 'Restore Preview',
     'snapshot.restoreExplain':
       'The changes below will be applied. Nothing is written until you confirm.',
@@ -2527,16 +2528,16 @@ export const STRINGS = {
     'baselines.liveDeleted':
       'This record was deleted from the live project; its frozen state is shown below.',
     'baselines.empty': '—',
-    'snapshot.newTitle': 'Create New Snapshot',
+    'snapshot.newTitle': 'Create New Baseline',
     'snapshot.newSub': 'Create a baseline copy of the current project state.',
-    'snapshot.nameLabel': 'Snapshot Name',
+    'snapshot.nameLabel': 'Baseline Name',
     'snapshot.namePlaceholder': 'E.g.: Beta Release, Milestone 1, End of Sprint 5',
     'snapshot.nameHint': 'Enter a short, meaningful name (max 100 chars).',
     'snapshot.confirmDelete':
-      'Are you sure you want to delete snapshot "{name}"? This action cannot be undone.',
-    'snapshot.emptyTitle': 'No snapshots yet',
+      'Are you sure you want to delete baseline "{name}"? This action cannot be undone.',
+    'snapshot.emptyTitle': 'No baselines yet',
     'snapshot.emptyDesc':
-      'Take a snapshot to freeze project state. It stores a read-only copy of all requirements, test cases, glossary terms, and traceability links at a specific point in time.',
+      'Take a baseline to freeze project state. It stores a read-only copy of all requirements, test cases, glossary terms, and traceability links at a specific point in time.',
     'snapshot.totalItems': 'Total {count} items',
     'snapshot.createdAt': 'Created: {date}',
     'snapshot.snapshotId': 'ID: {id}',
@@ -2546,7 +2547,7 @@ export const STRINGS = {
     'snapshot.tabLinks': 'Traceability Links',
     'snapshot.notOnAnyPage': 'Not on any menu page',
     'snapshot.sectionEmpty': 'No records on this page.',
-    'snapshot.noItems': 'No {type} in this snapshot.',
+    'snapshot.noItems': 'No {type} in this baseline.',
     'snapshot.thName': 'Name',
     'snapshot.thCreatedBy': 'Created By',
     'snapshot.thCreatedAt': 'Date',
@@ -2563,7 +2564,7 @@ export const STRINGS = {
     'snapshot.thLinkDetail': 'Source → Target',
     'snapshot.view': 'View',
     'snapshot.delete': 'Delete',
-    'snapshot.modalTitle': 'Snapshot Detail',
-    'snapshot.modalSub': 'This snapshot is a read-only copy of the project state at that moment.',
+    'snapshot.modalTitle': 'Baseline Detail',
+    'snapshot.modalSub': 'This baseline is a read-only copy of the project state at that moment.',
   },
 }

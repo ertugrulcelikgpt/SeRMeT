@@ -57,10 +57,10 @@ describe('Smoke — SnapshotsPage render', () => {
       </Wrap>,
     )
     // Boş state mesajı görünmeli
-    expect(screen.getByText(/Henüz snapshot yok/i)).toBeInTheDocument()
+    expect(screen.getByText(/Henüz baseline yok/i)).toBeInTheDocument()
   })
 
-  it('SnapshotsPage PM için "Yeni Snapshot" butonu gösterir', async () => {
+  it('SnapshotsPage PM için "Yeni Baseline" butonu gösterir', async () => {
     const SnapshotsPage = (await import('../Snapshots.jsx')).default
     render(
       <Wrap>
@@ -68,7 +68,7 @@ describe('Smoke — SnapshotsPage render', () => {
       </Wrap>,
     )
     // Butonlardan en az biri görünmeli
-    const buttons = screen.getAllByRole('button', { name: /Yeni Snapshot|New Snapshot/i })
+    const buttons = screen.getAllByRole('button', { name: /Yeni Baseline|New Baseline/i })
     expect(buttons.length).toBeGreaterThanOrEqual(1)
   })
 })

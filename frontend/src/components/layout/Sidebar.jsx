@@ -65,8 +65,10 @@ const BOTTOM = [
   // Dokuman kutuphanesi: bilgisayardan yuklenen PDF/Excel belgeleri kalici tutar.
   { key: 'document-library', labelKey: 'nav.documentLibrary', icon: IconDoc },
   { key: 'audit', labelKey: 'nav.audit', icon: IconHistory },
-  { key: 'snapshots', labelKey: 'nav.snapshots', icon: IconDoc },
 ]
+// Baseline'lar (snapshots) Gereksinimler grubunun altinda durur; hicbir
+// grupta gereksinim sayfasi yoksa alt listeye duser (kaybolmaz).
+const BASELINES = { key: 'snapshots', labelKey: 'nav.snapshots', icon: IconDoc }
 
 function NavButton({ active, onClick, Icon, label, indent = false }) {
   return (
@@ -367,6 +369,15 @@ export default function Sidebar({ active, onNavigate }) {
                   {/* Issue #140: bilesen gereksinim girdileri — sabit
                       sayfalarin YANINDA, onlari degistirmeden. */}
                   {gi === componentGroupIndex && renderComponentNav(componentNav)}
+                  {gi === componentGroupIndex && (
+                    <NavButton
+                      active={active === BASELINES.key}
+                      onClick={() => onNavigate(BASELINES.key)}
+                      Icon={null}
+                      label={t(BASELINES.labelKey)}
+                      indent
+                    />
+                  )}
                 </div>
               )}
               {quickAddGroupId === gid && (
@@ -473,7 +484,7 @@ export default function Sidebar({ active, onNavigate }) {
 
         <div className="my-2 border-t border-slate-100 dark:border-slate-800" />
 
-        {BOTTOM.map((item) => (
+        {(componentGroupIndex === -1 ? [...BOTTOM, BASELINES] : BOTTOM).map((item) => (
           <NavButton
             key={item.key}
             active={active === item.key}

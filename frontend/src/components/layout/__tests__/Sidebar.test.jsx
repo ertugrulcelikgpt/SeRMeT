@@ -93,7 +93,7 @@ describe('Sidebar — menu gruplari', () => {
 
   // Issue #129: bilesen bazli gorunum ayri bir ust seviye menudur; "Bağlantı
   // Ağacı" (PBS) yerine gecmez, yanina eklenir.
-  it('"Bileşenler" menusu ust seviyede yer alir ve tiklaninca yonlendirir', () => {
+  it('"Ürün Ağacı" (bilesenler) menusu ust seviyede yer alir ve tiklaninca yonlendirir', () => {
     const onNavigate = vi.fn()
     render(
       <LanguageProvider>
@@ -101,8 +101,16 @@ describe('Sidebar — menu gruplari', () => {
       </LanguageProvider>,
     )
     expect(screen.getByText('Bağlantı Ağacı')).toBeInTheDocument()
-    fireEvent.click(screen.getByText('Bileşenler'))
+    fireEvent.click(screen.getByText('Ürün Ağacı'))
     expect(onNavigate).toHaveBeenCalledWith('components')
+  })
+
+  // Issue #152: Baseline'lar Gereksinimler grubunun altindadir.
+  it("Baseline'lar Gereksinimler grubunun altinda yer alir", () => {
+    renderSidebar()
+    expect(screen.getByText('Baseline’lar')).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('nav-group-btn-Gereksinimler'))
+    expect(screen.queryByText('Baseline’lar')).not.toBeInTheDocument()
   })
 
   it('Sözlük bagimsiz (grupsuz) oge olarak gorunur', () => {
