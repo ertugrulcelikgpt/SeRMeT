@@ -12,6 +12,8 @@ concurrency:
 
 permissions:
   contents: read
+  # dorny/paths-filter PR'da degisen dosyalari API'den okur.
+  pull-requests: read
 
 jobs:
   detect-changes:
