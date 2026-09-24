@@ -31,6 +31,7 @@ import BulkAssignModal from '../components/common/BulkAssignModal.jsx'
 import BulkAssignResultToast from '../components/common/BulkAssignResultToast.jsx'
 import UndoToast from '../components/common/UndoToast.jsx'
 import ViewModal from '../components/common/ViewModal.jsx'
+import ApprovalMatrixModal from '../components/common/ApprovalMatrixModal.jsx'
 import SourceDocumentModal from '../components/documents/SourceDocumentModal.jsx'
 import ReasonModal from '../components/common/ReasonModal.jsx'
 import FilterBar, { FilterSummary } from '../components/common/FilterBar.jsx'
@@ -103,13 +104,17 @@ export default function Hierarchy({
     fields,
     attributeDefs,
     personnel,
+    approvals,
     bulkRemoveRequirements,
     editRequirement,
+    voteApproval,
+    unlockApproval,
+    getApprovalMatrix,
     components,
     projectId,
   } = useApp()
   const { t } = useLang()
-  const { can, isPM } = useAuth()
+  const { can, isPM, currentUser } = useAuth()
   const fx = useEntityFilters(navKey)
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -128,6 +133,7 @@ export default function Hierarchy({
   // Kaynak dokumani acilacak gereksinim (ViewModal "Kaynak" satirindan).
   const [sourceRow, setSourceRow] = useState(null)
   const [impactRow, setImpactRow] = useState(null)
+  const [matrixRow, setMatrixRow] = useState(null)
   // Silme oncesi zorunlu gerekce (izlenebilirlik) — bkz. ReasonModal.
   const [deleteTarget, setDeleteTarget] = useState(null) // { ids, label } | null
 
@@ -138,9 +144,10 @@ export default function Hierarchy({
   const keyOfRow = (r) => (componentMode ? componentKeyOf('requirement', r?.type) : comp)
   const types = useMemo(() => effectiveCfg?.typeOptions || [], [effectiveCfg])
   // Tip kilitliyse (tek tip) tablo sutununda tekrari onlemek icin kaldirilir;
-  // bunun yerine baslik yaninda tek bir rozet olarak gosterilir. Gereksinimler
-  // artik KENDI baslarina onaylanmaz (Issue: onay tuslari kaldirildi) — Durum
-  // sutunu bu gereksinimi DOGRULAYAN test senaryolarindan turetilir.
+  // bunun yerine baslik yaninda tek bir rozet olarak gosterilir. Durum sutunu
+  // bu gereksinimi DOGRULAYAN test senaryolarindan turetilir (degismez);
+  // Onay sutunu (Issue #157) ise AYRI bir eksendir — konsensus onay/kilit
+  // (approvalStatus/locked), TestCases'teki gibi.
   // ATANAN KISI sutunu yoktur: atama coklu oldugu icin satiri sisirirdi;
   // atananlar goz (Read) ikonuyla acilan ViewModal'da sirayla gorunur.
   const tableColumns = useMemo(
@@ -150,6 +157,8 @@ export default function Hierarchy({
         : ['type', 'field', 'status', 'links', 'linkTargets'],
     [effectiveCfg],
   )
+  // Issue #97: tek kimlik dunyasi — oy veren kimligi her zaman kullanici id'si.
+  const myVoterId = currentUser?.id
   // Issue #105: Durum sutunu gereksinimin KENDI onayindan degil, onu
   // DOGRULAYAN (Verifies) test senaryolarinin sonucundan turetilir. Indeks
   // proje genelinde TEK GECISTE kurulur (satir basina filtreleme yok).
@@ -171,6 +180,10 @@ export default function Hierarchy({
   const canEditRow = (r) => can('write', keyOfRow(r))
   const canDeleteRow = (r) => can('delete', keyOfRow(r))
   const canLinksRow = (r) => can('link_satisfies', keyOfRow(r))
+  // Kilitli (tam onaylanmis/reddedilmis) bir kayitta yalnizca PM oy/red
+  // butonlarini kullanabilir (backend de ayni kurali uygular) — aksi halde
+  // buton etkin gorunup 403 ile sessizce basarisiz olurdu.
+  const canApproveRow = (r) => can('approve', keyOfRow(r)) && (!r?.locked || isPM)
 
   // 5 sn geri alinabilir toplu silme.
   const del = useUndoableDelete(bulkRemoveRequirements)
@@ -198,6 +211,7 @@ export default function Hierarchy({
         t,
         columns: tableColumns,
         attrDefs: columnAttrDefs,
+        showApproval: true,
         statusLabel: t('tbl.th.verification'),
       }),
     [t, tableColumns, columnAttrDefs],
@@ -257,6 +271,29 @@ export default function Hierarchy({
 
   // Issue #57: satirin supheli (suspect) cikis bag sayisi — gosterge + yonlendirme.
   const suspectCountFor = (r) => suspectLinksForRequirement(links, r.id).length
+
+  // --- Onay bilgisi (Issue #157) ----------------------------------------------
+  const approvalInfoFor = (r) => {
+    const mine = approvals.find(
+      (a) => a.entityType === 'requirement' && a.entityId === r.id && a.voterId === myVoterId,
+    )
+    return {
+      approved: r.approvalStatus === 'Approved',
+      voted: mine?.decision === 'approve',
+      rejected: mine?.decision === 'reject',
+    }
+  }
+  // decision GONDERILMEZ: backend onay <-> geri cekme TOGGLE'i uygular
+  // (mevcut oy varsa geri ceker, yoksa onaylar) — TestCases ile ayni davranis.
+  const toggleApprove = (r) => {
+    voteApproval({ entityType: 'requirement', entityId: r.id })
+  }
+  // Testteki "aninda Failed" modelinden FARKLI: gereksinimin kendi durumu
+  // (status) yine yalnizca dogrulayan test sonucundan turetilir; bu yalnizca
+  // konsensusu bloklayan bir red oyudur (bkz. backend approvals.js).
+  const handleReject = (r) => {
+    voteApproval({ entityType: 'requirement', entityId: r.id, decision: 'reject' })
+  }
 
   const openCreate = () => {
     setEditing(null)
@@ -408,6 +445,14 @@ export default function Hierarchy({
         canManageLinksRow={canLinksRow}
         statusLabel={t('tbl.th.verification')}
         verificationFor={verificationFor}
+        showApproval
+        canApproveRow={canApproveRow}
+        approvalInfoFor={approvalInfoFor}
+        onToggleApprove={toggleApprove}
+        onReject={handleReject}
+        rejectTitle={t('tbl.rejectApprovalTitle')}
+        showApprovalDetail={isPM}
+        onApprovalDetail={setMatrixRow}
         selectable
         selectedIds={sel.selectedSet}
         onToggleRow={sel.toggleRow}
@@ -487,6 +532,14 @@ export default function Hierarchy({
         open={Boolean(impactRow)}
         onClose={() => setImpactRow(null)}
         requirement={impactRow}
+      />
+      <ApprovalMatrixModal
+        open={Boolean(matrixRow)}
+        entityType="requirement"
+        row={matrixRow}
+        onClose={() => setMatrixRow(null)}
+        onFetch={getApprovalMatrix}
+        onUnlock={(et, id) => unlockApproval({ entityType: et, entityId: id })}
       />
       <UndoToast
         open={del.isPending}

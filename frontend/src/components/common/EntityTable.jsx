@@ -153,10 +153,12 @@ export default function EntityTable({
   approvalInfoFor, // (row) => { approved, voted }
   onToggleApprove = noop,
   onApprovalDetail = noop,
-  // Testi DERHAL "Failed" yapar (tek yetkili yeterli, tam konsensus gerekmez).
-  // Verilmezse (ornegin gereksinim sayfalarinda showApproval zaten kapali)
-  // reddet butonu gosterilmez.
+  // Reddet aksiyonu: testte DERHAL "Failed" yapar (tek yetkili yeterli), gereksinimde
+  // konsensus oy yuvasina 'reject' yazar (bkz. Hierarchy.jsx). Verilmezse reddet
+  // butonu gosterilmez.
   onReject,
+  // Reddet butonunun tooltip metni; verilmezse test-odakli varsayilan kullanilir.
+  rejectTitle,
   // --- Geriye donuk uyumluluk (eski cagiranlar) ---
   canManageLinks = true,
   canDelete = true,
@@ -406,16 +408,18 @@ export default function EntityTable({
               <button
                 onClick={() => ctx.canApprove && onReject(r)}
                 disabled={!ctx.canApprove}
-                title={t('tbl.rejectTitle')}
+                title={rejectTitle || t('tbl.rejectTitle')}
                 className={`inline-flex items-center justify-center rounded-full p-0.5 transition-colors ${
-                  r.status === 'Rejected'
+                  (ctx.info.rejected ?? r.status === 'Rejected')
                     ? 'text-rose-600 dark:text-rose-400'
                     : 'text-slate-300 hover:text-rose-500 dark:text-slate-600 dark:hover:text-rose-400'
                 } ${ctx.canApprove ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'}`}
               >
                 <IconXCircle
                   size={20}
-                  className={r.status === 'Rejected' ? 'fill-current/10' : ''}
+                  className={
+                    (ctx.info.rejected ?? r.status === 'Rejected') ? 'fill-current/10' : ''
+                  }
                 />
               </button>
             )}
@@ -556,7 +560,7 @@ export default function EntityTable({
               const suspectCount = suspectCountFor ? suspectCountFor(r) || 0 : 0
               const info = approvalInfoFor
                 ? approvalInfoFor(r)
-                : { approved: r.approvalStatus === 'Approved', voted: false }
+                : { approved: r.approvalStatus === 'Approved', voted: false, rejected: false }
               const canApprove = canApproveRow(r)
               // Baslik ARTIK ZORUNLU DEGIL — baslik bossa aciklamadan
               // turetilmis etiket KALIN + ORTALANMIS gosterilir (kullanici
