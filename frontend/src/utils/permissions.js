@@ -110,12 +110,12 @@ export const PERMISSION_DEFS = [
     key: 'approve',
     num: 12,
     label: 'Onaylama',
-    // Gereksinimler artik KENDI baslarina onaylanmaz (durumlari, dogrulayan
-    // test senaryosundan turetilir) — bu izin yalnizca TEST bilesenleri icin
-    // anlamlidir; scope 'all' iken Rol editorunde bos req-* secenekleri
-    // sunuluyordu.
-    desc: 'Test sonucu onayı: Onay (Check Circle, tam konsensus) ve Reddet (X Circle, tek yetkili) butonlarını etkinleştirir.',
-    scope: 'test',
+    // Issue #157: gereksinimler icin de konsensus onay/red butonlari
+    // eklendi (bkz. Hierarchy.jsx). Gereksinimin KENDI durumu (status) yine
+    // yalnizca dogrulayan test senaryosundan turetilir — bu izin, ayri bir
+    // eksen olan onay/kilit (approvalStatus/locked) mekanizmasini kontrol eder.
+    desc: 'Onay (Check Circle, tam konsensus) ve Reddet (X Circle) butonlarını etkinleştirir. Testte reddet sonucu derhal Failed yapar; gereksinimde konsensüsü bloklayan bir oydur.',
+    scope: 'all',
   },
 ]
 

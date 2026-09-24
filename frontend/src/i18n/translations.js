@@ -351,6 +351,7 @@ export const STRINGS = {
     'tbl.approvalDetail': 'Onay Detayı',
     'tbl.approveTitle': 'Onayla',
     'tbl.rejectTitle': 'Reddet (Failed olarak işaretle) — tek yetkili yeterli',
+    'tbl.rejectApprovalTitle': 'Reddet — onayı bloklar (konsensüs)',
     'tbl.votedTitle': 'Onayınız verildi (geri almak için tıklayın)',
     'tbl.approvedTitle': 'Tüm onaylar tamamlandı',
 
@@ -1636,6 +1637,7 @@ export const STRINGS = {
     'tbl.approvalDetail': 'Approval Detail',
     'tbl.approveTitle': 'Approve',
     'tbl.rejectTitle': 'Reject (mark as Failed) — a single authorized approver is enough',
+    'tbl.rejectApprovalTitle': 'Reject — blocks approval (consensus)',
     'tbl.votedTitle': 'You approved (click to withdraw)',
     'tbl.approvedTitle': 'All approvals complete',
 
