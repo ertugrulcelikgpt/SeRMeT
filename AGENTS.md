@@ -1,0 +1,261 @@
+# Repository Guidelines
+
+## Project Overview
+
+**EHSIM – GITSIS** is a Requirements Management & Traceability (RMT) tool, DO-178C compliant, serving as a modern web-based alternative to IBM DOORS. The system manages hierarchical requirements (User → System → Software/Hardware), test cases (Acceptance / System / Sub-system), traceability links (Satisfies / Verifies / Assigned To), glossary terms, role-based approvals, and AI-assisted document analysis.
+
+## Architecture & Data Flow
+
+```
+Browser (React + Vite) ──HTTP/JSON──► Express REST API (backend:4001) ──Prisma──► PostgreSQL 15
+       │                                                  │
+       │ (optional AI)                                    │
+       ▼                                                  │
+FastAPI Bridge (ai-bridge:8008) ──► LM Studio + Gemma (:1234)
+```
+
+**Layers:**
+
+| Layer | Technology | Responsibility |
+|-------|------------|----------------|
+| Frontend | React 18 + Vite + Tailwind | UI; all data access via `src/services/apiClient.js` |
+| Backend | Node.js + Express + Prisma | Project-isolated REST API; JWT auth; **IDOR protection** (`projectAccessGuard` — members only access assigned projects); audit log |
+| Database | PostgreSQL 15 (Docker volume) | Persistent storage; `docker compose down -v` wipes data |
+| AI Bridge (optional) | Python FastAPI (`ai-bridge/`) | PDF/text → requirement drafts; only calls LM Studio, no DB connection |
+
+**Key architectural decisions:**
+- **Project isolation**: All data scoped to `projectId`; cascading deletes on project removal
+- **Backend-owned cascade**: Requirement status computed from linked test results (bulk SQL, not N+1)
+- **Consensus approvals**: PM + authorized members (approve permission via SystemRole) must all vote → `Approved` + `locked`. Fully user-based since Issue #97 (Personnel/passcode model removed). Since Issue #126 an `Approval` row is a *vote slot* (`decision`: `approve` / `reject` / `pending` invite); a rejection or an unanswered invite blocks consensus. The rule lives in one place (`backend/src/approvals.js`) and is applied by both `recomputeApproval` and the bulk SQL in `cascade.js`
+- **Text ID immutability**: Once generated, a `text_id` is never reused (audit log preserves deleted IDs)
+- **Baselines are frozen** (Issue #128): a snapshot marked `isBaseline` cannot be edited in content or deleted without an explicit `force` (special permission); restoring one takes an automatic safety snapshot first and applies in a single transaction, and restores the approval state (`locked`/`approvalStatus`) as it was at baseline time
+- **Two AI engines**: Offline (browser regex heuristics) vs Online (Gemma via FastAPI bridge)
+
+## Key Directories
+
+```
+├── backend/                    # Express + Prisma API
+│   ├── src/
+│   │   ├── server.js          # Main entry, route mounting, middleware
+│   │   ├── auth.js            # JWT, bcrypt, middleware (requireAuth, requirePM, projectAccessGuard)
+│   │   ├── assignees.js       # Multi-assignee (join tables + legacy assigneeId sync + ASSIGN audit)
+│   │   ├── approvals.js       # Vote-slot semantics + consensus/panel summary (Issue #126)
+│   │   ├── cascade.js         # Bulk status/approval recomputation (Issue #15)
+│   │   ├── constants.js       # Taxonomy: REQ_TYPE, TEST_TYPE, LINK_TYPE, SATISFIES_PARENT_OF, VERIFIES_TARGET_TYPES
+│   │   ├── logic.js           # Hierarchy validation, coverage calc
+│   │   ├── impact.js          # Recursive CTE impact analysis (Issue #46)
+│   │   ├── baselines.js       # Baseline etiketleme + restore (tek transaction) + diff (#128)
+│   │   ├── modules.js         # Baseline KAPSAMI: modul (sol menu sayfasi) tanimlari (#128)
+│   │   ├── components.js      # ELLE tanimlanan bilesenler: CRUD, siralama, gereksinim bagi, PBS'ten ice aktarma (#138)
+│   │   ├── partNumbers.js     # Parca No atama (PBS dugumleri) + tutarlilik kontrolu (#135)
+│   │   ├── partNo.js          # Parca No bicimi + blok bazli numara uretimi (#135)
+│   │   ├── traceability.js    # Traceability export/import (Excel + ReqIF/.reqifz/.xml)
+│   │   ├── reqifParser.js     # ReqIF XML -> model (standard + DOORS-style attribute heuristics)
+│   │   ├── zipUtil.js         # Dependency-free ZIP reader (.reqifz support; no npm install in this sandbox)
+│   │   ├── sanitize.js        # HTML sanitization
+│   │   └── seed.js            # Default Drone/IHA demo project (72 reqs, 16 tests)
+│   ├── prisma/schema.prisma   # Database schema
+│   └── tests/                 # node:test + supertest (7 tests)
+│
+├── frontend/                   # React + Vite + Tailwind SPA
+│   ├── src/
+│   │   ├── main.jsx           # App bootstrap, provider nesting
+│   │   ├── App.jsx            # Routing: Login → ProjectSelect → Workspace
+│   │   ├── context/           # React contexts (Auth, Project, App, Language)
+│   │   ├── services/          # API layer (apiClient.js, dataService.js, authService.js, aiEngineService.js)
+│   │   ├── pages/             # Page components (Dashboard, Hierarchy, TestCases, Traceability, etc.)
+│   │   ├── components/        # Reusable UI components
+│   │   ├── hooks/             # Custom hooks (useBulkSelection, useUndoableDelete)
+│   │   ├── utils/             # Pure functions (constants, coverage, format, permissions)
+│   │   └── i18n/              # TR/EN translations
+│   └── nginx/default.conf     # Reverse proxy config for Docker
+│
+├── ai-bridge/                  # Optional Python FastAPI bridge
+│   ├── api_server.py          # /analyze, /regenerate, /health endpoints
+│   └── config.py              # LM_STUDIO_URL, MODEL_NAME
+│
+├── scripts/                    # Utility scripts
+│   ├── seed-coffee-project.mjs # Optional Espresso demo (58 reqs, 32 tests)
+│   ├── run-dev.sh/.bat        # Dev stack (compose + compose.dev)
+│   ├── run-prod.sh/.bat       # Prod stack (compose only)
+│   └── pre-push-check.sh/.bat # Format, lint, test (runs pre-push)
+│
+├── compose.yaml                # Base: db (5433→5432) + backend + frontend (nginx on 5173)
+├── compose.dev.yaml            # Dev overlay: frontend bind-mount + Vite dev server
+├── .github/workflows/ci.yml    # Detect-changes → parallel frontend/backend → aggregate
+└── .env.example                # Root env template (POSTGRES_PASSWORD, JWT_SECRET)
+```
+
+## Development Commands
+
+### Backend (`backend/`)
+```bash
+pnpm install --frozen-lockfile   # Install (CI uses this)
+pnpm run dev                     # node src/server.js (requires JWT_SECRET)
+pnpm run prisma:generate         # Generate Prisma client (required before test/build)
+pnpm run db:push                 # Push schema to DB (dev: --force-reset)
+pnpm test                        # node --test --test-concurrency=1 (tests/*.test.js; needs DB)
+pnpm run lint                    # eslint .
+pnpm run format                  # prettier --write .
+pnpm run format:check            # prettier --check .
+```
+
+### Frontend (`frontend/`)
+```bash
+pnpm install --frozen-lockfile   # Install
+pnpm run dev                     # Vite dev server
+pnpm run build                   # Production build
+pnpm test                        # vitest run (JSDOM)
+pnpm run lint                    # eslint .
+pnpm run format                  # prettier --write .
+pnpm run format:check            # prettier --check .
+```
+
+### Docker (root)
+```bash
+docker compose up --build                    # Prod-like: db + migrate+seed + backend + frontend (nginx on 5173)
+docker compose -f compose.yaml -f compose.dev.yaml up --build  # Dev: hot reload
+docker compose down                          # Stop (preserves volume)
+docker compose down -v                       # Stop + wipe volume (fresh seed on next up)
+```
+
+### Windows (PowerShell/cmd)
+```bat
+scripts\pre-push-check.bat    # Format, lint, test (backend + frontend)
+scripts\run-dev.bat [--force] # Dev stack
+scripts\run-prod.bat [--force]# Prod stack
+node scripts/seed-coffee-project.mjs  # Load optional Espresso demo (backend must be running)
+```
+
+### CI Pipeline (`.github/workflows/ci.yml`)
+- `detect-changes` (paths-filter) → runs only changed packages
+- Frontend job: `format:check → lint → test → build` (Node 24)
+- Backend job: `format:check → lint → test` with PostgreSQL service container (Node 24)
+- `ci-status` aggregates; required for branch protection on `main`
+
+## Code Conventions & Common Patterns
+
+### Formatting & Linting
+- **Prettier**: Single quotes, trailing commas, 2-space indent (config in `.prettierrc.json`)
+- **ESLint 9 flat config**: `no-unused-vars: error` (args/vars prefixed `_` ignored)
+- **Unused imports/variables = error** — fix or prefix with `_`
+- **Run order**: `format → lint → test` (CI and pre-push)
+
+### Naming
+- **Files**: PascalCase for React components (`Modal.jsx`), camelCase for utilities (`apiClient.js`)
+- **Constants**: `UPPER_SNAKE_CASE` in `backend/src/constants.js` and `frontend/src/utils/constants.js`
+- **Database**: `snake_case` columns, PascalCase models (`Requirement`, `TraceabilityLink`)
+- **API**: RESTful, `/api/projects/:pid/...` for project-scoped resources
+
+### Error Handling
+- **Backend**: `wrap(fn)` middleware catches async errors → `fail(res, err)` returns JSON `{ error: string }`
+- **Frontend**: `apiClient.js` interceptors attach JWT; 401 → clear session + redirect to Login
+- **Validation**: `bad(msg, status)` helper creates error with `.status` property
+
+### Async Patterns
+- **Backend**: `async/await` throughout; Prisma transactions for multi-step ops (batch delete, link creation)
+- **Frontend**: `dataService.js` wraps `apiClient` calls; `AppContext` actions call service → `refresh()` after mutation
+- **No client-side cascade**: Backend recomputes status/approvals; frontend only refetches
+
+### Dependency Injection / State Management
+- **Backend**: Single `PrismaClient` instance at module top; passed to cascade functions
+- **Frontend**: Four React Context providers (Language → Auth → Project → App)
+  - `AuthContext`: `currentUser` (PM or assigned member; single login path since #97), `login`, `can(perm, component)`
+  - `ProjectContext`: `projects[]`, `activeProjectId`, `openProject`, `createProject`
+  - `AppContext`: All collections for active project (`requirements`, `testCases`, `links`, `glossary`, `auditLog`, `approvals`, `snapshots`) + `refresh()` + CRUD actions. (Project-scoped `roles`/`personnel` collections removed in #97)
+  - `LanguageContext`: `t(key)` i18n, `toggleLang()`
+
+### Security
+- **JWT_SECRET required**: Backend throws on startup if missing (no fallback in production)
+- **Rate limiting**: `/api/auth` endpoints limited
+- **IDOR protection**: `app.param('pid', projectAccessGuard)` — non-PM users restricted to their assigned project
+- **Register endpoint closed by default**: Requires `PM_REGISTRATION_KEY` env + `x-registration-key` header
+- **Member auth**: single login path (`/api/auth/login`, username + password). The 5-char passcode / `Personnel` model was removed in Issue #97 — members are regular `User`s assigned to a project via `User.projectId`
+
+## Important Files
+
+| File | Purpose |
+|------|---------|
+| `backend/src/server.js` | Route definitions, middleware chain, all REST endpoints |
+| `backend/src/auth.js` | JWT sign/verify, bcrypt, middleware (`requireAuth`, `requirePM`, `projectAccessGuard`) |
+| `backend/src/cascade.js` | Bulk status (`recomputeStatusesBulk`) & approval (`recomputeApprovalsBulk`) recomputation |
+| `backend/src/constants.js` | Single source of truth for taxonomy, hierarchy rules, link rules |
+| `backend/src/baselines.js` | Baseline tagging/freezing, module-scoped capture, restore (safety snapshot + single transaction), snapshot/live diff |
+| `backend/src/modules.js` | Baseline scope: module (nav page) definitions; mirrors `frontend/src/utils/constants.js` `BASELINE_MODULES` |
+| `backend/src/components.js` | User-defined components (`Component` table): CRUD, ordering (`sortIndex`), requirement links, one-off PBS import (#138) |
+| `backend/src/partNo.js` | Part No format parsing + branch-block allocation; lifetime-unique (audit blacklist) |
+| `backend/src/partNumbers.js` | Assigns `Requirement.partNo` per branch block, conflict guard (409), consistency report |
+| `backend/prisma/schema.prisma` | Full DB schema (User, SystemRole, Project, Requirement, TestCase, TraceabilityLink, GlossaryTerm, Approval, ProjectSnapshot, AuditLog, ProjectField, SavedView, Component) — `Role`/`Personnel` removed in #97 |
+| `backend/src/seed.js` | Default Drone/IHA demo project (auto-runs on empty DB via Docker `migrate` service) |
+| `frontend/src/main.jsx` | Provider nesting order, font imports, `?reset` URL param clears localStorage |
+| `frontend/src/App.jsx` | Three-gate routing: Login → ProjectSelect (PM only) → Workspace |
+| `frontend/src/services/apiClient.js` | Axios instance (`/api` base), JWT interceptor, 401 handling, `get/post/put/patch/del/upload` |
+| `frontend/src/services/dataService.js` | Project-scoped API calls (list/create/update/delete for all entities) |
+| `frontend/src/context/AppContext.jsx` | Central state + actions for active project; calls `dataService`; `refresh()` after mutations |
+| `frontend/src/utils/permissions.js` | 12-tier permission matrix; `hasPermission(rolePerms, permKey, componentKey)` |
+| `ai-bridge/api_server.py` | FastAPI: `/analyze` (PDF/text → requirements), `/regenerate` (avoid duplicates), `/health` |
+
+## Runtime/Tooling Preferences
+
+- **Node**: 20 (Docker) / 24 (CI) — ESM (`"type": "module"` in both packages)
+- **Package Manager**: pnpm@9.15.9 (lockfiles: `backend/pnpm-lock.yaml`, `frontend/pnpm-lock.yaml` — not committed; see `.gitignore`)
+- **Database**: PostgreSQL 15 via Docker; Prisma ORM
+- **Testing**:
+  - Backend: `node --test` + supertest (integration against real DB)
+  - Frontend: Vitest + Testing Library (JSDOM)
+- **CI**: GitHub Actions, Node 24, `pnpm install --frozen-lockfile`, native PostgreSQL 16 service container
+- **Docker**: Multi-stage builds; `builder` target runs `prisma db push --skip-generate && node src/seed.js`
+
+## Testing & QA
+
+### Backend Tests (`backend/tests/`)
+- `api.test.js`: Auth (login, removed passcode endpoint), IDOR protection (member cross-project access), register guard
+- Run locally: `docker compose up -d db` then `pnpm test` (uses `localhost:5433`)
+- CI: PostgreSQL service container, `TEST_DATABASE_URL` + `DATABASE_URL` env
+
+### Frontend Tests (`frontend/src/**/__tests__/`)
+- Unit: `coverage.test.js`, `impact.test.js` (pure functions)
+- Component: `Badge.test.jsx`, `ImpactAnalysisModal.test.jsx`, `smoke.test.jsx` (Modal, ViewModal render)
+- Hooks: `useBulkSelection.test.jsx`, `useUndoableDelete.test.jsx`
+- Run: `pnpm test` (vitest run)
+
+### Coverage Expectations
+- Backend: 7 integration tests covering auth + IDOR
+- Frontend: 22 tests (pure functions + RTL smoke)
+- No enforced coverage threshold; focus on regression prevention
+
+### Demo Data
+- **Default (auto)**: Drone/IHA project — 72 requirements, 16 tests, 58 links (from `backend/src/seed.js`, runs on empty DB)
+- **Optional**: Espresso Coffee Machine — 58 requirements, 32 tests, 119 links (run `node scripts/seed-coffee-project.mjs` against running backend)
+
+---
+
+## Quick Reference for AI Assistants
+
+| Task | Where to Look |
+|------|---------------|
+| Add new REST endpoint | `backend/src/server.js` (route pattern + `wrap`) |
+| Modify requirement hierarchy rules | `backend/src/constants.js` (`SATISFIES_PARENT_OF` for the PBS tree's single parent, `SATISFIES_ALLOWED_PARENTS` for Satisfies traceability links, `VERIFIES_TARGET_TYPES`) |
+| Change approval logic | `backend/src/cascade.js` (`recomputeApprovalsBulk`) |
+| Add frontend page | `frontend/src/pages/`, register in `App.jsx` |
+| Change saved views (filters + columns + row layout) | `backend/src/views.js` + `frontend/src/utils/viewConfig.js`, `hooks/useEntityViews.js`, `components/common/ViewBar.jsx` |
+| Add new entity type | Prisma schema → backend routes → `dataService.js` → `AppContext.jsx` actions → UI |
+| Change Part No format / branch blocks | `backend/src/partNo.js` + `Project.partNoFormat` / `partNoBlockStep` |
+| Add a component tree consistency rule | `backend/src/partNumbers.js` `checkPartNumbers` + `partno.code.*` i18n |
+| Change how components are created/ordered/linked | `backend/src/components.js` + `frontend/src/utils/components.js` (`buildManualComponents`) + `frontend/src/pages/Components.jsx` |
+| Change what a snapshot/baseline captures | `backend/src/baselines.js` `collectProjectState` + the `*_COLUMNS` restore lists |
+| Change baseline restore or diff rules | `backend/src/baselines.js` (`restoreSnapshot`, `diffSnapshots`); UI in `frontend/src/pages/Snapshots.jsx` + `utils/baselineDiff.js` |
+| Change which modules a baseline can cover | `backend/src/modules.js` `MODULE_DEFS` + `frontend/src/utils/constants.js` `BASELINE_MODULES` + `module.*` i18n (keep in sync) |
+| Change where a record's baselines are shown | `frontend/src/components/common/BaselinesTab.jsx`; pass `baselineEntityType` to `ViewModal` |
+| Fix IDOR issue | `backend/src/auth.js` `projectAccessGuard` |
+| Update taxonomy | `backend/src/constants.js` + `frontend/src/utils/constants.js` (keep in sync) |
+| Debug AI bridge | `ai-bridge/api_server.py` `/health`, check LM Studio `:1234/v1` |
+| Run single test | Backend: `node --test tests/api.test.js`; Frontend: `pnpm test -- <file>` |
+
+**Key invariants to preserve:**
+1. Project isolation — every query filters by `projectId`
+2. Backend owns cascade/approval recomputation — frontend only refreshes
+3. `text_id` never reused (audit log blacklist) — same rule for `Requirement.partNo` / `Component.partNo` (`partNo.js` `usedPartNos`)
+   - Components are **user-created, never derived** (#138): a component exists without requirements; PBS/field-derived lists stay only as alternative *sources*
+4. JWT_SECRET mandatory at startup
+5. Non-PM users can only access their assigned project (`User.projectId`)

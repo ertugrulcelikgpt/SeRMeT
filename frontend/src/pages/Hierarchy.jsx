@@ -1,0 +1,558 @@
+// ============================================================================
+//  Hierarchy.jsx  —  Hiyerarsi gereksinim sayfasi (User / System / Sub-system).
+//  Tek bilesen, `pageKey` ile hangi hiyerarsi seviyesinin gosterilecegini
+//  belirler (REQ_PAGES yapilandirmasi). Tip kilitli, Alan dinamik, durum
+//  otomatik. Satisfies baglari LinkManager ile yonetilir.
+//  Toplu islem: coklu secim + 5 sn geri alinabilir toplu silme + toplu linkle.
+//  Izin: 12 kademeli RBAC (can). Gereksinimler KENDI baslarina onaylanmaz;
+//  Durum sutunu bu gereksinimi DOGRULAYAN test senaryolarindan turetilir
+//  (bkz. utils/verification.js) — onay/kilit yalnizca test tarafinda
+//  (bkz. TestCases.jsx). Issue #105: Durum sutunu "Doğrulanamaz" /
+//  "Doğrulanmayı Bekliyor" / "Doğrulandı" / "Doğrulama Başarısız" ayrimini
+//  acikca gosterir; ayni degerler Durum filtresinde de secilebilir.
+//  pageKey ayni zamanda izin bileson anahtaridir (req-user / req-system / ...).
+//  Kayitli Gorunum (Issue #105): filtre + sutun duzeni + satir duzeni bir
+//  isimle kalici saklanir (ViewBar / useEntityViews); gorunum secilmediginde
+//  sayfa eskisi gibi (sessionStorage filtreleri, varsayilan sutunlar) calisir.
+// ============================================================================
+import { useMemo, useState } from 'react'
+import { useApp } from '../context/AppContext.jsx'
+import { useLang } from '../context/LanguageContext.jsx'
+import { useAuth } from '../context/AuthContext.jsx'
+import EntityTable from '../components/common/EntityTable.jsx'
+import RequirementForm from '../components/requirements/RequirementForm.jsx'
+import FieldManager from '../components/requirements/FieldManager.jsx'
+import AttributeManager from '../components/requirements/AttributeManager.jsx'
+import LinkManager from '../components/traceability/LinkManager.jsx'
+import ImpactAnalysisModal from '../components/traceability/ImpactAnalysisModal.jsx'
+import BulkActionBar from '../components/common/BulkActionBar.jsx'
+import BulkLinkModal from '../components/common/BulkLinkModal.jsx'
+import BulkAssignModal from '../components/common/BulkAssignModal.jsx'
+import BulkAssignResultToast from '../components/common/BulkAssignResultToast.jsx'
+import UndoToast from '../components/common/UndoToast.jsx'
+import ViewModal from '../components/common/ViewModal.jsx'
+import ApprovalMatrixModal from '../components/common/ApprovalMatrixModal.jsx'
+import SourceDocumentModal from '../components/documents/SourceDocumentModal.jsx'
+import ReasonModal from '../components/common/ReasonModal.jsx'
+import FilterBar, { FilterSummary } from '../components/common/FilterBar.jsx'
+import ViewBar, { TablePager } from '../components/common/ViewBar.jsx'
+import { TypeBadge } from '../components/common/Badge.jsx'
+import { IconPlus } from '../components/common/Icons.jsx'
+import { HIERARCHY_REQ_TYPES, REQ_PAGES } from '../utils/constants.js'
+import { requirementsOfComponent } from '../utils/componentNav.js'
+import { componentKeyOf } from '../utils/permissions.js'
+import { suspectLinksForRequirement } from '../utils/suspect.js'
+import { buildVerificationIndex, verificationOf } from '../utils/verification.js'
+import { buildLinkIndex, linkCountOf, linkSummaryOf } from '../utils/linkIndex.js'
+import { getDisplayLabel } from '../utils/format.js'
+import { useBulkSelection } from '../hooks/useBulkSelection.js'
+import { useUndoableDelete } from '../hooks/useUndoableDelete.js'
+import { useEntityFilters, matchesFilters } from '../hooks/useEntityFilters.js'
+import { useEntityViews } from '../hooks/useEntityViews.js'
+import { columnCatalog, entityAttrDefs, paginate, sortRows } from '../utils/viewConfig.js'
+import {
+  filterableAttrDefs,
+  requirementStatusOptions,
+  requirementStatusOf,
+} from '../utils/filterOptions.js'
+
+export default function Hierarchy({
+  pageKey,
+  navKey = pageKey,
+  titleOverride = null,
+  fieldFilter = null,
+  typeFilter = null,
+  componentId = null,
+  onOpenSuspect,
+}) {
+  // titleOverride / fieldFilter / typeFilter: kullanicinin menuye ekledigi
+  // OZEL sayfalar icin (Issue #9). Gereksinim TIPLERI sabittir; ozel sayfa
+  // ayni tipin Alan (disiplin) ve/veya Tip (yalnizca req-subsystem: Software/
+  // Hardware) filtresiyle daraltilmis gorunumudur.
+  // Issue #140: BILESEN gorunumu. `componentId` verildiginde sayfa tek bir
+  // hiyerarsi seviyesini degil, secilen bilesene (ve alt bilesenlerine) bagli
+  // TUM gereksinimleri listeler (User / System / Sub-system bir arada).
+  // Bu, sabit sayfalarin (req-user...) YERINE GECMEZ; ayni tablo, sutun ve
+  // filtrelerle onlarin yaninda duran ek bir gorunumdur.
+  const componentMode = Boolean(componentId)
+  const cfg = useMemo(
+    () =>
+      componentMode
+        ? {
+            // Sanal sayfa: izin matrisinde KARSILIGI YOKTUR — yetki kontrolu
+            // her KAYDIN kendi sayfa anahtari uzerinden yapilir (keyOfRow).
+            key: 'req-component',
+            navLabel: titleOverride || '',
+            lockedType: null,
+            typeOptions: HIERARCHY_REQ_TYPES,
+            addLabel: '',
+          }
+        : REQ_PAGES[pageKey],
+    [componentMode, titleOverride, pageKey],
+  )
+  // typeFilter yalnizca sayfanin zaten sundugu tiplerden biriyse gecerlidir
+  // (orn. req-subsystem'de 'Software Requirement'); aksi halde yoksayilir.
+  const effectiveCfg = useMemo(() => {
+    if (!cfg || !typeFilter || !cfg.typeOptions?.includes(typeFilter)) return cfg
+    return { ...cfg, typeOptions: [typeFilter], lockedType: typeFilter }
+  }, [cfg, typeFilter])
+  const {
+    requirements,
+    testCases,
+    links,
+    glossary,
+    fields,
+    attributeDefs,
+    personnel,
+    approvals,
+    bulkRemoveRequirements,
+    editRequirement,
+    voteApproval,
+    unlockApproval,
+    getApprovalMatrix,
+    components,
+    projectId,
+  } = useApp()
+  const { t } = useLang()
+  const { can, isPM, currentUser } = useAuth()
+  const fx = useEntityFilters(navKey)
+  const [formOpen, setFormOpen] = useState(false)
+  const [editing, setEditing] = useState(null)
+  const [linkTarget, setLinkTarget] = useState(null)
+  const [fieldMgr, setFieldMgr] = useState(false)
+  const [attrMgr, setAttrMgr] = useState(false)
+  const [bulkLinkOpen, setBulkLinkOpen] = useState(false)
+  // Issue #120: toplu atama modali + islem sonucu ozeti (atlanan kayitlar).
+  const [bulkAssignOpen, setBulkAssignOpen] = useState(false)
+  const [assignResult, setAssignResult] = useState(null)
+  const [viewRow, setViewRow] = useState(null)
+  // Issue #123: genisletilmis satirdaki bir bag kodundan acilan HEDEF kayit
+  // (gereksinim ya da test senaryosu). Salt okunur gosterilir: buradaki
+  // kayit bu sayfanin listesinden olmayabilir (orn. bir test senaryosu).
+  const [linkedRow, setLinkedRow] = useState(null)
+  // Kaynak dokumani acilacak gereksinim (ViewModal "Kaynak" satirindan).
+  const [sourceRow, setSourceRow] = useState(null)
+  const [impactRow, setImpactRow] = useState(null)
+  const [matrixRow, setMatrixRow] = useState(null)
+  // Silme oncesi zorunlu gerekce (izlenebilirlik) — bkz. ReasonModal.
+  const [deleteTarget, setDeleteTarget] = useState(null) // { ids, label } | null
+
+  // Izin bileson anahtari = sayfa anahtari. Bilesen gorunumunde tek bir sayfa
+  // anahtari yoktur (liste seviyeler arasidir); bu yuzden yetki SATIR BAZINDA,
+  // kaydin tipinden turetilen anahtarla sorulur.
+  const comp = componentMode ? null : pageKey
+  const keyOfRow = (r) => (componentMode ? componentKeyOf('requirement', r?.type) : comp)
+  const types = useMemo(() => effectiveCfg?.typeOptions || [], [effectiveCfg])
+  // Tip kilitliyse (tek tip) tablo sutununda tekrari onlemek icin kaldirilir;
+  // bunun yerine baslik yaninda tek bir rozet olarak gosterilir. Durum sutunu
+  // bu gereksinimi DOGRULAYAN test senaryolarindan turetilir (degismez);
+  // Onay sutunu (Issue #157) ise AYRI bir eksendir — konsensus onay/kilit
+  // (approvalStatus/locked), TestCases'teki gibi.
+  // ATANAN KISI sutunu yoktur: atama coklu oldugu icin satiri sisirirdi;
+  // atananlar goz (Read) ikonuyla acilan ViewModal'da sirayla gorunur.
+  const tableColumns = useMemo(
+    () =>
+      effectiveCfg?.lockedType
+        ? ['field', 'status', 'links', 'linkTargets']
+        : ['type', 'field', 'status', 'links', 'linkTargets'],
+    [effectiveCfg],
+  )
+  // Issue #97: tek kimlik dunyasi — oy veren kimligi her zaman kullanici id'si.
+  const myVoterId = currentUser?.id
+  // Issue #105: Durum sutunu gereksinimin KENDI onayindan degil, onu
+  // DOGRULAYAN (Verifies) test senaryolarinin sonucundan turetilir. Indeks
+  // proje genelinde TEK GECISTE kurulur (satir basina filtreleme yok).
+  const verificationIndex = useMemo(
+    () => buildVerificationIndex(links, testCases),
+    [links, testCases],
+  )
+  const verificationFor = (r) => verificationOf(verificationIndex, r.id)
+
+  // --- Izin cozumleyiciler ---------------------------------------------------
+  // Bilesen gorunumunde satirlar zaten okunabilirlige gore SUZULUR (rows),
+  // bu yuzden `canRead` her zaman dogrudur; yazma/silme/baglama haklari ise
+  // satirin kendi sayfa anahtarindan gelir.
+  const canRead = componentMode || can('read', comp)
+  // Bilesen gorunumu SALT LISTEDIR: yeni kayit, ait olacagi hiyerarsi seviyesi
+  // belirsiz oldugu icin buradan olusturulmaz — sabit sayfalardan eklenir.
+  const canAdd = !componentMode && can('add_requirement', comp)
+  const canFields = can('manage_fields')
+  const canEditRow = (r) => can('write', keyOfRow(r))
+  const canDeleteRow = (r) => can('delete', keyOfRow(r))
+  const canLinksRow = (r) => can('link_satisfies', keyOfRow(r))
+  // Kilitli (tam onaylanmis/reddedilmis) bir kayitta yalnizca PM oy/red
+  // butonlarini kullanabilir (backend de ayni kurali uygular) — aksi halde
+  // buton etkin gorunup 403 ile sessizce basarisiz olurdu.
+  const canApproveRow = (r) => can('approve', keyOfRow(r)) && (!r?.locked || isPM)
+
+  // 5 sn geri alinabilir toplu silme.
+  const del = useUndoableDelete(bulkRemoveRequirements)
+  const pendingSet = useMemo(() => new Set(del.pendingIds), [del.pendingIds])
+
+  // Filtre cubugu secenekleri: Alan projeye gore dinamiktir, oznitelikler
+  // runtime'da eklenip silinebilir; Tip yalnizca sayfa tek tipe kilitli
+  // DEGILSE anlamlidir (tablo 'type' sutunuyla ayni kural, bkz. tableColumns).
+  const filterAttrDefs = useMemo(
+    () => filterableAttrDefs(attributeDefs, 'requirement'),
+    [attributeDefs],
+  )
+  const statusOptions = useMemo(() => requirementStatusOptions(t), [t])
+
+  // --- Kayitli Gorunum (Saved View) ------------------------------------------
+  //  Sutun katalogu EntityTable'in cizebilecegi TUM sutunlardir; oznitelik
+  //  sutunlari icin EntityTable ile AYNI liste kullanilir (entityAttrDefs).
+  const columnAttrDefs = useMemo(
+    () => entityAttrDefs(attributeDefs, 'requirement'),
+    [attributeDefs],
+  )
+  const catalog = useMemo(
+    () =>
+      columnCatalog({
+        t,
+        columns: tableColumns,
+        attrDefs: columnAttrDefs,
+        showApproval: true,
+        statusLabel: t('tbl.th.verification'),
+      }),
+    [t, tableColumns, columnAttrDefs],
+  )
+  const vw = useEntityViews({
+    projectId,
+    navKey,
+    catalog,
+    filters: fx.filters,
+    onApplyFilters: fx.replace,
+  })
+
+  // Bilesen gorunumunun kaynak kumesi: secilen bilesene ve ALT BILESENLERINE
+  // bagli, kullanicinin okuma yetkisi olan kayitlar. Yetki suzgeci burada
+  // uygulanir — yetkisiz kullanici sabit sayfalarda goremedigi bir kaydi bu
+  // liste uzerinden de goremez.
+  const sourceRows = useMemo(() => {
+    if (!componentMode) return requirements
+    return requirementsOfComponent(components, requirements, componentId, { can })
+  }, [componentMode, components, requirements, componentId, can])
+
+  const rows = useMemo(() => {
+    const statusOf = (r) => requirementStatusOf(r, verificationFor)
+    return sourceRows
+      .filter((r) => types.includes(r.type))
+      .filter((r) => !fieldFilter || r.field === fieldFilter)
+      .filter((r) => matchesFilters(r, fx.filters, statusOf, filterAttrDefs))
+      .sort((a, b) => a.text_id.localeCompare(b.text_id, undefined, { numeric: true }))
+    // verificationFor `verificationIndex` uzerinden hesaplanir; bagimlilik
+    // olarak indeks yeterli (o da links + testCases'ten turer).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sourceRows, types, fx.filters, fieldFilter, verificationIndex, filterAttrDefs])
+
+  // Bekleyen (soft-delete) satirlari gizle.
+  const visibleRows = useMemo(() => rows.filter((r) => !pendingSet.has(r.id)), [rows, pendingSet])
+  // Gorunumun satir duzeni: once siralama olcutu, sonra sayfalama.
+  const sortedRows = useMemo(() => sortRows(visibleRows, vw.rowLayout), [visibleRows, vw.rowLayout])
+  const pageInfo = useMemo(
+    () => paginate(sortedRows, vw.rowLayout.pageSize, vw.page),
+    [sortedRows, vw.rowLayout.pageSize, vw.page],
+  )
+  // Toplu secim O ANDA GORUNEN sayfayla sinirlidir: "tumunu sec" kutusu
+  // ekranda olmayan satirlari da isaretleseydi kullanici ne sildigini
+  // goremezdi (sayfa degisince secim dogal olarak sifirlanir).
+  const visibleIds = useMemo(() => pageInfo.rows.map((r) => r.id), [pageInfo.rows])
+  const sel = useBulkSelection(visibleIds)
+
+  // Issue #123: TUM baglar TEK GECISTE indekslenir; hem "BAG" sayaci hem
+  // satir genisletmedeki ust/alt bag + test listesi bu indeksten okunur —
+  // satir basina ayri bir tarama (ya da istek) yapilmaz.
+  const linkIndex = useMemo(
+    () => buildLinkIndex({ links, requirements, testCases, glossary }),
+    [links, requirements, testCases, glossary],
+  )
+  const linkCountFor = (id) => linkCountOf(linkIndex, id)
+  const linkSummaryFor = (r) => linkSummaryOf(linkIndex, r)
+
+  // Issue #57: satirin supheli (suspect) cikis bag sayisi — gosterge + yonlendirme.
+  const suspectCountFor = (r) => suspectLinksForRequirement(links, r.id).length
+
+  // --- Onay bilgisi (Issue #157) ----------------------------------------------
+  const approvalInfoFor = (r) => {
+    const mine = approvals.find(
+      (a) => a.entityType === 'requirement' && a.entityId === r.id && a.voterId === myVoterId,
+    )
+    return {
+      approved: r.approvalStatus === 'Approved',
+      voted: mine?.decision === 'approve',
+      rejected: mine?.decision === 'reject',
+    }
+  }
+  // decision GONDERILMEZ: backend onay <-> geri cekme TOGGLE'i uygular
+  // (mevcut oy varsa geri ceker, yoksa onaylar) — TestCases ile ayni davranis.
+  const toggleApprove = (r) => {
+    voteApproval({ entityType: 'requirement', entityId: r.id })
+  }
+  // Testteki "aninda Failed" modelinden FARKLI: gereksinimin kendi durumu
+  // (status) yine yalnizca dogrulayan test sonucundan turetilir; bu yalnizca
+  // konsensusu bloklayan bir red oyudur (bkz. backend approvals.js).
+  const handleReject = (r) => {
+    voteApproval({ entityType: 'requirement', entityId: r.id, decision: 'reject' })
+  }
+
+  const openCreate = () => {
+    setEditing(null)
+    setFormOpen(true)
+  }
+  const openEdit = (r) => {
+    setEditing(r)
+    setFormOpen(true)
+  }
+  const saveDescription = (r, html) => editRequirement(r.id, { description: html })
+
+  const handleDelete = (r) => {
+    setDeleteTarget({ ids: [r.id], label: `${r.text_id} — ${getDisplayLabel(r).text}` })
+  }
+  const handleBulkDelete = () => {
+    if (sel.count === 0) return
+    setDeleteTarget({ ids: sel.selectedIds, label: `${sel.count} ${t('req.records')}` })
+  }
+  const confirmDelete = async (reason) => {
+    const { ids } = deleteTarget
+    sel.clear()
+    await del.schedule(ids, reason)
+    setDeleteTarget(null)
+  }
+
+  const selectedRows = useMemo(
+    () => pageInfo.rows.filter((r) => sel.selectedSet.has(r.id)),
+    [pageInfo.rows, sel.selectedSet],
+  )
+
+  // Toplu islem dugmeleri: SECILI satirlarin hepsinde izin varsa sunulur.
+  // Secimde yetkisiz tek bir kayit varsa dugme gorunmez — kismi basarisizlik
+  // yerine net bir kural. Secim yokken cubuk zaten gizlidir.
+  const bulkAllowed = (check) =>
+    selectedRows.length > 0 ? selectedRows.every((r) => check(r)) : !componentMode && check(null)
+
+  if (!cfg) return null
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            {/* Issue #140: bu liste bir BILESENE (urune) aittir. Rozet, sayfa
+                basligindaki adin bir gereksinim degil bilesen oldugunu
+                soyler; satirlar ise gereksinimlerdir. */}
+            {componentMode && (
+              <span
+                data-testid="req-component-kind"
+                className="rounded-md bg-teal-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-teal-800 dark:bg-teal-900/40 dark:text-teal-200"
+              >
+                {t('comp.kindComponent')}
+              </span>
+            )}
+            <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+              {titleOverride || effectiveCfg.navLabel}
+            </h2>
+            {effectiveCfg.lockedType && <TypeBadge value={effectiveCfg.lockedType} />}
+          </div>
+          <p className="text-sm text-slate-500 dark:text-slate-400">
+            <FilterSummary
+              count={visibleRows.length}
+              label={t('req.records')}
+              activeCount={fx.activeCount}
+            />
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {canFields && (
+            <button onClick={() => setFieldMgr(true)} className="btn-secondary">
+              {t('field.manage')}
+            </button>
+          )}
+          {canFields && (
+            <button onClick={() => setAttrMgr(true)} className="btn-secondary">
+              {t('attr.manage')}
+            </button>
+          )}
+          {canAdd && (
+            <button onClick={openCreate} className="btn-primary">
+              <IconPlus size={18} /> {effectiveCfg.addLabel}
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="min-w-[240px] flex-1">
+          <FilterBar
+            filters={fx.filters}
+            onSet={fx.set}
+            onSetAttr={fx.setAttr}
+            onClear={fx.clear}
+            types={effectiveCfg.lockedType ? null : types}
+            fields={fieldFilter ? null : fields}
+            statusOptions={statusOptions}
+            assignees={personnel}
+            attrDefs={filterAttrDefs}
+            activeCount={fx.activeCount}
+          />
+        </div>
+        <ViewBar
+          views={vw.views}
+          selected={vw.selected}
+          selectedId={vw.selectedId}
+          onSelect={vw.selectView}
+          dirty={vw.dirty}
+          catalog={catalog}
+          columnLayout={vw.columnLayout}
+          onColumnLayout={vw.setColumnLayout}
+          rowLayout={vw.rowLayout}
+          onRowLayout={vw.setRowLayout}
+          onSave={vw.update}
+          onSaveAs={vw.saveAs}
+          onMakeDefault={vw.makeDefault}
+          onDelete={vw.remove}
+          canShare={isPM}
+        />
+      </div>
+
+      <BulkActionBar
+        count={sel.count}
+        onDelete={bulkAllowed(canDeleteRow) ? handleBulkDelete : undefined}
+        onLink={bulkAllowed(canLinksRow) ? () => setBulkLinkOpen(true) : undefined}
+        onAssign={bulkAllowed(canEditRow) ? () => setBulkAssignOpen(true) : undefined}
+        onClear={sel.clear}
+        canLink={bulkAllowed(canLinksRow)}
+        canAssign={bulkAllowed(canEditRow)}
+      />
+
+      <EntityTable
+        rows={pageInfo.rows}
+        columns={tableColumns}
+        columnKeys={vw.columnKeys}
+        attributeEntityType="requirement"
+        linkCountFor={linkCountFor}
+        expandable
+        linkSummaryFor={linkSummaryFor}
+        onOpenLinked={canRead ? (item) => setLinkedRow(item.node) : undefined}
+        suspectCountFor={suspectCountFor}
+        onOpenSuspect={onOpenSuspect}
+        onView={canRead ? setViewRow : undefined}
+        onEdit={openEdit}
+        onDelete={handleDelete}
+        onManageLinks={setLinkTarget}
+        onImpact={setImpactRow}
+        canEditRow={canEditRow}
+        canDeleteRow={canDeleteRow}
+        canManageLinksRow={canLinksRow}
+        statusLabel={t('tbl.th.verification')}
+        verificationFor={verificationFor}
+        showApproval
+        canApproveRow={canApproveRow}
+        approvalInfoFor={approvalInfoFor}
+        onToggleApprove={toggleApprove}
+        onReject={handleReject}
+        rejectTitle={t('tbl.rejectApprovalTitle')}
+        showApprovalDetail={isPM}
+        onApprovalDetail={setMatrixRow}
+        selectable
+        selectedIds={sel.selectedSet}
+        onToggleRow={sel.toggleRow}
+        onToggleAll={sel.toggleAll}
+        allSelected={sel.allSelected}
+        someSelected={sel.someSelected}
+      />
+
+      <TablePager
+        page={pageInfo.page}
+        pageCount={pageInfo.pageCount}
+        total={pageInfo.total}
+        onPage={vw.setPage}
+      />
+
+      <RequirementForm
+        open={formOpen}
+        onClose={() => setFormOpen(false)}
+        editing={editing}
+        pageConfig={effectiveCfg}
+      />
+      <FieldManager open={fieldMgr} onClose={() => setFieldMgr(false)} />
+      <AttributeManager open={attrMgr} onClose={() => setAttrMgr(false)} />
+      <LinkManager
+        open={Boolean(linkTarget)}
+        onClose={() => setLinkTarget(null)}
+        subject={linkTarget}
+        subjectKind="requirement"
+      />
+      <BulkLinkModal
+        open={bulkLinkOpen}
+        onClose={() => setBulkLinkOpen(false)}
+        subjectKind="requirement"
+        sources={selectedRows}
+        onDone={sel.clear}
+      />
+      <BulkAssignModal
+        open={bulkAssignOpen}
+        onClose={() => setBulkAssignOpen(false)}
+        rows={selectedRows}
+        entity="requirement"
+        onDone={(result) => {
+          setAssignResult(result)
+          sel.clear()
+        }}
+      />
+      <BulkAssignResultToast result={assignResult} onClose={() => setAssignResult(null)} />
+      <ViewModal
+        open={Boolean(viewRow)}
+        row={viewRow}
+        canWrite={Boolean(viewRow) && canEditRow(viewRow)}
+        showStatus={false}
+        showVerification
+        showHistory
+        onClose={() => setViewRow(null)}
+        onSaveDescription={saveDescription}
+        onOpenSource={setSourceRow}
+        commentEntityType="requirement"
+        baselineEntityType="requirement"
+        approvalEntityType="requirement"
+      />
+      {/* Issue #123: bag listesinden acilan HEDEF kayit — salt okunur. */}
+      <ViewModal
+        open={Boolean(linkedRow)}
+        row={linkedRow}
+        canWrite={false}
+        showStatus
+        onClose={() => setLinkedRow(null)}
+      />
+      {/* Kaynak izlenebilirligi: dokumani Metin modunda acip pasaji vurgular. */}
+      <SourceDocumentModal
+        requirement={sourceRow}
+        projectId={projectId}
+        onClose={() => setSourceRow(null)}
+      />
+      <ImpactAnalysisModal
+        open={Boolean(impactRow)}
+        onClose={() => setImpactRow(null)}
+        requirement={impactRow}
+      />
+      <ApprovalMatrixModal
+        open={Boolean(matrixRow)}
+        entityType="requirement"
+        row={matrixRow}
+        onClose={() => setMatrixRow(null)}
+        onFetch={getApprovalMatrix}
+        onUnlock={(et, id) => unlockApproval({ entityType: et, entityId: id })}
+      />
+      <UndoToast
+        open={del.isPending}
+        count={del.pendingIds.length}
+        secondsLeft={del.secondsLeft}
+        onUndo={del.undo}
+      />
+      <ReasonModal
+        open={Boolean(deleteTarget)}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={confirmDelete}
+        itemLabel={deleteTarget?.label}
+      />
+    </div>
+  )
+}

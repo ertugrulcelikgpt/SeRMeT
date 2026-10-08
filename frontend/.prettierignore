@@ -1,0 +1,4 @@
+# Formatlama kapsami disi
+dist/
+*.md
+pnpm-lock.yaml
