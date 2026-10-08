@@ -1,0 +1,325 @@
+// ============================================================================
+//  ViewModal.jsx  —  Goz (Read) ikonuyla acilan detay modali.
+//  Ust kisimda meta bilgiler (tip/alan/oncelik/durum/DAL), altinda ATANAN
+//  KISILER (coklu atama, atama sirasiyla); en altta zengin metin editorlu
+//  ACIKLAMA alani. Yazma izni yoksa veya kayit kilitliyse salt-okunur.
+//  Aciklama kaydi onSaveDescription(row, html) ile ust bilesene iletilir.
+//
+//  Atanan kisiler listede (EntityTable) AYRI BIR SUTUN OLARAK GOSTERILMEZ:
+//  coklu atamada satiri sisirdigi icin tek yeri burasidir.
+// ============================================================================
+import { useEffect, useMemo, useState } from 'react'
+import Modal from './Modal.jsx'
+import RichTextEditor from './RichTextEditor.jsx'
+import HistoryTab from './HistoryTab.jsx'
+import BaselinesTab from './BaselinesTab.jsx'
+import CommentsTab from '../comments/CommentsTab.jsx'
+import ApprovalPanel from './ApprovalPanel.jsx'
+import { useComments } from '../../hooks/useComments.js'
+import { StatusBadge, PriorityBadge, TypeBadge, DalBadge, VerificationBadge } from './Badge.jsx'
+import { IconCheck } from './Icons.jsx'
+import { useLang } from '../../context/LanguageContext.jsx'
+import { useApp } from '../../context/AppContext.jsx'
+import { getDisplayLabel } from '../../utils/format.js'
+import { assigneeNamesOf } from '../../utils/assignees.js'
+import { buildVerificationIndex, verificationOf } from '../../utils/verification.js'
+
+const BUILTIN_KEYS = new Set(['priority', 'dal_level'])
+
+export default function ViewModal({
+  open,
+  row,
+  canWrite = false,
+  showStatus = true,
+  // Issue #143: "Alan" (disiplin) rozeti. Gereksinim Haritasi ve Bilesenler
+  // ekranlari URUN kirilimini anlatir; Alan orada bir kirilim olcusu degildir
+  // ve kutu/rozet kalabaligina donuyordu. O sayfalar false gecer; gereksinim
+  // listelerinde rozet aynen durur.
+  showField = true,
+  // Kaynak dokuman satirina tiklandiginda cagirilir (dokumani acip pasaji
+  // vurgulamak icin). Verilmezse "Kaynak" satiri salt bilgi olarak gosterilir.
+  onOpenSource,
+  // Yorumlar sekmesi: 'requirement' | 'testcase' | 'glossary'. Verilmezse
+  // sekme HIC gosterilmez (yorumu olmayan varliklar icin).
+  commentEntityType = null,
+  // Issue #57: gereksinimlerde salt okunur "Gecmis" (versiyon) sekmesi.
+  // Yalnizca kaynagi gereksinim olan sayfalar (Hierarchy) iletir; testlerin
+  // backend'de versiyon gecmisi yoktur, bu yuzden varsayilan false'dur.
+  showHistory = false,
+  // Issue #105: gereksinimlerde "Doğrulama" bolumu — bu kaydi DOGRULAYAN
+  // (Verifies) test senaryolari, tek tek sonuclariyla listelenir. Boylece
+  // "neden hala bekliyor / neden başarısız" sorusu modalda cevaplanir.
+  showVerification = false,
+  // Issue #126: kalici "Onaylar" paneli — 'requirement' | 'testcase'.
+  // Onay bilgisi (kim onayladi / kim reddetti / kimin oyu bekleniyor) artik
+  // PM'e ozel "Onay Detayi" modalinin ardinda degil, kaydi inceleyen HER
+  // kullaniciya burada gorunur. Verilmezse panel hic cizilmez.
+  approvalEntityType = null,
+  // Issue #128: "Baseline'lar" sekmesi — bu kaydin icinde bulundugu modul
+  // baseline'lari, o surumdeki hali ve canli halle alan bazinda farki.
+  // Deger kaydin tipidir: 'requirement' | 'testcase' | 'glossary'.
+  // Verilmezse sekme hic cizilmez.
+  baselineEntityType = null,
+  onClose,
+  onSaveDescription,
+  statusLabel: _statusLabel,
+}) {
+  const { t } = useLang()
+  const { attributeDefs, personnel, projectId, links, testCases } = useApp()
+  const [html, setHtml] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [tab, setTab] = useState('detail')
+  const editable = canWrite && !row?.locked
+  // Yorumlar burada (sekmede degil) cekilir: sekme ROZETI, sekme acilmadan
+  // once yorum sayisini gosterebilsin.
+  const showComments = Boolean(commentEntityType)
+  const commentsApi = useComments(
+    projectId,
+    showComments ? commentEntityType : null,
+    showComments ? row?.id : null,
+  )
+  const showBaselines = Boolean(baselineEntityType)
+  const showTabs = showHistory || showComments || showBaselines
+
+  // Dogrulama ozeti yalnizca istendiginde (gereksinim sayfalari) hesaplanir.
+  const verification = useMemo(() => {
+    if (!showVerification || !row?.id) return null
+    return verificationOf(buildVerificationIndex(links, testCases), row.id)
+  }, [showVerification, row?.id, links, testCases])
+
+  useEffect(() => {
+    if (open) setHtml(row?.description || '')
+  }, [open, row])
+
+  // Yeni kayit acildiginda her zaman Detay sekmesinden basla.
+  useEffect(() => {
+    if (open) setTab('detail')
+  }, [open, row?.id])
+
+  if (!row) return null
+
+  const customAttrEntries = Object.entries(row.attributes || {}).filter(
+    ([k, v]) => !BUILTIN_KEYS.has(k) && v !== null && v !== undefined && v !== '',
+  )
+  const labelFor = (key) => attributeDefs.find((d) => d.key === key)?.label || key
+  // Satirda yalnizca id'ler tasinir; adlar burada cozulur (atama sirasi korunur).
+  const assigneeNames = assigneeNamesOf(row, personnel)
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      await onSaveDescription?.(row, html)
+      onClose?.()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title={`${row.text_id} — ${getDisplayLabel(row).text}`}
+      subtitle={t('view.title')}
+      maxWidth="max-w-3xl"
+      footer={
+        <div className="flex justify-end gap-2">
+          <button onClick={onClose} className="btn-secondary">
+            {t('view.close')}
+          </button>
+          {tab === 'detail' && editable && (
+            <button onClick={save} disabled={saving} className="btn-primary disabled:opacity-60">
+              <IconCheck size={16} /> {saving ? t('view.saving') : t('view.save')}
+            </button>
+          )}
+        </div>
+      }
+    >
+      {showTabs && (
+        <div
+          className="mb-4 flex gap-1 rounded-lg bg-slate-100 p-1 dark:bg-slate-800/70"
+          role="tablist"
+        >
+          {[
+            { key: 'detail', label: t('view.tab.detail'), show: true },
+            { key: 'history', label: t('view.tab.history'), show: showHistory },
+            {
+              key: 'comments',
+              // Rozet: yorum varsa sayisi baslikta gosterilir.
+              label: commentsApi.comments.length
+                ? t('view.tab.commentsCount', { n: commentsApi.comments.length })
+                : t('view.tab.comments'),
+              show: showComments,
+            },
+            { key: 'baselines', label: t('view.tab.baselines'), show: showBaselines },
+          ]
+            .filter((x) => x.show)
+            .map((x) => (
+              <button
+                key={x.key}
+                role="tab"
+                aria-selected={tab === x.key}
+                onClick={() => setTab(x.key)}
+                data-testid={`view-tab-${x.key}`}
+                className={`flex-1 rounded-md px-3 py-1.5 text-sm font-semibold transition-colors ${
+                  tab === x.key
+                    ? 'bg-white text-slate-900 shadow-sm dark:bg-slate-700 dark:text-white'
+                    : 'text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-100'
+                }`}
+              >
+                {x.label}
+              </button>
+            ))}
+        </div>
+      )}
+
+      {tab === 'comments' && showComments ? (
+        <CommentsTab
+          comments={commentsApi.comments}
+          loading={commentsApi.loading}
+          error={commentsApi.error}
+          onAdd={commentsApi.add}
+          onDelete={commentsApi.remove}
+        />
+      ) : tab === 'history' && showHistory && row ? (
+        <HistoryTab row={row} />
+      ) : tab === 'baselines' && showBaselines && row ? (
+        <BaselinesTab entityType={baselineEntityType} row={row} />
+      ) : (
+        <>
+          {/* Meta bilgiler */}
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            {row.type && <TypeBadge value={row.type} />}
+            {row.priority && <PriorityBadge value={row.priority} />}
+            {showVerification && verification ? (
+              <VerificationBadge info={verification} t={t} />
+            ) : (
+              showStatus && row.status && <StatusBadge value={row.status} />
+            )}
+            {row.dal_level && <DalBadge value={row.dal_level} />}
+            {showField && row.field && (
+              <span className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                {row.field}
+              </span>
+            )}
+            {customAttrEntries.map(([k, v]) => (
+              <span
+                key={k}
+                className="rounded-md bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-slate-700 dark:text-slate-300"
+                title={labelFor(k)}
+              >
+                {labelFor(k)}: {String(v)}
+              </span>
+            ))}
+          </div>
+
+          {/* Atanan kisiler: coklu atama, ATAMA SIRASIYLA (ilk kisi birincil
+              sorumlu). Kimse atanmamissa bolum hic gosterilmez. */}
+          {assigneeNames.length > 0 && (
+            <div className="mb-4" data-testid="view-assignees">
+              <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                {t('view.assignees')}
+              </div>
+              <ol className="flex flex-wrap gap-1.5">
+                {assigneeNames.map((name, i) => (
+                  <li
+                    key={`${name}-${i}`}
+                    className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 py-0.5 pl-1.5 pr-2.5 text-xs font-medium text-slate-700 ring-1 ring-inset ring-slate-200 dark:bg-slate-700 dark:text-slate-200 dark:ring-slate-600"
+                  >
+                    <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-brand-600 text-[10px] font-bold tabular-nums text-white">
+                      {i + 1}
+                    </span>
+                    {name}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
+          {/* Onaylar (Issue #126): kim onayladi / reddetti / kimin oyu bekleniyor.
+              PM olmayan kullanicilara da gorunur. */}
+          {approvalEntityType && <ApprovalPanel entityType={approvalEntityType} row={row} />}
+
+          {/* Dogrulama (Issue #105): bu gereksinimi dogrulayan test senaryolari
+              ve tek tek sonuclari. Gereksinim kendi basina onaylanmaz. */}
+          {showVerification && verification && (
+            <div className="mb-4" data-testid="view-verification">
+              <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                {t('ver.title')}
+              </div>
+              {verification.total === 0 ? (
+                <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300">
+                  {t('ver.unverifiable.hint')}
+                </p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {verification.tests.map((tc) => (
+                    <li
+                      key={tc.id}
+                      className="flex items-center justify-between gap-3 rounded-lg border border-slate-200 px-3 py-1.5 dark:border-slate-700"
+                    >
+                      <span className="min-w-0 truncate text-sm text-slate-700 dark:text-slate-200">
+                        <span className="mr-2 font-mono text-xs font-bold text-slate-500 dark:text-slate-400">
+                          {tc.text_id || t('ver.unknownTest')}
+                        </span>
+                        {tc.title || ''}
+                      </span>
+                      {tc.status ? (
+                        <StatusBadge value={tc.status} />
+                      ) : (
+                        <span className="shrink-0 text-xs text-slate-400">
+                          {t('ver.resultPending')}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {/* Kaynak izlenebilirligi: dokumandan metin secilerek olusturulduysa.
+              Dokuman SILINMIS olsa bile (sourceDocumentId null'a duser) alinti
+              ve dokuman adi kopyasi kaldigi icin kaynak gorunur kalir. */}
+          {(row.sourceDocumentId || row.sourceQuote) && (
+            <div className="mb-4 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800/60">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  {t('view.source')}
+                </span>
+                {row.sourceDocumentId ? (
+                  <button
+                    type="button"
+                    onClick={() => onOpenSource?.(row)}
+                    disabled={!onOpenSource}
+                    data-testid="view-source-open"
+                    className="text-sm font-semibold text-brand-600 hover:underline disabled:cursor-default disabled:text-slate-600 disabled:no-underline dark:text-brand-400 dark:disabled:text-slate-300"
+                  >
+                    {row.sourceDocumentName || t('view.sourceDocument')}
+                  </button>
+                ) : (
+                  <span className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                    {t('view.sourceDeleted', { name: row.sourceDocumentName || '—' })}
+                  </span>
+                )}
+              </div>
+              {row.sourceQuote && (
+                <p className="mt-1 line-clamp-3 text-xs italic text-slate-600 dark:text-slate-400">
+                  “{row.sourceQuote}”
+                </p>
+              )}
+            </div>
+          )}
+
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+              {t('view.description')}
+            </span>
+            {!editable && <span className="text-[11px] text-slate-400">{t('view.readonly')}</span>}
+          </div>
+          <RichTextEditor value={html} onChange={setHtml} readOnly={!editable} />
+        </>
+      )}
+    </Modal>
+  )
+}

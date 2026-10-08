@@ -1,0 +1,3497 @@
+// ============================================================================
+//  server.js  —  Express + Prisma REST API. Tum kaynaklar PROJE bazli izole.
+//  Taban yol: /api
+//    Auth:      POST /api/auth/register, POST /api/auth/login, GET /api/users
+//    Projeler:  GET/POST /api/projects, GET/PATCH/DELETE /api/projects/:pid
+//    Proje alti (hepsi /api/projects/:pid/...):
+//        fields         (GET/POST/DELETE)
+//        requirements   (GET/POST/GET:id/PUT:id/DELETE:id)
+//        components     (GET/POST/PATCH:id/DELETE:id, POST /reorder,
+//                        POST /link-requirements, POST /import-from-pbs,
+//                        GET /suggest-part-no)  -> ELLE tanimli bilesen (#138)
+//        part-numbers   (POST /ensure, GET /check)  -> Parca No (#135)
+//        part-no-config (GET/PUT)  -> Parca No bicimi (PM)
+//        testcases      (GET/POST/GET:id/PUT:id/DELETE:id)
+//        glossary       (GET/POST/PUT:id/DELETE:id)
+//        links          (GET/POST/DELETE:id)
+//        documents      (GET/POST/GET:id/download/DELETE:id)
+//        comments       (GET/POST/DELETE:id)  -> generic entityType+entityId
+//        audit          (GET/POST)
+//        snapshots      (GET/POST/GET:id/PATCH:id/DELETE:id,
+//                        :id/restore-preview, :id/restore)  -> #8, #128
+//                        POST gövdesi `modules` ile MODUL baseline'i alir.
+//        baseline-sets  (GET)  -> modul baseline'larini toplayan setler (#128)
+//        snapshots-diff (GET ?from=&to=)  -> baseline farki (#128)
+//        entity-baselines (GET :entityType/:entityId[/:snapshotId])
+//                        -> kaydin icinde oldugu baseline'lar + alan farki (#128)
+//        recompute      (POST)  -> tum durumlari yeniden hesaplar (cascade)
+// ============================================================================
+import express from 'express';
+import cors from 'cors';
+import rateLimit from 'express-rate-limit';
+import { PrismaClient } from '@prisma/client';
+import { STATUS, isValidClearanceLevel, componentKeyOf } from './constants.js';
+import { validateLink } from './logic.js';
+import { recomputeStatusesBulk, getRequiredVoters } from './cascade.js';
+// Issue #126: oylarin (approve/reject/pending davet) tek yorumlama noktasi.
+import { summarizeApprovals, DECISION, decisionOf } from './approvals.js';
+import {
+  requireAuth,
+  requirePM,
+  requireAdmin,
+  makeProjectAccessGuard,
+  hashPassword,
+  signToken,
+  generateRefreshToken,
+  hashRefreshToken,
+  configurePassport,
+  passport,
+  MAX_LOGIN_ATTEMPTS,
+  LOCK_DURATION_MS,
+  REFRESH_TOKEN_TTL_MS,
+} from './auth.js';
+import { cleanRichText } from './sanitize.js';
+import { ensureSystemRoles, resolveUserRole, isPMRole, isAdminRole } from './systemRoles.js';
+import { requireReason } from './reason.js';
+import { listViews, createView, updateView, deleteView, setDefaultView, loadWritable } from './views.js';
+import traceabilityRoutes from './traceability.js';
+import documentRoutes from './documents.js';
+import commentRoutes from './comments.js';
+import { getImpactTree } from './impact.js';
+import { getTreeChildren, getTreeAncestorPath } from './tree.js';
+import { nextTextId as nextTextIdShared } from './idGen.js';
+import { moveRequirement, splitRequirement, mergeRequirements } from './treeOps.js';
+import {
+  getNavLayout,
+  createGroup as createNavGroup,
+  updateGroup as updateNavGroup,
+  deleteGroup as deleteNavGroup,
+  createItem as createNavItem,
+  updateItem as updateNavItem,
+  deleteItem as deleteNavItem,
+  ensureMaterialized as ensureNavMaterialized,
+} from './nav.js';
+import { setProjectCodePrefix } from './textIdPrefix.js';
+import {
+  createSnapshotForScope,
+  buildRestorePlan,
+  restoreSnapshot,
+  diffSnapshots,
+  assertDeletable,
+  validateBaselineUpdate,
+  listRecordBaselines,
+  recordBaselineDetail,
+  listBaselineSets,
+} from './baselines.js';
+import { scopeSummary } from './modules.js';
+import { ensurePartNumbers, setPartNo, setPartNoBlock, checkPartNumbers } from './partNumbers.js';
+import {
+  listComponents,
+  createComponent,
+  updateComponent,
+  deleteComponent,
+  deleteImpact,
+  reorderComponents,
+  setRequirementComponent,
+  suggestPartNo as suggestComponentPartNo,
+  importFromPbs as importComponentsFromPbs,
+} from './components.js';
+import { parsePartNoFormat, configOf as partNoConfigOf, allocatePartNo, PART_NO_AUDIT_FIELD } from './partNo.js';
+import { labelOf } from './label.js';
+import {
+  listDefs,
+  validateAndMergeAttributes,
+  extractAttributeInput,
+  seedDefaultAttributeDefinitions,
+  normalizeDefinitionInput,
+  flatten,
+  flattenAll,
+} from './attributes.js';
+import { contentFieldsChanged, nextHistoryVersion, SUSPECT_LINK_TYPES } from './versioning.js';
+import {
+  resolveAssigneeIds,
+  setAssignees,
+  getAssigneeIds,
+  withAssigneeIds,
+  withAssigneeIdsAll,
+  auditAssignment,
+  backfillAssignees,
+  resyncLegacyAssignee,
+  getAssigneeIdsMap,
+  applyAssignMode,
+  sameAssignees,
+  setAssigneesBulk,
+  auditAssignmentsBulk,
+  ASSIGN_MODES,
+} from './assignees.js';
+
+const prisma = new PrismaClient();
+const app = express();
+app.set('trust proxy', 1);
+const ALLOWED_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173';
+app.use(cors({ origin: ALLOWED_ORIGIN, credentials: true }));
+app.use(express.json({ limit: '2mb' }));
+
+// --- Passport.js kurulumu (Issue #86) --------------------------------------
+//  Stratejiler tek paylasilan PrismaClient'i kullanir (server.js'teki prisma).
+configurePassport(prisma);
+app.use(passport.initialize());
+
+// --- Guvenlik: kimlik dogrulama + proje sinirlama --------------------------
+//  Girisin kendisi (login/passcode/refresh/logout/register) haric TUM /api
+//  yollari gecerli bir JWT ister (bkz. auth.js). Deneme-yanilma saldirilarina
+//  karsi auth uclarina ayrica hiz siniri uygulanir. Login/register/passcode
+//  (bilgi dogrulama) 20 istek/15dk; refresh/logout (legit frontend refresh'i
+//  etkilenmesin) ayri ve daha yuksek bir limit kullanir.
+// Test ortaminda TUM test dosyalari AYNI surecte (node --test), dolayisiyla
+// AYNI bellek-ici sayac deposunu paylasarak calisir — supertest'in gercek
+// istemci IP'si (loopback) tum dosyalarda ortaktir. Bu yuzden onlarca test
+// dosyasinin toplam login/passcode cagrisi, tek bir dosyanin kendi testleri
+// tamamlanmadan limiti (20/15dk) tuketebilir; bu bir GUVENLIK acigi DEGIL,
+// paylasilan test surecinin bir yan etkisidir. Ozel olarak izin verilen tek
+// istisna: loopback IP'den gelen istekler test ortaminda sayilmaz. Rate
+// limit davranisinin KENDISINI dogrulayan test (issue85-auth-infra.test.js)
+// bunu ETKILENMEZ — o test kasitli olarak sahte X-Forwarded-For IP'leri
+// (203.0.113.x) kullanir, tam da gercek loopback IP'nin paylasimli oldugunu
+// bildigi icin; skip burada SADECE loopback'i muaf tutar, sahte IP'leri degil.
+const isTestLoopback = (req) =>
+  process.env.NODE_ENV === 'test' && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(req.ip);
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: isTestLoopback,
+  message: { error: 'Cok fazla deneme yapildi. Lutfen birkac dakika sonra tekrar deneyin.' },
+});
+const refreshLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  skip: isTestLoopback,
+  legacyHeaders: false,
+  message: { error: 'Cok fazla istek yapildi. Lutfen birkac dakika sonra tekrar deneyin.' },
+});
+
+// --- Issue #85: istek loglayici (XFF duzeltmesi AC'si) ----------------------
+//  Backend nginx arkasinda calistigi icin tum istemciler tek IP gibi gorunur.
+//  `trust proxy=1` + X-Forwarded-For sayesinde req.ip gercek istemci IP'sini
+//  verir; bu log, "iki farkli tarayici -> loglarda iki farkli IP" kabul
+//  kriterini gosterir. Not: trust proxy=1 tam olarak bir proxy siniri
+//  guvenir; backend dogrudan acilsa XFF taklidi mumkun olur (kapsam disi).
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    console.log(`[req] ${req.ip} ${req.method} ${req.originalUrl} -> ${res.statusCode} (${Date.now() - start}ms)`);
+  });
+  next();
+});
+
+app.use(requireAuth);
+// :pid iceren HER route icin otomatik calisir — personel yalnizca kendi
+// atandigi projeye erisebilir, PM her projeye erisebilir (IDOR korumasi).
+// Issue #103: guard artik fabrika — PrismaClient enjekte edilir ve uyelik
+// her istekte DB'den (ProjectMember) canli dogrulanir.
+app.param('pid', makeProjectAccessGuard(prisma));
+
+// Traceability router — mounted under :pid so app.param('pid', projectAccessGuard)
+app.use('/api/projects/:pid/traceability', traceabilityRoutes);
+// Dokuman kutuphanesi (PDF/Excel yukleme) — ayni sekilde :pid altinda.
+app.use('/api/projects/:pid/documents', documentRoutes);
+// Yorumlar (ana varliklar uzerinde ekip ici iletisim) — ayni sekilde :pid altinda.
+app.use('/api/projects/:pid/comments', commentRoutes);
+
+const PORT = process.env.PORT || 4001;
+const wrap = (fn) => (req, res) => Promise.resolve(fn(req, res)).catch((e) => fail(res, e));
+
+function fail(res, e) {
+  if (e && e.code === 'P2002') return res.status(409).json({ error: 'Benzersizlik ihlali (kod zaten kullanimda).' });
+  if (e && e.code === 'P2025') return res.status(404).json({ error: 'Kayit bulunamadi.' });
+  console.error('[api] hata:', e?.message || e);
+  return res.status(e?.status || 500).json({ error: e?.message || 'Sunucu hatasi.' });
+}
+const bad = (msg, status = 400) => Object.assign(new Error(msg), { status });
+
+// --- Kaynak izlenebilirligi (dokumandan metin secerek gereksinim olusturma) --
+//  Istemciden gelen kaynak bilgisini dogrular ve saklanacak hale getirir.
+//  Dokuman ayni PROJEYE ait olmali (IDOR); degilse kaynak sessizce yok sayilmaz,
+//  hata verilir. Alinti ve dokuman adi ANLIK KOPYA olarak yazilir: dokuman
+//  sonradan silinse de (bag SetNull ile bosa duser) UI "kaynak dokuman
+//  silinmis: <ad>" diyebilsin.
+async function resolveSource(pid, body) {
+  const docId = body?.sourceDocumentId;
+  if (!docId) return {};
+  const doc = await prisma.projectDocument.findFirst({
+    where: { id: String(docId), projectId: pid },
+    select: { id: true, fileName: true },
+  });
+  if (!doc) throw bad('Kaynak dokuman bulunamadi.', 400);
+  const toInt = (v) => (Number.isInteger(v) && v >= 0 ? v : null);
+  const start = toInt(body.sourceStart);
+  const end = toInt(body.sourceEnd);
+  return {
+    sourceDocumentId: doc.id,
+    sourceDocumentName: doc.fileName,
+    sourceStart: start,
+    sourceEnd: end !== null && start !== null && end > start ? end : null,
+    sourceQuote:
+      String(body.sourceQuote || '')
+        .trim()
+        .slice(0, 5000) || null,
+  };
+}
+
+// --- Bilesen bagi (Issue #138) ---------------------------------------------
+//  Gereksinimin baglandigi ELLE tanimli bilesen. Bos/null bag KALDIRIR.
+//  Baska projenin bileseni kabul edilmez (IDOR).
+async function resolveComponentId(pid, value) {
+  if (value === null || value === undefined || value === '') return null;
+  const row = await prisma.component.findFirst({ where: { id: String(value), projectId: pid }, select: { id: true } });
+  if (!row) throw bad('Bilesen bulunamadi.', 404);
+  return row.id;
+}
+
+// Etki analizinde kullanilan "ilgili dokuman" etiket listesini temizler.
+function normalizeDocuments(list) {
+  if (!Array.isArray(list)) return [];
+  return [...new Set(list.map((s) => String(s ?? '').trim()).filter(Boolean))];
+}
+
+// --- Audit yardimcisi -------------------------------------------------------
+async function audit(projectId, entry) {
+  try {
+    await prisma.auditLog.create({ data: { projectId, ...entry } });
+  } catch (e) {
+    console.error('[audit] yazilamadi:', e?.message || e);
+  }
+}
+
+// --- Onay yorumu temizleyici (Issue #126) ----------------------------------
+//  Onay yorumu DUZ METINDIR (zengin metin degil): kirpilir, uzunlugu sinirlanir,
+//  bos ise null'a duser (panelde "yorum yok" olarak gorunur).
+const APPROVAL_COMMENT_MAX = 1000;
+function cleanComment(value) {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim().slice(0, APPROVAL_COMMENT_MAX);
+  return text === '' ? null : text;
+}
+
+// --- Sistem geneli (proje-bagimsiz) denetim (Issue #86) --------------------
+//  Auth olaylari (login/refresh/logout/lock) proje-ceperli AuditLog'dan AYRI,
+//  global SystemAuditLog tablosuna yazilir. Kimlik dogrulanamadiginda userId
+//  null olabilir (orn. basarisiz login — kullanici henuz bilinmiyor).
+async function auditSystem(action, { userId = null, ...metadata } = {}) {
+  try {
+    await prisma.systemAuditLog.create({ data: { userId, action, metadata } });
+  } catch (e) {
+    console.error('[audit-system] yazilamadi:', e?.message || e);
+  }
+}
+
+// --- ABAC (Issue #87): clearance seviyesi erisim yardimcilari ---------------
+//  Kullanici yalnizca kendi clearanceLevel'ina esit veya ondan dusuk
+//  gereksinimleri gorur. Filtreleme Express array'i uzerinde DEGIL, Prisma
+//  WHERE kosuluna enjekte edilir (performans, AC). Filtre role'den bagimsizdir:
+//  PM (en yuksek clearance) dogal olarak hepsini gorur; ADMIN ayri bir
+//  kullanici-yonetimi roludur (#88) ve gereksinim erisimini etkilemez.
+//  Token'da clearanceLevel yoksa (personel/passcode) guvenli varsayilan = 1.
+function clearanceFilter(req) {
+  const level = req.auth?.clearanceLevel ?? 1;
+  return { clearanceLevel: { lte: level } };
+}
+
+function assertRequirementVisible(req, row) {
+  const level = req.auth?.clearanceLevel ?? 1;
+  if (row && row.clearanceLevel != null && row.clearanceLevel > level) {
+    throw bad('Bu gereksinime erisim yetkiniz yok.', 403);
+  }
+}
+
+// --- Sorumlu personel (is atama) -------------------------------------------
+//  Atama artik COKLUDUR (bir kayda birden fazla sorumlu) ve tum mantik
+//  src/assignees.js icindedir: dogrulama (proje sinirini asma korumasi),
+//  ara tabloya yazma, legacy `assigneeId` kolonunu senkron tutma ve ASSIGN
+//  audit kaydi. Buradaki sarmalayicilar yalnizca prisma/audit'i baglar.
+//  Issue #97/A: atanan kisi Personel degil USER'dir (uyelik ProjectMember).
+const assigneeIdsFrom = (body, pid) => resolveAssigneeIds(prisma, pid, body);
+const logAssignment = (pid, entry) => auditAssignment(prisma, audit, pid, entry);
+
+// --- text_id ureteci: idGen.js'e tasindi (Issue #9 / Adim 3) — split'in yeni
+//  text_id'leri de ayni kara-liste garantisiyle, interaktif transaction
+//  icinden uretebilmesi icin paylasilabilir hale getirildi.
+const nextTextId = (projectId, type, isTest) => nextTextIdShared(prisma, projectId, type, isTest);
+
+// --- Cascade: bir projedeki tum gereksinim durumlarini yeniden hesapla ------
+//  Issue #15: N+1 dongu yerine cascade.js'teki toplu SQL yolu (1 okuma +
+//  <=3 updateMany + 1 toplu audit). Sadece degisen gereksinimler yazilir.
+async function cascade(projectId) {
+  return recomputeStatusesBulk(prisma, projectId);
+}
+
+// --- Toplu silme yardimcisi -------------------------------------------------
+//  Secilen id'leri (proje kapsaminda) tek islemde siler: once iliskili tum
+//  izlenebilirlik baglarini temizler, sonra kayitlari siler, her biri icin
+//  DELETE audit kaydi yazar (silinen text_id kara listede kalir).
+async function batchDelete(pid, model, ids, entityType, reason, actor) {
+  if (!Array.isArray(ids) || ids.length === 0) throw bad('En az bir id zorunlu.');
+  const allRows = await prisma[model].findMany({ where: { id: { in: ids }, projectId: pid } });
+  if (allRows.length === 0) throw bad('Silinecek kayit bulunamadi.', 404);
+  // Onaylanip kilitlenmis kayitlar toplu silmeden muaf tutulur.
+  const rows = allRows.filter((r) => !r.locked);
+  if (rows.length === 0) throw bad('Secilen kayitlar onaylanmis ve kilitli; silinemez.', 403);
+  const foundIds = rows.map((r) => r.id);
+  await prisma.traceabilityLink.deleteMany({
+    where: { projectId: pid, OR: [{ fromId: { in: foundIds } }, { toId: { in: foundIds } }] },
+  });
+  await prisma[model].deleteMany({ where: { id: { in: foundIds }, projectId: pid } });
+  for (const r of rows) {
+    await audit(pid, {
+      action: 'DELETE',
+      entityType,
+      entityId: r.id,
+      textId: r.text_id,
+      message: `Toplu silme: "${labelOf(r)}" (${r.text_id}).`,
+      reason,
+      actor,
+    });
+  }
+  return foundIds.length;
+}
+
+// --- Toplu atama yardimcisi (Issue #120) -----------------------------------
+//  Listeden coklu secimle secilen kayitlara TEK istekte atama yapar.
+//  Kayit basina PUT atilmaz: secimin tamami sabit sayida sorguyla yazilir
+//  (bkz. assignees.js setAssigneesBulk / auditAssignmentsBulk).
+//
+//  Tek tek duzenlemeyle AYNI kapilardan gecer:
+//    - proje siniri  : yalnizca bu projenin kayitlari
+//    - ABAC (#87)    : clearance seviyesi ustundeki gereksinimler gorunmez,
+//                      dolayisiyla toplu atamaya da girmez (sessizce atlanir;
+//                      yanitta sayisi doner)
+//    - kilit         : onaylanmis (locked) kayitlar ATLANIR, hata degildir —
+//                      cagiran "N guncellendi, M atlandi" diye bildirir
+//    - uyelik        : atanan kisi projenin uyesi olmali (resolveAssigneeIds)
+async function batchAssign(req, pid, entity, body) {
+  const model = entity === 'requirement' ? 'requirement' : 'testCase';
+  const ids = body?.ids;
+  if (!Array.isArray(ids) || ids.length === 0) throw bad('En az bir id zorunlu.');
+
+  const mode = body?.mode || 'add';
+  if (!ASSIGN_MODES.includes(mode)) throw bad(`Gecersiz mod: "${mode}".`);
+
+  // Atanacak kisiler: 'replace' modunda bos liste "tum atamalari kaldir"
+  // demektir; 'add'/'remove' icin bos liste anlamsizdir (islem yapilmaz).
+  const assigneeIds = (await resolveAssigneeIds(prisma, pid, body)) ?? [];
+  if (assigneeIds.length === 0 && mode !== 'replace') {
+    throw bad('En az bir kullanici secilmeli.');
+  }
+
+  const allRows = await prisma[model].findMany({ where: { id: { in: ids }, projectId: pid } });
+  if (allRows.length === 0) throw bad('Kayit bulunamadi.', 404);
+
+  // ABAC: gorulemeyen gereksinim atamaya da girmez (testlerde clearance yok).
+  const level = req.auth?.clearanceLevel ?? 1;
+  const visible =
+    entity === 'requirement' ? allRows.filter((r) => r.clearanceLevel == null || r.clearanceLevel <= level) : allRows;
+  const skippedHidden = allRows.length - visible.length;
+
+  const rows = visible.filter((r) => !r.locked);
+  const skippedLocked = visible.length - rows.length;
+  if (rows.length === 0) {
+    throw bad('Secilen kayitlarin tamami onaylanmis ve kilitli; atama yapilamaz.', 403);
+  }
+
+  // Mevcut atamalar TEK sorguda (N+1 yok), sonra kayit basina yeni liste.
+  const currentMap = await getAssigneeIdsMap(
+    prisma,
+    entity,
+    rows.map((r) => r.id),
+  );
+  const plan = new Map();
+  const changes = [];
+  for (const row of rows) {
+    const before = currentMap.get(row.id) || [];
+    const after = applyAssignMode(before, assigneeIds, mode);
+    if (sameAssignees(before, after)) continue; // zaten istenen halde
+    plan.set(row.id, after);
+    changes.push({ row, before, after });
+  }
+
+  if (plan.size > 0) {
+    await prisma.$transaction(async (tx) => {
+      await setAssigneesBulk(tx, entity, plan);
+    });
+    await auditAssignmentsBulk(prisma, pid, entity, changes, actorOf(req));
+  }
+
+  return {
+    ok: true,
+    updated: plan.size,
+    unchanged: rows.length - plan.size,
+    skippedLocked,
+    skippedHidden,
+  };
+}
+
+// --- Issue #57: approve izni denetimi ---------------------------------------
+//  Clear-suspect islemleri icin: PM her zaman yetkili; normal kullanici ise
+//  yalnizca SystemRole'unde o bilesen icin approve izni varsa yetkilidir
+//  (vote handler ile ayni kural, tek kaynak: componentKeyOf + SystemRole
+//  permissions.approve). Issue #97: Personnel kalkti, kimlik User.
+async function assertApprovePermission(req, pid, entityType, entity) {
+  if (req.auth?.roleKey === 'pm') return;
+  const userId = req.auth?.userId;
+  if (!userId) throw bad('Gecersiz kimlik.', 401);
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { roleKey: true, role: true },
+  });
+  if (!user) throw bad('Kullanici bulunamadi.', 401);
+  // Proje siniri: PM her projeye; normal kullanici yalnizca UYE oldugu projeye
+  // (Issue #103: uyelik ProjectMember tablosundan canli okunur).
+  const isPM = isPMRole(user);
+  if (!isPM) {
+    const membership = await prisma.projectMember.findUnique({
+      where: { projectId_userId: { projectId: pid, userId } },
+      select: { id: true },
+    });
+    if (!membership) throw bad('Bu projeye erisim yetkiniz yok.', 403);
+  }
+  const resolved = await resolveUserRole(prisma, user);
+  const perm = (resolved.permissions || {}).approve || {};
+  const compKey = componentKeyOf(entityType, entity.type);
+  if (!perm.enabled || !Array.isArray(perm.components) || !perm.components.includes(compKey))
+    throw bad('Bu bilesen icin onaylama yetkiniz yok.', 403);
+}
+
+// --- Aktor (kim degistirdi) -------------------------------------------------
+//  Issue #97: tek kimlik dunyasi — her zaman User UUID.
+function actorOf(req) {
+  return req.auth?.userId || 'unknown';
+}
+
+// --- Bir kaydin onay durumunu (consensus) yeniden hesapla -------------------
+//  Issue #97: Gerekli oy verenler = PM'ler + projeye atanmis, o bilesende
+//  approve izni olan kullanicilar (tek kaynak: cascade.js getRequiredVoters).
+//  Hepsi oy verdiyse -> Approved (kilitli). Aksi halde -> Pending.
+async function requiredVotersFor(pid, entityType, entity) {
+  const compKey = componentKeyOf(entityType, entity.type);
+  const voters = await getRequiredVoters(prisma, pid, compKey);
+  return { requiredVoters: voters, requiredVoterIds: voters.map((v) => v.id) };
+}
+
+async function recomputeApproval(pid, entityType, entityId) {
+  const model = entityType === 'requirement' ? 'requirement' : 'testCase';
+  const entity = await prisma[model].findUnique({ where: { id: entityId } });
+  if (!entity || entity.projectId !== pid) throw bad('Varlik bulunamadi.', 404);
+  const { requiredVoters, requiredVoterIds } = await requiredVotersFor(pid, entityType, entity);
+  if (requiredVoterIds.length === 0) {
+    await prisma[model].update({
+      where: { id: entityId },
+      data: { approvalStatus: 'Pending', locked: false },
+    });
+    return { approvalStatus: 'Pending', locked: false };
+  }
+  const approvals = await prisma.approval.findMany({ where: { projectId: pid, entityType, entityId } });
+  // Issue #126: konsensus kurali approvals.js'te TEK yerde tanimli — panel
+  // sayaclari, bu hesap ve cascade.js'teki toplu SQL ayni ozeti uygular.
+  const approved = summarizeApprovals(requiredVoters, approvals).consensus;
+  const data = { approvalStatus: approved ? 'Approved' : 'Pending', locked: approved };
+  // Test SONUCU (Passed/Failed/In Review) artik elle duzenlenemez; yalnizca
+  // onay/red aksiyonlarindan turetilir. Tam konsensus -> 'Approved' (Passed).
+  // Aksi halde (oy geri cekildi / kilit acildi) -> 'In Review'e doner.
+  // 'Rejected' BURADAN degil, ayri /approvals/reject (tek yetkili) aksiyonundan
+  // gelir. Gereksinimler icin status bu fonksiyondan asla degistirilmez —
+  // onlarin durumu SADECE cascade.js ile bagli testlerden turetilir.
+  if (entityType === 'testcase') data.status = approved ? STATUS.APPROVED : STATUS.IN_REVIEW;
+  await prisma[model].update({ where: { id: entityId }, data });
+  // Test sonucu degistiyse bagli gereksinimlerin dogrulama durumu da tazelenmeli.
+  if (entityType === 'testcase') await cascade(pid);
+  return { approvalStatus: data.approvalStatus, locked: data.locked, status: data.status };
+}
+
+// ===========================================================================
+//  HEALTH
+// ===========================================================================
+app.get(
+  '/api/health',
+  wrap(async (_req, res) => {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ ok: true, ts: new Date().toISOString() });
+  }),
+);
+
+// ===========================================================================
+//  AUTH / USERS
+// ===========================================================================
+// Kayit varsayilan olarak KAPALIDIR (UI'dan zaten kaldirildi). Acmak icin
+// backend'e PM_REGISTRATION_KEY ortam degiskeni tanimlayip istekte ayni
+// degeri 'x-registration-key' basligiyla gondermek gerekir.
+app.post(
+  '/api/auth/register',
+  loginLimiter,
+  requirePM,
+  wrap(async (req, res) => {
+    const expected = process.env.PM_REGISTRATION_KEY;
+    if (!expected || req.headers['x-registration-key'] !== expected) {
+      throw bad('Kayit devre disi birakildi.', 403);
+    }
+    const { username, password, name, role } = req.body || {};
+    if (!username || !password || !name) throw bad('username, password, name zorunlu.');
+    const initials = name
+      .trim()
+      .split(/\s+/)
+      .map((w) => w[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase();
+    const user = await prisma.user.create({
+      data: {
+        username: username.trim(),
+        passwordHash: await hashPassword(password),
+        name: name.trim(),
+        initials,
+        role: role || 'System Engineer',
+      },
+    });
+    res.status(201).json(safeUser(user));
+  }),
+);
+
+app.post('/api/auth/login', loginLimiter, (req, res) => {
+  passport.authenticate('local', { session: false }, (err, user, info) => {
+    if (err) return fail(res, err);
+    handleLogin(req, res, user, info).catch((e) => fail(res, e));
+  })(req, res);
+});
+
+// --- Basarili/basarisiz login sonucunu isle (Issue #86) ---------------------
+//  Passport local stratejisi SADECE dogrulama yapar (bkz. auth.js). Basarisiz
+//  deneme sayaci, hesap kilidi, refresh token uretimi ve audit burada yapilir.
+async function handleLogin(req, res, user, info) {
+  if (!user) {
+    const reason = info?.message;
+    if (reason === 'locked') {
+      await auditSystem('login.rejected_locked', {
+        userId: info.user?.id ?? null,
+        username: info.username,
+        ip: info.ip,
+      });
+      return res
+        .status(423)
+        .json({ error: 'Hesap gecici olarak kilitlendi. 15 dakika sonra tekrar deneyin.', code: 'account_locked' });
+    }
+    if (reason === 'inactive') {
+      await auditSystem('login.rejected_inactive', {
+        userId: info.user?.id ?? null,
+        username: info.username,
+        ip: info.ip,
+      });
+      return res.status(403).json({ error: 'Bu hesap devre disi birakilmis.' });
+    }
+    // Basarisiz deneme (yanlis sifre veya bilinmeyen kullanici).
+    const target =
+      info?.user || (info?.username ? await prisma.user.findUnique({ where: { username: info.username } }) : null);
+    const metadata = { username: info?.username, ip: info.ip };
+    if (target) {
+      metadata.userId = target.id;
+      const failed = (target.failedAttempts || 0) + 1;
+      if (failed >= MAX_LOGIN_ATTEMPTS) {
+        await prisma.user.update({
+          where: { id: target.id },
+          data: { failedAttempts: failed, lockedUntil: new Date(Date.now() + LOCK_DURATION_MS) },
+        });
+        await auditSystem('login.locked', metadata);
+      } else {
+        await prisma.user.update({ where: { id: target.id }, data: { failedAttempts: failed } });
+        await auditSystem('login.failed', metadata);
+      }
+    } else {
+      await auditSystem('login.failed', metadata);
+    }
+    return res.status(401).json({ error: 'Kullanici adi veya sifre yanlis.' });
+  }
+
+  // Basarili giris.
+  if (info?.migrated) {
+    const newHash = await hashPassword(req.body.password);
+    await prisma.user.update({ where: { id: user.id }, data: { passwordHash: newHash } });
+    user.passwordHash = newHash;
+  }
+  if (user.failedAttempts) {
+    await prisma.user.update({ where: { id: user.id }, data: { failedAttempts: 0 } });
+  }
+  const isPM = isPMRole(user);
+  // Issue #101: token'da ayri `systemRole`/`isPM` tasinmaz; kanonik tek alan
+  // `roleKey`'tir. Eski PM kayitlari (roleKey=null, role='Proje Yöneticisi')
+  // icin fallback uygulanir.
+  const roleKey = user.roleKey || (isPM ? 'pm' : null);
+  const resolved = await resolveUserRole(prisma, user);
+  const accessToken = signToken({
+    userId: user.id,
+    roleKey,
+    clearanceLevel: user.clearanceLevel,
+    // Issue #103: token'da projectId tasimiyoruz — uyelik guard'da DB'den
+    // canli dogrulanir (aninda gecerli olan cikarim).
+  });
+  const refreshToken = generateRefreshToken();
+  await prisma.refreshToken.create({
+    data: {
+      userId: user.id,
+      tokenHash: hashRefreshToken(refreshToken),
+      expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS),
+    },
+  });
+  await auditSystem('login.success', { userId: user.id, username: user.username, ip: req.ip });
+  res.json({
+    accessToken,
+    refreshToken,
+    user: safeUser(user, { roleKey, permissions: resolved.permissions || {} }),
+  });
+}
+
+// --- Refresh (rotasyon) + Logout (Issue #86) -------------------------------
+//  Refresh token, body'deki opak belirtec uzerinden dogrulanir (Bearer degil);
+//  bu yuzden bu uclar requireAuth'un PUBLIC_PATHS listesindedir (bkz. auth.js).
+app.post(
+  '/api/auth/refresh',
+  refreshLimiter,
+  wrap(async (req, res) => {
+    const { refreshToken } = req.body || {};
+    if (!refreshToken) throw bad('refreshToken zorunlu.', 400);
+    const tokenHash = hashRefreshToken(refreshToken);
+    const stored = await prisma.refreshToken.findUnique({ where: { tokenHash }, include: { user: true } });
+    if (!stored || stored.revokedAt || stored.expiresAt <= new Date()) {
+      await auditSystem('refresh.failed', { userId: stored?.userId ?? null, ip: req.ip });
+      throw bad('Gecersiz veya suresi dolmus refresh token.', 401);
+    }
+    if (!stored.user || !stored.user.isActive) {
+      await auditSystem('refresh.failed', { userId: stored.userId, ip: req.ip });
+      throw bad('Hesap devre disi.', 403);
+    }
+    // Rotasyon: eski belirtec gecersizlesir, yeni access+refresh cifti uretilir.
+    await prisma.refreshToken.update({ where: { id: stored.id }, data: { revokedAt: new Date() } });
+    const isPM = isPMRole(stored.user);
+    const roleKey = stored.user.roleKey || (isPM ? 'pm' : null);
+    const resolved = await resolveUserRole(prisma, stored.user);
+    const accessToken = signToken({
+      userId: stored.user.id,
+      roleKey,
+      clearanceLevel: stored.user.clearanceLevel,
+      // Issue #103: token'da projectId yok (uyelik DB'den dogrulanir).
+    });
+    const newRefresh = generateRefreshToken();
+    await prisma.refreshToken.create({
+      data: {
+        userId: stored.user.id,
+        tokenHash: hashRefreshToken(newRefresh),
+        expiresAt: new Date(Date.now() + REFRESH_TOKEN_TTL_MS),
+      },
+    });
+    await auditSystem('refresh.success', { userId: stored.user.id, ip: req.ip });
+    res.json({
+      accessToken,
+      refreshToken: newRefresh,
+      user: safeUser(stored.user, { roleKey, permissions: resolved.permissions || {} }),
+    });
+  }),
+);
+
+app.post(
+  '/api/auth/logout',
+  refreshLimiter,
+  wrap(async (req, res) => {
+    const { refreshToken } = req.body || {};
+    if (!refreshToken) throw bad('refreshToken zorunlu.', 400);
+    const tokenHash = hashRefreshToken(refreshToken);
+    const stored = await prisma.refreshToken.findUnique({ where: { tokenHash } });
+    if (stored) {
+      await prisma.refreshToken.update({ where: { id: stored.id }, data: { revokedAt: new Date() } });
+      await auditSystem('logout', { userId: stored.userId, ip: req.ip });
+    } else {
+      await auditSystem('logout', { userId: null, ip: req.ip });
+    }
+    res.status(204).end();
+  }),
+);
+
+// --- Issue #88: Admin kullanici yonetimi (yalnizca roleKey='admin') --------
+//  API yuzeyi /api/admin/* altinda IZOLEDIR (admin konsolu ayrik UI): kullanici
+//  yonetimi proje kaynaklarindan tamamen ayriktir. Signup kapali; kullanicilari
+//  yalnizca admin olusturur/yonetir. Admin islemleri de SystemAuditLog'a yazilir
+//  (sifre/token ASLA loglanmaz).
+app.get(
+  '/api/admin/users',
+  requireAdmin,
+  wrap(async (_req, res) => {
+    const users = await prisma.user.findMany({ orderBy: { createdAt: 'asc' } });
+    res.json(users.map(adminUser));
+  }),
+);
+
+app.post(
+  '/api/admin/users',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const b = req.body || {};
+    const username = String(b.username || '').trim();
+    const password = String(b.password || '');
+    const name = String(b.name || '').trim();
+    if (!username || !password || !name) throw bad('username, password, name zorunlu.');
+    // Issue #101: roleKey verilmisse SystemRole'den cozumle; display `role`
+    // adini sistem rolunden turet (PM tespiti ve izin eslemesi tutarli kalsin).
+    let roleKey = null;
+    let role = b.role ? String(b.role).trim() || 'System Engineer' : 'System Engineer';
+    if (b.roleKey) {
+      const sr = await prisma.systemRole.findUnique({ where: { key: String(b.roleKey) } });
+      if (!sr || !sr.isActive) throw bad('Gecersiz veya pasif rol.', 400);
+      roleKey = sr.key;
+      role = sr.name;
+    }
+    const clearanceLevel = b.clearanceLevel != null ? Number(b.clearanceLevel) : 1;
+    if (!isValidClearanceLevel(clearanceLevel)) throw bad('clearanceLevel 1-5 arasinda olmali.');
+    // Issue #103: admin artik proje ATAMAZ — uyelik yalnizca PM'in
+    // /projects/:pid/members uclarindan yonetilir (tek dogruluk kaynagi).
+    const initials = name
+      .trim()
+      .split(/\s+/)
+      .map((w) => w[0])
+      .join('')
+      .slice(0, 2)
+      .toUpperCase();
+    const user = await prisma.user.create({
+      data: {
+        username,
+        passwordHash: await hashPassword(password),
+        name,
+        initials,
+        role,
+        roleKey,
+        clearanceLevel,
+      },
+    });
+    await auditSystem('admin.user.create', {
+      userId: req.auth.userId,
+      targetUserId: user.id,
+      targetUsername: user.username,
+    });
+    res.status(201).json(adminUser(user));
+  }),
+);
+
+app.patch(
+  '/api/admin/users/:id',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const b = req.body || {};
+    const existing = await prisma.user.findUnique({ where: { id: req.params.id } });
+    if (!existing) throw bad('Kullanici bulunamadi.', 404);
+    const data = {};
+    if (b.role != null) data.role = String(b.role);
+    // Issue #101: roleKey guncellenirse display `role` adini SystemRole'den turet.
+    if (b.roleKey !== undefined) {
+      if (b.roleKey === null) {
+        data.roleKey = null;
+      } else {
+        const sr = await prisma.systemRole.findUnique({ where: { key: String(b.roleKey) } });
+        if (!sr || !sr.isActive) throw bad('Gecersiz veya pasif rol.', 400);
+        data.roleKey = sr.key;
+        data.role = sr.name;
+      }
+    }
+    if (b.systemRole !== undefined) {
+      throw bad('systemRole kolonu kaldirildi; rol atamasi icin roleKey kullanin.', 400);
+    }
+    if (b.clearanceLevel != null) {
+      const cl = Number(b.clearanceLevel);
+      if (!isValidClearanceLevel(cl)) throw bad('clearanceLevel 1-5 arasinda olmali.');
+      data.clearanceLevel = cl;
+    }
+    if (b.isActive != null) {
+      // Admin kendi hesabini devre disi birakamaz (kilitlenme korumasi).
+      if (req.params.id === req.auth.userId && b.isActive === false) {
+        throw bad('Kendi hesabinizi devre disi birakamazsiniz.');
+      }
+      data.isActive = Boolean(b.isActive);
+    }
+    // Issue #103: PATCH'te projectId kabul edilmez (404 yerine sessiz yoksayma
+    // yerine acik hata; client'in eski aliskanligini kirariz).
+    if (b.projectId !== undefined) {
+      throw bad('Proje atamasi admin konsolundan yapilamaz; PM uyelik uclarini kullanin.', 400);
+    }
+    if (b.password != null) {
+      const pw = String(b.password);
+      if (pw.length < 1) throw bad('Sifre bos olamaz.');
+      data.passwordHash = await hashPassword(pw);
+    }
+    if (Object.keys(data).length === 0) throw bad('Guncellenecek alan yok.');
+    const user = await prisma.user.update({ where: { id: req.params.id }, data });
+    await auditSystem('admin.user.update', {
+      userId: req.auth.userId,
+      targetUserId: user.id,
+      fields: Object.keys(data),
+    });
+    res.json(adminUser(user));
+  }),
+);
+
+app.post(
+  '/api/admin/users/:id/unlock',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const existing = await prisma.user.findUnique({ where: { id: req.params.id } });
+    if (!existing) throw bad('Kullanici bulunamadi.', 404);
+    const user = await prisma.user.update({
+      where: { id: req.params.id },
+      data: { failedAttempts: 0, lockedUntil: null },
+    });
+    await auditSystem('admin.user.unlock', { userId: req.auth.userId, targetUserId: user.id });
+    res.json(adminUser(user));
+  }),
+);
+
+// --- Kullanici silme (Issue: admin paneli feedback) ------------------------
+//  Guvenlik kuralari:
+//    - Admin KENDI hesabini silemez (kilitlenme korumasi).
+//    - ADMIN (roleKey='admin') baska bir hesap silinemez (son admin kalmasin).
+//  User silinince refreshToken'lari Cascade ile temizlenir; proje verisine
+//  dokunulmaz (User yalnizca kimlik/giris kaydidir).
+app.delete(
+  '/api/admin/users/:id',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const target = await prisma.user.findUnique({
+      where: { id: req.params.id },
+      include: { memberships: { select: { projectId: true } } },
+    });
+    if (!target) throw bad('Kullanici bulunamadi.', 404);
+    if (target.id === req.auth.userId) throw bad('Kendi hesabinizi silemezsiniz.');
+    if (isAdminRole(target)) throw bad('Admin hesabi silinemez.');
+    const projectIds = (target.memberships || []).map((m) => m.projectId);
+    await prisma.user.delete({ where: { id: target.id } });
+    // Issue #114/#115: atamalar USER'a baglidir. Silinen kisi bir kaydin ILK
+    // sorumlusuysa legacy `assigneeId` kolonu SetNull ile bosalir; siradaki
+    // sorumlu otomatik yerine gecsin diye kolon yeniden senkronlanir.
+    for (const projectId of projectIds) await resyncLegacyAssignee(prisma, projectId);
+    await auditSystem('admin.user.delete', {
+      userId: req.auth.userId,
+      targetUserId: target.id,
+      targetUsername: target.username,
+    });
+    res.status(204).end();
+  }),
+);
+
+// ============================================================================
+//  AYRINTILI BILGI (permission debug/rapor icin) — Issue #101.
+//  resolveUserRole tek kanonik cozucuyle cozulmus rol + izin dondurur.
+//  Backend izin zorlamasi `requirePM`/`projectAccessGuard` uzerinden calisir;
+//  bu endpoint SADECE admin konsol raporlamsi icindir.
+app.get(
+  '/api/admin/resolve-role',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const { username, userId } = req.query || {};
+    const user = username
+      ? await prisma.user.findUnique({ where: { username: String(username) } })
+      : userId
+        ? await prisma.user.findUnique({ where: { id: String(userId) } })
+        : null;
+    if (!user) throw bad('Kullanici bulunamadi.', 404);
+    const resolved = await resolveUserRole(prisma, user);
+    res.json({
+      username: user.username,
+      storedRole: user.role,
+      storedRoleKey: user.roleKey || null,
+      resolved,
+      isPM: isPMRole(user),
+    });
+  }),
+);
+
+// ===========================================================================
+//  SYSTEM ROLES (Issue #101) — sabit cekirdek roller + izin yonetimi.
+//  Yalnizca ADMIN. isSystem roller silinemez (pasiflestirilebilir); ozel
+//  roller (isSystem=false) silinebilir. permissions: 12 kademeli izin JSON'u.
+// ===========================================================================
+const systemRoleView = (r) => ({
+  id: r.id,
+  key: r.key,
+  name: r.name,
+  permissions: r.permissions || {},
+  isSystem: r.isSystem,
+  isActive: r.isActive,
+  createdAt: r.createdAt,
+});
+
+app.get(
+  '/api/admin/system-roles',
+  requireAdmin,
+  wrap(async (_req, res) => {
+    const rows = await prisma.systemRole.findMany({ orderBy: [{ isSystem: 'desc' }, { key: 'asc' }] });
+    res.json(rows.map(systemRoleView));
+  }),
+);
+
+app.post(
+  '/api/admin/system-roles',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const b = req.body || {};
+    const key = String(b.key || '')
+      .trim()
+      .toLowerCase();
+    const name = String(b.name || '').trim();
+    if (!/^[a-z0-9_-]{2,32}$/.test(key)) throw bad('Rol anahtari 2-32 karakter, a-z0-9_- olmali.');
+    if (!name) throw bad('Rol adi zorunlu.');
+    const exists = await prisma.systemRole.findUnique({ where: { key } });
+    if (exists) throw bad('Bu rol anahtari zaten kullaniliyor.', 409);
+    const role = await prisma.systemRole.create({
+      data: { key, name, permissions: b.permissions || {}, isSystem: false, isActive: true },
+    });
+    await auditSystem('admin.system_role.create', { userId: req.auth.userId, roleKey: key, roleName: name });
+    res.status(201).json(systemRoleView(role));
+  }),
+);
+
+app.patch(
+  '/api/admin/system-roles/:key',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const b = req.body || {};
+    const role = await prisma.systemRole.findUnique({ where: { key: req.params.key } });
+    if (!role) throw bad('Rol bulunamadi.', 404);
+    const data = {};
+    if (b.name != null) {
+      data.name = String(b.name).trim();
+      if (!data.name) throw bad('Rol adi bos olamaz.');
+    }
+    if (b.permissions != null) {
+      if (typeof b.permissions !== 'object' || Array.isArray(b.permissions)) {
+        throw bad('permissions gecersiz.');
+      }
+      data.permissions = b.permissions;
+    }
+    if (b.isActive != null) {
+      data.isActive = Boolean(b.isActive);
+      // Son aktif PM rolunu pasiflestirmeyi engelle (PM tespiti bozulmasin).
+      if (role.key === 'pm' && b.isActive === false) {
+        throw bad('PM rolu pasiflestirilemez — PM tespiti bu role baglidir.');
+      }
+    }
+    if (Object.keys(data).length === 0) throw bad('Guncellenecek alan yok.');
+    const updated = await prisma.systemRole.update({ where: { key: req.params.key }, data });
+    await auditSystem('admin.system_role.update', {
+      userId: req.auth.userId,
+      roleKey: role.key,
+      fields: Object.keys(data),
+    });
+    res.json(systemRoleView(updated));
+  }),
+);
+
+app.delete(
+  '/api/admin/system-roles/:key',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const role = await prisma.systemRole.findUnique({ where: { key: req.params.key } });
+    if (!role) throw bad('Rol bulunamadi.', 404);
+    if (role.isSystem) throw bad('Sistem rolleri silinemez; yalnizca pasiflestirilebilir.');
+    // Role bagli kullanici varsa silme.
+    const inUse = await prisma.user.count({ where: { roleKey: role.key } });
+    if (inUse > 0) throw bad(`Bu rol ${inUse} kullanici tarafindan kullaniliyor; once onlarin rolunu degistirin.`);
+    await prisma.systemRole.delete({ where: { key: role.key } });
+    await auditSystem('admin.system_role.delete', { userId: req.auth.userId, roleKey: role.key });
+    res.status(204).end();
+  }),
+);
+
+// --- Issue #88: auth/admin denetim kayitlari (yalnizca ADMIN) ---------------
+//  Sifre/token ASLA loglanmaz; metadata yalnizca username/ip gibi guvenli alanlar.
+app.get(
+  '/api/admin/audit-logs',
+  requireAdmin,
+  wrap(async (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const where = {};
+    if (req.query.action) where.action = String(req.query.action);
+    if (req.query.userId) where.userId = String(req.query.userId);
+    const rows = await prisma.systemAuditLog.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+    res.json(
+      rows.map((r) => ({
+        id: r.id,
+        userId: r.userId,
+        action: r.action,
+        metadata: r.metadata,
+        createdAt: r.createdAt,
+      })),
+    );
+  }),
+);
+
+// Issue #97: passcode/personel girisi KALDIRILDI — tek giris yolu
+// /api/auth/login (kullanici adi + sifre). Personnel/Role modelleri de kalkti.
+
+const safeUser = (u, extras = {}) => ({
+  id: u.id,
+  username: u.username,
+  name: u.name,
+  initials: u.initials,
+  role: u.role,
+  // Issue #101: sistem rol anahtari — frontend izin eslemesi bunu kullanir.
+  roleKey: extras.roleKey ?? u.roleKey ?? null,
+  // Issue #101: izin matrisi SystemRole'den cozulur ve oturuma eklenir.
+  permissions: extras.permissions ?? null,
+  // Issue #85: auth yazilmasi bu alanlari da donderir (passwordHash ASLA).
+  clearanceLevel: u.clearanceLevel,
+  // Issue #103: projectId kalkti — uyelikler GET /projects'ten (uyelik filtreli).
+});
+
+// Issue #88: admin panelinde gosterilen genis kullanici gorunumu (passwordHash ASLA).
+const adminUser = (u) => ({
+  id: u.id,
+  username: u.username,
+  name: u.name,
+  initials: u.initials,
+  role: u.role,
+  roleKey: u.roleKey || null,
+  clearanceLevel: u.clearanceLevel,
+  isActive: u.isActive,
+  failedAttempts: u.failedAttempts,
+  lockedUntil: u.lockedUntil,
+  // Issue #103: projectId kalkti — uyelikler /projects/:pid/members uzerinden.
+  createdAt: u.createdAt,
+});
+
+// ===========================================================================
+//  PROJECTS
+// ===========================================================================
+app.get(
+  '/api/projects',
+  wrap(async (req, res) => {
+    // Issue #103: PM tum projeleri; normal kullanici YALNIZCA uye oldugu
+    // projeleri gorur (uye olmadigi projenin varligi bile sızmaz).
+    const where = req.auth.roleKey === 'pm' ? {} : { members: { some: { userId: req.auth.userId } } };
+    const projects = await prisma.project.findMany({
+      where,
+      orderBy: { updatedAt: 'desc' },
+      include: { _count: { select: { requirements: true, testCases: true, links: true, glossary: true } } },
+    });
+    res.json(projects);
+  }),
+);
+
+app.post(
+  '/api/projects',
+  requirePM,
+  wrap(async (req, res) => {
+    const { name, description, codePrefix } = req.body || {};
+    if (!name || !name.trim()) throw bad('Proje adi zorunlu.');
+    const project = await prisma.project.create({
+      data: {
+        name: name.trim(),
+        description: (description || '').trim(),
+        // Bos birakilirsa sema varsayilani (DEFAULT_CODE_PREFIX) gecerli olur.
+        ...(codePrefix && codePrefix.trim() ? { codePrefix: codePrefix.trim() } : {}),
+      },
+    });
+    // Her yeni proje, mevcut davranisi koruyan iki gomulu (system) oznitelik
+    // tanimiyla baslar: Priority ve DAL Level. Bkz. src/attributes.js.
+    await seedDefaultAttributeDefinitions(prisma, project.id);
+    await audit(project.id, {
+      action: 'PROJECT_CREATE',
+      entityType: 'project',
+      entityId: project.id,
+      message: `Proje olusturuldu: "${project.name}".`,
+    });
+    res.status(201).json(project);
+  }),
+);
+
+app.get(
+  '/api/projects/:pid',
+  wrap(async (req, res) => {
+    const project = await prisma.project.findUnique({ where: { id: req.params.pid } });
+    if (!project) throw bad('Proje bulunamadi.', 404);
+    res.json(project);
+  }),
+);
+
+// ===========================================================================
+//  MEMBERS (Issue #103: PM proje uyeliklerini yonetir — coktan-coga)
+//  Yetki: tum uclar PM'e ozel (requirePM). Admin bile uye ekleyemez —
+//  uyelik tamamen PM'in isi (spec Karar #2/#6).
+// ===========================================================================
+/** PM tespiti + SystemRole adini cozen yardimci (directory/members paylasir). */
+async function userWithRoleName(u) {
+  const sr = u.roleKey ? await prisma.systemRole.findUnique({ where: { key: u.roleKey } }) : null;
+  return {
+    id: u.id,
+    username: u.username,
+    name: u.name,
+    initials: u.initials,
+    roleKey: u.roleKey || null,
+    roleName: sr?.name || u.role || null,
+    clearanceLevel: u.clearanceLevel,
+  };
+}
+
+app.get(
+  '/api/projects/:pid/members',
+  requirePM,
+  wrap(async (req, res) => {
+    const rows = await prisma.projectMember.findMany({
+      where: { projectId: req.params.pid },
+      include: { user: true },
+      orderBy: { joinedAt: 'asc' },
+    });
+    const members = await Promise.all(
+      rows.map(async (m) => ({
+        ...(await userWithRoleName(m.user)),
+        userId: m.userId,
+        joinedAt: m.joinedAt,
+      })),
+    );
+    res.json(members);
+  }),
+);
+
+// Atanabilir kisiler (Issue #97/A) — atama User tabanli oldugu icin picker ve
+// gosterimler bu listeden beslenir. Uyelik yonetiminden FARKLI olarak PM
+// sarti YOKTUR: projeye erisimi olan herkes (guard gecer) okuyabilir, cunku
+// ayni listeyi atama arayuzu da kullanir.
+app.get(
+  '/api/projects/:pid/assignees',
+  wrap(async (req, res) => {
+    const rows = await prisma.projectMember.findMany({
+      where: { projectId: req.params.pid },
+      include: { user: { select: { id: true, name: true, role: true, roleKey: true, isActive: true } } },
+      orderBy: { joinedAt: 'asc' },
+    });
+    const people = rows
+      .filter((m) => m.user && m.user.isActive !== false)
+      .map((m) => ({
+        id: m.user.id,
+        name: m.user.name,
+        role: m.user.role,
+        roleKey: m.user.roleKey || null,
+      }));
+    res.json(people);
+  }),
+);
+
+app.post(
+  '/api/projects/:pid/members',
+  requirePM,
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const userId = String(req.body?.userId || '');
+    if (!userId) throw bad('userId zorunlu.');
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw bad('Kullanici bulunamadi.', 404);
+    // Karar #7: PM'ler uye olarak EKLENMEZ — zaten tum projelere erisirler.
+    if (isPMRole(user)) throw bad('PM kullanicilar uye olarak eklenmez; zaten tum projelere erisir.', 400);
+    if (!user.isActive) throw bad('Devre disi kullanici uye olarak eklenemez.', 400);
+    const existing = await prisma.projectMember.findUnique({
+      where: { projectId_userId: { projectId: pid, userId } },
+    });
+    if (existing) {
+      // Idempotent: ayni uye tekrar eklenmek istenirse mevcut kayit doner.
+      return res.json({ member: existing, alreadyMember: true });
+    }
+    const member = await prisma.projectMember.create({
+      data: { projectId: pid, userId },
+    });
+    await audit(pid, {
+      action: 'MEMBER_ADD',
+      entityType: 'member',
+      entityId: member.id,
+      actor: actorOf(req),
+      message: `Uye eklendi: "${user.name}".`,
+    });
+    res.status(201).json({ member, alreadyMember: false });
+  }),
+);
+
+app.delete(
+  '/api/projects/:pid/members/:userId',
+  requirePM,
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const userId = req.params.userId;
+    const existing = await prisma.projectMember.findUnique({
+      where: { projectId_userId: { projectId: pid, userId } },
+      include: { user: { select: { name: true } } },
+    });
+    if (!existing) throw bad('Uyelik kaydi bulunamadi.', 404);
+    await prisma.projectMember.delete({ where: { id: existing.id } });
+    // Karar #9: Approval kayitlarina DOKUNULMAZ — gecmis korunur; matrix
+    // 'departed' rozetiyle gosterir, konsensus havuzu aktif uyelerden kurulur.
+    await audit(pid, {
+      action: 'MEMBER_REMOVE',
+      entityType: 'member',
+      entityId: existing.id,
+      actor: actorOf(req),
+      message: `Uye cikarildi: "${existing.user?.name || userId}".`,
+    });
+    res.json({ ok: true });
+  }),
+);
+
+// Ekleme listesi icin kullanici dizini (yalnizca PM; PM-role kullanicilar
+// listelenmez cunku zaten uye olamazlar — Karar #7/#11).
+app.get(
+  '/api/users/directory',
+  requirePM,
+  wrap(async (_req, res) => {
+    const users = await prisma.user.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+    });
+    const rows = [];
+    for (const u of users) {
+      if (isPMRole(u)) continue;
+      rows.push(await userWithRoleName(u));
+    }
+    res.json(rows);
+  }),
+);
+
+app.patch(
+  '/api/projects/:pid',
+  requirePM,
+  wrap(async (req, res) => {
+    const { name, description, codePrefix } = req.body || {};
+    const data = {};
+    if (name != null) data.name = name.trim();
+    if (description != null) data.description = description.trim();
+    // text_id onegi: sonradan degistirilirse YENI kayitlar yeni oneki alir;
+    // mevcut kayitlar icin prisma/migrate-text-id-prefix.js calistirilmalidir.
+    if (codePrefix != null && codePrefix.trim()) data.codePrefix = codePrefix.trim();
+    const project = await prisma.project.update({ where: { id: req.params.pid }, data });
+    res.json(project);
+  }),
+);
+
+// text_id kod onegini degistirir; istege bagli olarak MEVCUT kayitlari da
+// yeni onege tasir (numaralar korunur, eski kodlar audit'te kara listede
+// kalir). Yalnizca PM.
+app.post(
+  '/api/projects/:pid/code-prefix',
+  requirePM,
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const { codePrefix, migrateExisting } = req.body || {};
+    const before = await prisma.project.findUnique({ where: { id: pid }, select: { codePrefix: true } });
+    const result = await setProjectCodePrefix(prisma, pid, codePrefix, {
+      migrateExisting: Boolean(migrateExisting),
+    });
+    await audit(pid, {
+      action: 'UPDATE',
+      entityType: 'project',
+      entityId: pid,
+      field: 'codePrefix',
+      oldValue: before?.codePrefix || null,
+      newValue: result.project.codePrefix,
+      message: `Kod onegi degistirildi: "${before?.codePrefix}" -> "${result.project.codePrefix}"${
+        result.renamed ? ` (${result.renamed} kayit tasindi)` : ''
+      }.`,
+    });
+    res.json(result);
+  }),
+);
+
+app.delete(
+  '/api/projects/:pid',
+  requirePM,
+  wrap(async (req, res) => {
+    const project = await prisma.project.findUnique({ where: { id: req.params.pid } });
+    if (!project) throw bad('Proje bulunamadi.', 404);
+    const reason = requireReason(req);
+    // Once (FK'siz, kalici) silme kaydini yaz: proje silinince AuditLog'u da
+    // CASCADE ile gider, bu tablo gitmez. Sonra projeyi sil.
+    await prisma.projectDeletionLog.create({
+      data: { projectId: project.id, projectName: project.name, reason, actor: actorOf(req) },
+    });
+    await prisma.project.delete({ where: { id: req.params.pid } });
+    res.json({ ok: true });
+  }),
+);
+
+// Silinen projelerin gerekce gecmisi — proje kapsaminda DEGIL (proje zaten
+// yok), o yuzden :pid parametresi ve projectAccessGuard'in disinda; requirePM
+// burada da gecerli (isPM disinda hicbir sey req.params.pid'e bakmiyor).
+app.get(
+  '/api/project-deletions',
+  requirePM,
+  wrap(async (req, res) => {
+    const rows = await prisma.projectDeletionLog.findMany({ orderBy: { deletedAt: 'desc' } });
+    res.json(rows);
+  }),
+);
+
+// ===========================================================================
+//  DINAMIK ALANLAR (fields)
+// ===========================================================================
+app.get(
+  '/api/projects/:pid/fields',
+  wrap(async (req, res) => {
+    const fields = await prisma.projectField.findMany({
+      where: { projectId: req.params.pid },
+      orderBy: { name: 'asc' },
+    });
+    res.json(fields);
+  }),
+);
+
+app.post(
+  '/api/projects/:pid/fields',
+  wrap(async (req, res) => {
+    const { name } = req.body || {};
+    if (!name || !name.trim()) throw bad('Alan adi zorunlu.');
+    const field = await prisma.projectField.create({ data: { projectId: req.params.pid, name: name.trim() } });
+    res.status(201).json(field);
+  }),
+);
+
+app.delete(
+  '/api/projects/:pid/fields/:id',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const before = await prisma.projectField.findUnique({ where: { id: req.params.id } });
+    if (!before || before.projectId !== pid) throw bad('Alan bulunamadi.', 404);
+    const reason = requireReason(req);
+    await prisma.projectField.delete({ where: { id: req.params.id } });
+    await audit(pid, {
+      action: 'FIELD_DELETE',
+      entityType: 'field',
+      entityId: req.params.id,
+      message: `Alan silindi: "${before.name}".`,
+      reason,
+      actor: actorOf(req),
+    });
+    res.json({ ok: true });
+  }),
+);
+
+// ===========================================================================
+//  BILESENLER (Issue #138) — ELLE tanimlanan urun kirilimi.
+//  Bilesen artik TURETILMEZ; kullanici olusturur. Gereksinim olmadan da var
+//  olabilir, kendi altina alt bilesen alabilir ve sirasi KULLANICININ
+//  verdigi gibi kalir. Gereksinimler sonradan baglanir (componentId).
+//  Mevcut projeler icin tek seferlik ice aktarma: POST /import-from-pbs.
+// ===========================================================================
+app.get(
+  '/api/projects/:pid/components',
+  wrap(async (req, res) => {
+    res.json(await listComponents(prisma, req.params.pid));
+  }),
+);
+
+// Otomatik numara yalnizca ONERIDIR (#138): form bunu on-doldurur, kullanici
+// silebilir ya da degistirebilir.
+app.get(
+  '/api/projects/:pid/components/suggest-part-no',
+  wrap(async (req, res) => {
+    res.json(await suggestComponentPartNo(prisma, req.params.pid, req.query.parentId || null));
+  }),
+);
+
+app.post(
+  '/api/projects/:pid/components',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const row = await createComponent(prisma, pid, req.body || {});
+    await audit(pid, {
+      action: 'CREATE',
+      entityType: 'component',
+      entityId: row.id,
+      textId: row.partNo || null,
+      message: `Bilesen olusturuldu: "${row.name}"${row.partNo ? ` (${row.partNo})` : ''}.`,
+      actor: actorOf(req),
+    });
+    // Parca No izi kara listeye de girer (silinen numara yeniden uretilmesin).
+    if (row.partNo) {
+      await audit(pid, {
+        action: 'UPDATE',
+        entityType: 'component',
+        entityId: row.id,
+        field: PART_NO_AUDIT_FIELD,
+        textId: row.partNo,
+        newValue: row.partNo,
+        message: `Parca No atandi: ${row.partNo} ("${row.name}").`,
+        actor: actorOf(req),
+      });
+    }
+    res.status(201).json(row);
+  }),
+);
+
+app.patch(
+  '/api/projects/:pid/components/:id',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const before = await prisma.component.findUnique({ where: { id: req.params.id } });
+    if (!before || before.projectId !== pid) throw bad('Bilesen bulunamadi.', 404);
+    const row = await updateComponent(prisma, pid, req.params.id, req.body || {});
+    await audit(pid, {
+      action: 'UPDATE',
+      entityType: 'component',
+      entityId: row.id,
+      textId: row.partNo || null,
+      message: `Bilesen guncellendi: "${row.name}".`,
+      actor: actorOf(req),
+    });
+    if (row.partNo !== before.partNo) {
+      await audit(pid, {
+        action: 'UPDATE',
+        entityType: 'component',
+        entityId: row.id,
+        field: PART_NO_AUDIT_FIELD,
+        textId: [before.partNo, row.partNo].filter(Boolean).join(' -> '),
+        oldValue: before.partNo || null,
+        newValue: row.partNo || null,
+        message: `Parca No degisti: ${before.partNo || '—'} -> ${row.partNo || '—'} ("${row.name}").`,
+        actor: actorOf(req),
+      });
+    }
+    res.json(row);
+  }),
+);
+
+// Silme ETKISI (onay ekrani icin): kac alt bilesen, kac bagli gereksinim.
+app.get(
+  '/api/projects/:pid/components/:id/delete-impact',
+  wrap(async (req, res) => {
+    res.json(await deleteImpact(prisma, req.params.pid, req.params.id));
+  }),
+);
+
+// Silme. Alt kirilim ya da bagli gereksinim varsa `force` ZORUNLU (409 +
+// etki ozeti). Bagli gereksinimler SILINMEZ; baglari bosa duser.
+app.delete(
+  '/api/projects/:pid/components/:id',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const reason = requireReason(req);
+    const impact = await deleteComponent(prisma, pid, req.params.id, { force: Boolean(req.body?.force) });
+    await audit(pid, {
+      action: 'DELETE',
+      entityType: 'component',
+      entityId: impact.component.id,
+      message:
+        `Bilesen silindi: "${impact.component.name}"` +
+        (impact.childCount > 0 ? ` (+${impact.childCount} alt bilesen)` : '') +
+        (impact.requirementCount > 0 ? `; ${impact.requirementCount} gereksinimin bagi kaldirildi` : '') +
+        '.',
+      reason,
+      actor: actorOf(req),
+    });
+    res.json({ ok: true, ...impact });
+  }),
+);
+
+// Kardesler arasi siralama — kullanicinin verdigi sira KALICIDIR.
+app.post(
+  '/api/projects/:pid/components/reorder',
+  wrap(async (req, res) => {
+    const b = req.body || {};
+    res.json(await reorderComponents(prisma, req.params.pid, b.parentId || null, b.ids));
+  }),
+);
+
+// Gereksinim <-> bilesen bagi. componentId=null bagi kaldirir.
+app.post(
+  '/api/projects/:pid/components/link-requirements',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const b = req.body || {};
+    const result = await setRequirementComponent(prisma, pid, b.requirementIds, b.componentId || null);
+    await audit(pid, {
+      action: 'UPDATE',
+      entityType: 'component',
+      entityId: b.componentId || null,
+      field: 'componentId',
+      message: b.componentId
+        ? `${result.count} gereksinim bilesene baglandi.`
+        : `${result.count} gereksinimin bilesen bagi kaldirildi.`,
+      actor: actorOf(req),
+    });
+    res.json(result);
+  }),
+);
+
+// Tek seferlik GECIS: bugunku PBS'ten turetilen bilesenleri kalici kayda
+// cevirir (idempotent — ikinci calistirma kopya uretmez).
+app.post(
+  '/api/projects/:pid/components/import-from-pbs',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const result = await importComponentsFromPbs(prisma, pid);
+    await audit(pid, {
+      action: 'CREATE',
+      entityType: 'component',
+      message: `Urun agacindan ${result.created} bilesen ice aktarildi (${result.linked} gereksinim baglandi).`,
+      actor: actorOf(req),
+    });
+    res.json(result);
+  }),
+);
+
+// ===========================================================================
+//  PARCA NO (Issue #135) — "Bilesenler" sayfasinin (#129) urun kimligi.
+//  Bilesenler PBS agacindan turetildigi icin numara da o dugumun uzerinde
+//  (Requirement.partNo) yasar; ayri bir tablo/ekran yoktur.
+// ===========================================================================
+
+// Parca No'su olmayan dugumlere numara atar (idempotent). Bilesenler sayfasi
+// acildiginda cagirilir: "her bilesene bir numara" kendiliginden saglanir.
+app.post(
+  '/api/projects/:pid/part-numbers/ensure',
+  wrap(async (req, res) => {
+    res.json(await ensurePartNumbers(prisma, req.params.pid, actorOf(req)));
+  }),
+);
+
+// Agac tutarliligi: cakisan/bicimsiz/blok disi numaralar, ayni adli kardesler,
+// ustsuz dugum, dongu, derinlik asimi, Parca No'su olmayan bilesen.
+app.get(
+  '/api/projects/:pid/part-numbers/check',
+  wrap(async (req, res) => {
+    res.json(await checkPartNumbers(prisma, req.params.pid));
+  }),
+);
+
+// Elle duzenleme. Cakisma veya bicim ihlalinde HICBIR SEY yazilmaz (409/400).
+app.patch(
+  '/api/projects/:pid/requirements/:id/part-no',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const before = await prisma.requirement.findUnique({ where: { id: req.params.id } });
+    if (!before || before.projectId !== pid) throw bad('Gereksinim bulunamadi.', 404);
+    assertRequirementVisible(req, before);
+    // NOT: `locked` KONTROLU YOK. Parca No gereksinim METNI degil URUN
+    // kimligidir; onaylanmis bir kaydin parca numarasi da duzeltilebilmeli
+    // ve otomatik atama (ensurePartNumbers) kilitli kayitlari da kapsar.
+    const b = req.body || {};
+    let row = before;
+    if (b.partNo !== undefined) row = await setPartNo(prisma, pid, req.params.id, b.partNo, actorOf(req));
+    if (b.partNoBlock !== undefined) {
+      row = await setPartNoBlock(prisma, pid, req.params.id, b.partNoBlock, actorOf(req));
+    }
+    res.json(withAssigneeIds(flatten(row), await getAssigneeIds(prisma, 'requirement', row.id)));
+  }),
+);
+
+// Parca No bicimi + kok blok adimi — PROJE bazli yapilandirma.
+app.get(
+  '/api/projects/:pid/part-no-config',
+  wrap(async (req, res) => {
+    const project = await prisma.project.findUnique({ where: { id: req.params.pid } });
+    if (!project) throw bad('Proje bulunamadi.', 404);
+    res.json(partNoConfigOf(project));
+  }),
+);
+
+app.put(
+  '/api/projects/:pid/part-no-config',
+  requirePM,
+  wrap(async (req, res) => {
+    const b = req.body || {};
+    const data = {};
+    if (b.format != null) {
+      parsePartNoFormat(b.format); // gecersiz bicim => 400, hicbir sey yazilmaz
+      data.partNoFormat = String(b.format).trim();
+    }
+    if (b.blockStep != null) {
+      const step = Number(b.blockStep);
+      if (!Number.isInteger(step) || step <= 0) throw bad('Blok adimi pozitif bir tam sayi olmalidir.');
+      data.partNoBlockStep = step;
+    }
+    if (Object.keys(data).length === 0) throw bad('Guncellenecek ayar yok.');
+    const project = await prisma.project.update({ where: { id: req.params.pid }, data });
+    await audit(req.params.pid, {
+      action: 'UPDATE',
+      entityType: 'project',
+      entityId: project.id,
+      field: 'partNoConfig',
+      newValue: `${project.partNoFormat} / ${project.partNoBlockStep}`,
+      message: `Parca No yapilandirmasi guncellendi: ${project.partNoFormat} (blok adimi ${project.partNoBlockStep}).`,
+      actor: actorOf(req),
+    });
+    res.json(partNoConfigOf(project));
+  }),
+);
+
+// ===========================================================================
+//  SOL MENU DUZENI (nav) — proje bazli gruplar + sayfa yerlesimi (Issue #9/6)
+//  Okuma herkese acik; degisiklikler yalnizca PM'e (requirePM). Kullanici
+//  YALNIZCA gruplama yapar — sayfa anahtarlari sabittir (navDefaults.js).
+// ===========================================================================
+app.get(
+  '/api/projects/:pid/nav',
+  wrap(async (req, res) => {
+    res.json(await getNavLayout(prisma, req.params.pid));
+  }),
+);
+
+// Duzenlemeye baslarken varsayilan duzeni DB'ye yazar (idempotent) — boylece
+// varsayilan gruplar da id kazanir ve hedef olarak secilebilir.
+app.post(
+  '/api/projects/:pid/nav/materialize',
+  requirePM,
+  wrap(async (req, res) => {
+    res.json(await ensureNavMaterialized(prisma, req.params.pid));
+  }),
+);
+
+app.post(
+  '/api/projects/:pid/nav/groups',
+  requirePM,
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const group = await createNavGroup(prisma, pid, req.body?.name);
+    await audit(pid, {
+      action: 'CREATE',
+      entityType: 'nav-group',
+      entityId: group.id,
+      message: `Menu grubu eklendi: "${group.name}".`,
+    });
+    res.status(201).json(group);
+  }),
+);
+
+// ===========================================================================
+//  ATTRIBUTE DEFINITIONS (modular oznitelikler — Requirement/TestCase JSONB
+//  `attributes` alaninin semasini tanimlar; Priority ve DAL Level dahil her
+//  proje icin dinamik olarak eklenip/duzenlenip/silinebilir).
+// ===========================================================================
+app.get(
+  '/api/projects/:pid/attributes',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const where = { projectId: pid };
+    if (req.query.entityType) where.entityType = { in: [req.query.entityType, 'both'] };
+    const rows = await prisma.attributeDefinition.findMany({
+      where,
+      orderBy: [{ order: 'asc' }, { createdAt: 'asc' }],
+    });
+    res.json(rows);
+  }),
+);
+
+app.post(
+  '/api/projects/:pid/attributes',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const payload = normalizeDefinitionInput(req.body);
+    const row = await prisma.attributeDefinition.create({ data: { projectId: pid, ...payload, system: false } });
+    await audit(pid, {
+      action: 'ATTRIBUTE_CREATE',
+      entityType: 'attribute',
+      entityId: row.id,
+      message: `Yeni oznitelik tanimlandi: "${row.label}" (${row.entityType}).`,
+    });
+    res.status(201).json(row);
+  }),
+);
+
+app.patch(
+  '/api/projects/:pid/nav/groups/:id',
+  requirePM,
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const group = await updateNavGroup(prisma, pid, req.params.id, req.body || {});
+    await audit(pid, {
+      action: 'UPDATE',
+      entityType: 'nav-group',
+      entityId: group.id,
+      message: `Menu grubu guncellendi: "${group.name}".`,
+    });
+    res.json(group);
+  }),
+);
+
+app.delete(
+  '/api/projects/:pid/nav/groups/:id',
+  requirePM,
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const result = await deleteNavGroup(prisma, pid, req.params.id);
+    await audit(pid, {
+      action: 'DELETE',
+      entityType: 'nav-group',
+      entityId: req.params.id,
+      message: `Menu grubu silindi; ${result.movedToUngrouped} sayfa grupsuz seviyeye tasindi.`,
+    });
+    res.json(result);
+  }),
+);
+
+// Sayfa ekleme: gruba yeni bir menu ogesi (sabit temel tip + istege bagli
+// ozel ad ve Alan filtresi). Ayni tipten birden fazla sayfa eklenebilir.
+app.post(
+  '/api/projects/:pid/nav/items',
+  requirePM,
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const b = req.body || {};
+    const item = await createNavItem(prisma, pid, {
+      groupId: b.groupId ?? null,
+      pageKey: b.pageKey,
+      label: b.label,
+      fieldFilter: b.fieldFilter,
+      typeFilter: b.typeFilter,
+    });
+    await audit(pid, {
+      action: 'CREATE',
+      entityType: 'nav-item',
+      entityId: item.id,
+      message: `Menu sayfasi eklendi: "${item.label || item.pageKey}".`,
+    });
+    res.status(201).json(item);
+  }),
+);
+
+app.patch(
+  '/api/projects/:pid/nav/items/:id',
+  requirePM,
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const item = await updateNavItem(prisma, pid, req.params.id, req.body || {});
+    await audit(pid, {
+      action: 'UPDATE',
+      entityType: 'nav-item',
+      entityId: item.id,
+      message: `Menu ogesi guncellendi: "${item.label || item.pageKey}".`,
+    });
+    res.json(item);
+  }),
+);
+
+// Menuden kaldirir; gereksinim/test VERILERINE dokunmaz.
+app.delete(
+  '/api/projects/:pid/nav/items/:id',
+  requirePM,
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const result = await deleteNavItem(prisma, pid, req.params.id);
+    await audit(pid, {
+      action: 'DELETE',
+      entityType: 'nav-item',
+      entityId: req.params.id,
+      message: `Menu ogesi kaldirildi: "${result.pageKey}" (veriler silinmedi).`,
+    });
+    res.json(result);
+  }),
+);
+
+app.patch(
+  '/api/projects/:pid/attributes/:id',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const before = await prisma.attributeDefinition.findUnique({ where: { id: req.params.id } });
+    if (!before || before.projectId !== pid) throw bad('Oznitelik bulunamadi.', 404);
+    // key/entityType/dataType degistirilemez — mevcut veriyle tutarliligi bozar.
+    // Yalnizca goruntu/kural alanlari duzenlenebilir.
+    const b = req.body || {};
+    const data = {};
+    if (b.label != null) data.label = String(b.label).trim() || before.label;
+    if (b.required != null) data.required = Boolean(b.required);
+    if (b.order != null && Number.isFinite(Number(b.order))) data.order = Number(b.order);
+    if (b.defaultValue !== undefined) data.defaultValue = b.defaultValue === '' ? null : String(b.defaultValue);
+    if (before.dataType === 'select' && Array.isArray(b.options)) {
+      const options = b.options
+        .map((o) => {
+          if (typeof o === 'string') return { value: o.trim(), label: o.trim() };
+          const value = String(o?.value ?? '').trim();
+          const optLabel = String(o?.label ?? value).trim();
+          return value ? { value, label: optLabel || value } : null;
+        })
+        .filter(Boolean);
+      if (options.length === 0) throw bad('Secim (select) tipi oznitelik icin en az bir secenek gerekli.');
+      data.options = options;
+    }
+    const row = await prisma.attributeDefinition.update({ where: { id: req.params.id }, data });
+    await audit(pid, {
+      action: 'ATTRIBUTE_UPDATE',
+      entityType: 'attribute',
+      entityId: row.id,
+      message: `Oznitelik guncellendi: "${row.label}".`,
+    });
+    res.json(row);
+  }),
+);
+
+app.delete(
+  '/api/projects/:pid/attributes/:id',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const before = await prisma.attributeDefinition.findUnique({ where: { id: req.params.id } });
+    if (!before || before.projectId !== pid) throw bad('Oznitelik bulunamadi.', 404);
+    if (before.system) throw bad('Gomulu oznitelikler (Priority, DAL Level) silinemez.', 403);
+    const reason = requireReason(req);
+    await prisma.attributeDefinition.delete({ where: { id: req.params.id } });
+    await audit(pid, {
+      action: 'ATTRIBUTE_DELETE',
+      entityType: 'attribute',
+      entityId: req.params.id,
+      message: `Oznitelik silindi: "${before.label}".`,
+      reason,
+      actor: actorOf(req),
+    });
+    res.json({ ok: true });
+  }),
+);
+
+// ===========================================================================
+//  KAYITLI GORUNUMLER (saved views) — filtre + sutun + satir duzeni
+//  Kullanici bazli kalici gorunumler; proje geneli (paylasilan) gorunumler
+//  scope='project' ile modellenir ve yalnizca PM tarafindan yonetilir.
+//  Bkz. src/views.js.
+// ===========================================================================
+const viewCtx = (req) => ({
+  projectId: req.params.pid,
+  userId: req.auth?.userId || null,
+  isPM: req.auth?.roleKey === 'pm',
+});
+
+app.get(
+  '/api/projects/:pid/views',
+  wrap(async (req, res) => {
+    const { projectId, userId } = viewCtx(req);
+    if (!userId) throw bad('Gecersiz kimlik.', 401);
+    res.json(await listViews(prisma, projectId, userId, req.query.navKey));
+  }),
+);
+
+app.post(
+  '/api/projects/:pid/views',
+  wrap(async (req, res) => {
+    const ctx = viewCtx(req);
+    if (!ctx.userId) throw bad('Gecersiz kimlik.', 401);
+    const view = await createView(prisma, { ...ctx, navKey: req.body?.navKey, body: req.body });
+    await audit(ctx.projectId, {
+      action: 'VIEW_CREATE',
+      entityType: 'view',
+      entityId: view.id,
+      message: `Gorunum kaydedildi: "${view.name}" (${view.navKey}).`,
+      actor: actorOf(req),
+    });
+    res.status(201).json(view);
+  }),
+);
+
+app.patch(
+  '/api/projects/:pid/views/:id',
+  wrap(async (req, res) => {
+    const ctx = viewCtx(req);
+    if (!ctx.userId) throw bad('Gecersiz kimlik.', 401);
+    const view = await updateView(prisma, { ...ctx, id: req.params.id, body: req.body });
+    await audit(ctx.projectId, {
+      action: 'VIEW_UPDATE',
+      entityType: 'view',
+      entityId: view.id,
+      message: `Gorunum guncellendi: "${view.name}" (${view.navKey}).`,
+      actor: actorOf(req),
+    });
+    res.json(view);
+  }),
+);
+
+// Varsayilan gorunum: sayfa acildiginda otomatik secilen. Ayni sahip+sayfa
+// icin en fazla bir tane olur (bkz. views.js setDefaultView).
+app.post(
+  '/api/projects/:pid/views/:id/default',
+  wrap(async (req, res) => {
+    const ctx = viewCtx(req);
+    if (!ctx.userId) throw bad('Gecersiz kimlik.', 401);
+    const view = await setDefaultView(prisma, { ...ctx, id: req.params.id });
+    await audit(ctx.projectId, {
+      action: 'VIEW_DEFAULT',
+      entityType: 'view',
+      entityId: view.id,
+      message: `Varsayilan gorunum: "${view.name}" (${view.navKey}).`,
+      actor: actorOf(req),
+    });
+    res.json(view);
+  }),
+);
+
+app.delete(
+  '/api/projects/:pid/views/:id',
+  wrap(async (req, res) => {
+    const ctx = viewCtx(req);
+    if (!ctx.userId) throw bad('Gecersiz kimlik.', 401);
+    const before = await loadWritable(prisma, { ...ctx, id: req.params.id });
+    await deleteView(prisma, { ...ctx, id: req.params.id });
+    await audit(ctx.projectId, {
+      action: 'VIEW_DELETE',
+      entityType: 'view',
+      entityId: before.id,
+      message: `Gorunum silindi: "${before.name}" (${before.navKey}).`,
+      actor: actorOf(req),
+    });
+    res.json({ ok: true });
+  }),
+);
+
+// ===========================================================================
+//  REQUIREMENTS
+// ===========================================================================
+app.get(
+  '/api/projects/:pid/requirements',
+  wrap(async (req, res) => {
+    const where = { projectId: req.params.pid, ...clearanceFilter(req) };
+    if (req.query.type) where.type = req.query.type;
+    const rows = await prisma.requirement.findMany({ where, orderBy: { text_id: 'asc' } });
+    res.json(await withAssigneeIdsAll(prisma, 'requirement', flattenAll(rows)));
+  }),
+);
+
+app.post(
+  '/api/projects/:pid/requirements',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const b = req.body || {};
+    if (!b.type) throw bad('Gereksinim tipi zorunlu.');
+    const text_id = (b.text_id && b.text_id.trim()) || (await nextTextId(pid, b.type, false));
+    const defs = await listDefs(prisma, pid, 'requirement');
+    const attributes = validateAndMergeAttributes(defs, extractAttributeInput(b), {}, { isCreate: true });
+    const source = await resolveSource(pid, b);
+    // Coklu atama: gonderilmediyse bos liste (yeni kayit, onceki atama yok).
+    const assigneeIds = (await assigneeIdsFrom(b, pid)) ?? [];
+    // Yeni gereksinim: durum daima 'In Review' (henuz bagli test yok, kilitli).
+    // ABAC (#87): ust (parentId) belirtilmisse seviye ustten miras alinir;
+    // kullanici kendi seviyesinden yuksek bir seviyeye gereksinim olusturamaz.
+    const userLevel = req.auth?.clearanceLevel ?? 1;
+    const parentId = b.parentId ? String(b.parentId).trim() : null;
+    let clearanceLevel = b.clearanceLevel != null ? Number(b.clearanceLevel) : null;
+    if (parentId) {
+      const parent = await prisma.requirement.findUnique({ where: { id: parentId } });
+      if (!parent || parent.projectId !== pid) throw bad('Ust gereksinim bulunamadi.', 404);
+      assertRequirementVisible(req, parent);
+      clearanceLevel = parent.clearanceLevel; // miras
+    }
+    if (clearanceLevel == null) clearanceLevel = 1;
+    // Issue #102: gereksinim seviyesi de 1..5 araliginda olmali (miras dahil).
+    if (!isValidClearanceLevel(clearanceLevel)) throw bad('clearanceLevel 1-5 arasinda olmali.');
+    if (clearanceLevel > userLevel) throw bad('Bu seviyede gereksinim olusturamazsiniz.', 403);
+    // Issue #135: yeni dugum eklenir eklenmez Parca No alir (ustun blogundan
+    // siradaki bos numara). Numara uretilemezse (blok dolu / bicim bozuk)
+    // gereksinim yine de olusur — numarasi sonra `part-numbers/ensure` ile
+    // tamamlanir; urun kimligi yuzunden gereksinim kaybedilmez.
+    const project = await prisma.project.findUnique({ where: { id: pid } });
+    let partNo;
+    try {
+      partNo = await allocatePartNo(prisma, pid, parentId, project);
+    } catch {
+      partNo = null;
+    }
+    // Issue #138: gereksinim, ELLE tanimlanmis bir bilesene baglanabilir.
+    // Bag zorunlu degildir; verilmisse ayni projeye ait olmalidir (IDOR).
+    const componentId = await resolveComponentId(pid, b.componentId);
+    const created = await prisma.requirement.create({
+      data: {
+        projectId: pid,
+        text_id,
+        partNo,
+        componentId,
+        title: (b.title || '').trim(),
+        description: cleanRichText((b.description || '').trim()),
+        type: b.type,
+        field: b.field || null,
+        status: STATUS.IN_REVIEW,
+        attributes,
+        author: b.author || 'ehsim.user',
+        relatedDocuments: normalizeDocuments(b.relatedDocuments),
+        parentId,
+        clearanceLevel,
+        ...source,
+      },
+    });
+    const row = assigneeIds.length > 0 ? await setAssignees(prisma, 'requirement', created.id, assigneeIds) : created;
+    await audit(pid, {
+      action: 'CREATE',
+      entityType: 'requirement',
+      entityId: row.id,
+      textId: row.text_id,
+      message: source.sourceDocumentId
+        ? `Yeni gereksinim: "${labelOf(row)}" (${row.type}) — kaynak: "${source.sourceDocumentName}".`
+        : `Yeni gereksinim: "${labelOf(row)}" (${row.type}).`,
+    });
+    // Issue #135: atanan Parca No'nun audit izi. Kara liste (partNo.js
+    // usedPartNos) bu satiri okur — kayit SILINSE BILE numara audit'te kalir
+    // ve bir daha uretilmez. Iz birakilmazsa "son parcayi silip ayni numarayi
+    // tekrar alma" acigi olusur.
+    if (row.partNo) {
+      await audit(pid, {
+        action: 'PARTNO_ASSIGN',
+        entityType: 'requirement',
+        entityId: row.id,
+        textId: row.partNo,
+        field: PART_NO_AUDIT_FIELD,
+        newValue: row.partNo,
+        message: `Parca No atandi: ${row.partNo} (${row.text_id}).`,
+        actor: actorOf(req),
+      });
+    }
+    await logAssignment(pid, {
+      entity: 'requirement',
+      row,
+      before: [],
+      after: assigneeIds,
+      actor: actorOf(req),
+    });
+    res.status(201).json(withAssigneeIds(flatten(row), assigneeIds));
+  }),
+);
+
+// PBS agaci (Issue #9 / Adim 2): lazy-load cocuk sorgusu + ust-zincir.
+// Sabit path'ler ("/tree") parametreli "/:id" route'undan ONCE tanimlanmali,
+// yoksa Express "tree"yi :id olarak yakalar.
+app.get(
+  '/api/projects/:pid/requirements/tree',
+  wrap(async (req, res) => {
+    const parentId = req.query.parentId ? String(req.query.parentId).trim() : null;
+    const items = await getTreeChildren(req.params.pid, parentId, req.auth?.clearanceLevel);
+    res.json({ items });
+  }),
+);
+
+app.get(
+  '/api/projects/:pid/requirements/:id/ancestors',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const target = await prisma.requirement.findUnique({ where: { id: req.params.id } });
+    if (!target || target.projectId !== pid) throw bad('Gereksinim bulunamadi.', 404);
+    assertRequirementVisible(req, target);
+    const path = await getTreeAncestorPath(pid, req.params.id, req.auth?.clearanceLevel);
+    if (!path) throw bad('Gereksinim bulunamadi.', 404);
+    res.json({ path });
+  }),
+);
+
+app.get(
+  '/api/projects/:pid/requirements/:id',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const row = await prisma.requirement.findUnique({ where: { id: req.params.id } });
+    if (!row || row.projectId !== pid) throw bad('Gereksinim bulunamadi.', 404);
+    assertRequirementVisible(req, row);
+    res.json(withAssigneeIds(flatten(row), await getAssigneeIds(prisma, 'requirement', row.id)));
+  }),
+);
+
+app.put(
+  '/api/projects/:pid/requirements/:id',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const b = req.body || {};
+    const before = await prisma.requirement.findUnique({ where: { id: req.params.id } });
+    if (!before || before.projectId !== pid) throw bad('Gereksinim bulunamadi.', 404);
+    assertRequirementVisible(req, before);
+    if (before.locked) throw bad('Bu gereksinim onaylandi ve kilitli. Duzenlemek icin once PM kilidi acmalidir.', 403);
+    const data = {};
+    for (const k of ['text_id', 'title', 'description', 'field']) {
+      if (b[k] != null) data[k] = typeof b[k] === 'string' ? b[k].trim() : b[k];
+    }
+    if (data.description != null) data.description = cleanRichText(data.description);
+    if (b.relatedDocuments != null) data.relatedDocuments = normalizeDocuments(b.relatedDocuments);
+    // Issue #138: bilesen bagi. null gonderilirse bag kaldirilir; alan hic
+    // gonderilmediyse dokunulmaz.
+    if (b.componentId !== undefined) data.componentId = await resolveComponentId(pid, b.componentId);
+    const attrInput = extractAttributeInput(b);
+    if (Object.keys(attrInput).length > 0) {
+      const defs = await listDefs(prisma, pid, 'requirement');
+      data.attributes = validateAndMergeAttributes(defs, attrInput, before.attributes || {});
+    }
+    // Atama: alan gonderilmediyse dokunulmaz; bos gonderilirse kaldirilir.
+    // Icerik degisimi SAYILMAZ (history/suspect tetiklemez) — sorumlunun
+    // degismesi gereksinimin METNINI degistirmez.
+    const nextAssigneeIds = await assigneeIdsFrom(b, pid);
+    const prevAssigneeIds = await getAssigneeIds(prisma, 'requirement', before.id);
+    // Issue #57: yalnizca ICERIK alanlari (title/description/field + attributes
+    // icindeki priority/dal_level) degistiginde history + suspect tetiklenir.
+    // Status/approvalStatus/locked/updatedAt otomatik cascade tarafindan
+    // dogrudan yazilir (PUT'a ugramaz) — bu yuzden burada tetiklenmezler.
+    const contentChanged = contentFieldsChanged(before, data);
+    const actor = actorOf(req);
+    // Kopyalama + UPDATE + AuditLog tek $transaction (issue: kim neyi degistirdi
+    // tek yerden; eski versiyon her zaman onceki durumu saklar).
+    const row = await prisma.$transaction(async (tx) => {
+      let updated = await tx.requirement.update({ where: { id: req.params.id }, data });
+      if (nextAssigneeIds !== undefined) {
+        updated = await setAssignees(tx, 'requirement', updated.id, nextAssigneeIds);
+      }
+      const auditRow = await tx.auditLog.create({
+        data: {
+          projectId: pid,
+          action: 'UPDATE',
+          entityType: 'requirement',
+          entityId: updated.id,
+          textId: updated.text_id,
+          actor,
+          message: `Gereksinim guncellendi: "${labelOf(updated)}".`,
+        },
+      });
+      if (contentChanged) {
+        // SCD Type 4: degisiklik ONCESI durum, versiyon numarasiyla saklanir.
+        await tx.requirementHistory.create({
+          data: {
+            projectId: pid,
+            requirementId: updated.id,
+            version: await nextHistoryVersion(tx, updated.id),
+            text_id: before.text_id,
+            title: before.title,
+            description: before.description,
+            type: before.type,
+            field: before.field,
+            status: before.status,
+            approvalStatus: before.approvalStatus,
+            locked: before.locked,
+            attributes: before.attributes || {},
+            author: before.author,
+            relatedDocuments: before.relatedDocuments,
+            changedAt: new Date(),
+            changedBy: actor,
+            auditLogId: auditRow.id,
+          },
+        });
+        // Downstream suspect: degisen gereksinimin Satisfies (alt gereksinimler)
+        // ve Verifies (testler) baglarini isaretle. Alt degisimi ust baglarini
+        // (toId oldugu baglar) suspect YAPMAZ.
+        await tx.traceabilityLink.updateMany({
+          where: { projectId: pid, fromId: updated.id, type: { in: SUSPECT_LINK_TYPES } },
+          data: { isSuspect: true },
+        });
+      }
+      return updated;
+    });
+    const assigneeIds = nextAssigneeIds ?? prevAssigneeIds;
+    await logAssignment(pid, {
+      entity: 'requirement',
+      row,
+      before: prevAssigneeIds,
+      after: assigneeIds,
+      actor,
+    });
+    res.json(withAssigneeIds(flatten(row), assigneeIds));
+  }),
+);
+
+// Issue #57: gereksinimin versiyon gecmisi (SCD Type 4) — salt okunur.
+//  GET /api/projects/:pid/requirements/:id/history
+app.get(
+  '/api/projects/:pid/requirements/:id/history',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const row = await prisma.requirement.findUnique({ where: { id: req.params.id } });
+    if (!row || row.projectId !== pid) throw bad('Gereksinim bulunamadi.', 404);
+    const history = await prisma.requirementHistory.findMany({
+      where: { projectId: pid, requirementId: req.params.id },
+      orderBy: { version: 'desc' },
+    });
+    // Issue #97: Personnel listesi frontend'de artik yok; aktor (changedBy =
+    // User UUID) adini sunucu tarafi cozer ve changedByName olarak ekler.
+    const actorIds = [...new Set(history.map((h) => h.changedBy).filter(Boolean))];
+    const actors = actorIds.length
+      ? await prisma.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, name: true } })
+      : [];
+    const nameById = new Map(actors.map((a) => [a.id, a.name]));
+    res.json(
+      flattenAll(history).map((h) => ({
+        ...h,
+        changedByName: nameById.get(h.changedBy) || null,
+      })),
+    );
+  }),
+);
+
+// Issue #57: bir gereksinimin TUM supheli baglarini temizle (yalnizca approve
+//  izni olanlar; islem AuditLog'a yazilir).
+app.post(
+  '/api/projects/:pid/requirements/:id/clear-suspect',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const before = await prisma.requirement.findUnique({ where: { id: req.params.id } });
+    if (!before || before.projectId !== pid) throw bad('Gereksinim bulunamadi.', 404);
+    await assertApprovePermission(req, pid, 'requirement', before);
+    const r = await prisma.traceabilityLink.updateMany({
+      where: {
+        projectId: pid,
+        fromId: before.id,
+        isSuspect: true,
+        type: { in: SUSPECT_LINK_TYPES },
+      },
+      data: { isSuspect: false },
+    });
+    await audit(pid, {
+      action: 'SUSPECT_CLEAR',
+      entityType: 'requirement',
+      entityId: before.id,
+      textId: before.text_id,
+      actor: actorOf(req),
+      message: `Supheli baglar temizlendi (${r.count}): "${labelOf(before)}".`,
+    });
+    res.json({ ok: true, cleared: r.count });
+  }),
+);
+
+app.delete(
+  '/api/projects/:pid/requirements/:id',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const before = await prisma.requirement.findUnique({ where: { id: req.params.id } });
+    if (!before || before.projectId !== pid) throw bad('Gereksinim bulunamadi.', 404);
+    if (before.locked) throw bad('Bu gereksinim onaylandi ve kilitli; silinemez.', 403);
+    const reason = requireReason(req);
+    // Iliskili baglari temizle
+    await prisma.traceabilityLink.deleteMany({
+      where: { projectId: pid, OR: [{ fromId: req.params.id }, { toId: req.params.id }] },
+    });
+    await prisma.requirement.delete({ where: { id: req.params.id } });
+    await audit(pid, {
+      action: 'DELETE',
+      entityType: 'requirement',
+      entityId: req.params.id,
+      textId: before.text_id,
+      message: `Gereksinim silindi: "${labelOf(before)}".`,
+      reason,
+      actor: actorOf(req),
+    });
+    await cascade(pid);
+    res.json({ ok: true });
+  }),
+);
+
+app.post(
+  '/api/projects/:pid/requirements/batch-delete',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const reason = requireReason(req);
+    const n = await batchDelete(pid, 'requirement', req.body?.ids, 'requirement', reason, actorOf(req));
+    await cascade(pid);
+    res.json({ ok: true, deleted: n });
+  }),
+);
+
+// Issue #120: secili gereksinimlere TOPLU kisi atama.
+//  POST /api/projects/:pid/requirements/batch-assign
+//  govde: { ids: [...], assigneeIds: [...], mode: 'add'|'replace'|'remove' }
+//  Atama gereksinimin METNINI degistirmez: history/suspect tetiklenmez
+//  (tek tek PUT ile ayni kural, bkz. contentFieldsChanged).
+app.post(
+  '/api/projects/:pid/requirements/batch-assign',
+  wrap(async (req, res) => {
+    res.json(await batchAssign(req, req.params.pid, 'requirement', req.body));
+  }),
+);
+
+// --- PBS agaci yapisal islemleri (Issue #9 / Adim 3) -------------------------
+//  Tasima/bolme/birlestirme atomik transaction icinde (treeOps.js); dongusel
+//  tasima ve tip uyumsuzlugu 400 doner; text_id'ler asla bozulmaz/yeniden
+//  kullanilmaz.
+app.patch(
+  '/api/projects/:pid/requirements/:id/move',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const newParentId = req.body?.parentId ?? null;
+    const actor = req.auth?.userId || 'ehsim.user';
+    // ABAC (#87): tasinan gereksinim + yeni ust, kullanicinin gorebildigi
+    // bir seviyede olmali; tasima sonrasi yeni usten seviye miras alinir.
+    const source = await prisma.requirement.findUnique({ where: { id: req.params.id } });
+    if (!source || source.projectId !== pid) throw bad('Gereksinim bulunamadi.', 404);
+    assertRequirementVisible(req, source);
+    let newLevel = null;
+    if (newParentId) {
+      const parent = await prisma.requirement.findUnique({ where: { id: newParentId } });
+      if (!parent || parent.projectId !== pid) throw bad('Ust gereksinim bulunamadi.', 404);
+      assertRequirementVisible(req, parent);
+      newLevel = parent.clearanceLevel;
+    }
+    const row = await moveRequirement(prisma, pid, req.params.id, newParentId, actor);
+    if (newLevel != null) {
+      await prisma.requirement.update({ where: { id: row.id }, data: { clearanceLevel: newLevel } });
+      row.clearanceLevel = newLevel;
+    }
+    res.json(row);
+  }),
+);
+
+app.post(
+  '/api/projects/:pid/requirements/:id/split',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const actor = req.auth?.userId || 'ehsim.user';
+    const result = await splitRequirement(prisma, pid, req.params.id, req.body?.newTitles, actor);
+    res.status(201).json(result);
+  }),
+);
+
+app.post(
+  '/api/projects/:pid/requirements/merge',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const actor = req.auth?.userId || 'ehsim.user';
+    const survivor = await mergeRequirements(prisma, pid, req.body?.ids, actor);
+    res.json(survivor);
+  }),
+);
+
+// ===========================================================================
+//  TEST CASES
+// ===========================================================================
+app.get(
+  '/api/projects/:pid/testcases',
+  wrap(async (req, res) => {
+    const where = { projectId: req.params.pid };
+    if (req.query.type) where.type = req.query.type;
+    const rows = await prisma.testCase.findMany({ where, orderBy: { text_id: 'asc' } });
+    res.json(await withAssigneeIdsAll(prisma, 'testcase', flattenAll(rows)));
+  }),
+);
+
+app.post(
+  '/api/projects/:pid/testcases',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const b = req.body || {};
+    if (!b.type) throw bad('Test tipi zorunlu.');
+    const text_id = (b.text_id && b.text_id.trim()) || (await nextTextId(pid, b.type, true));
+    // Alan/oncelik/dal artik ELLE girilir; bir gereksinime baglanmak bu
+    // degerleri OTOMATIK doldurmaz (bir test coklu gereksinim dogrular).
+    // Test SONUCU (Passed/Failed/In Review) ise ARTIK client'tan alinmaz:
+    // her yeni test 'In Review' baslar, sonucu SADECE onay/red aksiyonlari
+    // (bkz. /approvals/vote, /approvals/reject) belirler.
+    const defs = await listDefs(prisma, pid, 'testcase');
+    // Test senaryolarinda oznitelikler bos birakilabilir (zorunlu degil); yalnizca
+    // gonderilenler dogrulanir, bos birakilanlar null kalir.
+    const attrInput = extractAttributeInput(b);
+    const attributes = validateAndMergeAttributes(
+      defs.map((d) => ({ ...d, required: false })),
+      attrInput,
+      {},
+      { isCreate: false },
+    );
+    const assigneeIds = (await assigneeIdsFrom(b, pid)) ?? [];
+    const created = await prisma.testCase.create({
+      data: {
+        projectId: pid,
+        text_id,
+        title: (b.title || '').trim(),
+        description: cleanRichText((b.description || '').trim()),
+        type: b.type,
+        field: b.field || null,
+        attributes,
+        status: STATUS.IN_REVIEW,
+        author: b.author || 'ehsim.user',
+      },
+    });
+    const row = assigneeIds.length > 0 ? await setAssignees(prisma, 'testcase', created.id, assigneeIds) : created;
+    await audit(pid, {
+      action: 'CREATE',
+      entityType: 'testcase',
+      entityId: row.id,
+      textId: row.text_id,
+      message: `Yeni test senaryosu: "${labelOf(row)}" (${row.type}).`,
+    });
+    await logAssignment(pid, {
+      entity: 'testcase',
+      row,
+      before: [],
+      after: assigneeIds,
+      actor: actorOf(req),
+    });
+    res.status(201).json(withAssigneeIds(flatten(row), assigneeIds));
+  }),
+);
+
+app.put(
+  '/api/projects/:pid/testcases/:id',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const b = req.body || {};
+    const before = await prisma.testCase.findUnique({ where: { id: req.params.id } });
+    if (!before || before.projectId !== pid) throw bad('Test bulunamadi.', 404);
+    if (before.locked) throw bad('Bu test onaylandi ve kilitli. Duzenlemek icin once PM kilidi acmalidir.', 403);
+    const data = {};
+    for (const k of ['text_id', 'title', 'description']) if (b[k] != null) data[k] = b[k].trim();
+    if (data.description != null) data.description = cleanRichText(data.description);
+    if (b.field !== undefined) data.field = b.field === null ? null : String(b.field).trim() || null;
+    // Oznitelikler (Priority, DAL Level, ozel alanlar) elle duzenlenebilir (bagdan bagimsiz).
+    const attrInput = extractAttributeInput(b);
+    if (Object.keys(attrInput).length > 0) {
+      const defs = await listDefs(prisma, pid, 'testcase');
+      data.attributes = validateAndMergeAttributes(
+        defs.map((d) => ({ ...d, required: false })),
+        attrInput,
+        before.attributes || {},
+      );
+    }
+    // Atama: alan gonderilmediyse dokunulmaz, bos gonderilirse kaldirilir.
+    const nextAssigneeIds = await assigneeIdsFrom(b, pid);
+    const prevAssigneeIds = await getAssigneeIds(prisma, 'testcase', before.id);
+    // Test SONUCU (status) bu route'tan ARTIK degistirilemez — yalnizca
+    // onay/red aksiyonlarindan turetilir (bkz. recomputeApproval, /approvals/reject).
+    let row = await prisma.testCase.update({ where: { id: req.params.id }, data });
+    if (nextAssigneeIds !== undefined) {
+      row = await setAssignees(prisma, 'testcase', row.id, nextAssigneeIds);
+    }
+    await audit(pid, {
+      action: 'UPDATE',
+      entityType: 'testcase',
+      entityId: row.id,
+      textId: row.text_id,
+      message: `Test guncellendi: "${labelOf(row)}".`,
+    });
+    const assigneeIds = nextAssigneeIds ?? prevAssigneeIds;
+    await logAssignment(pid, {
+      entity: 'testcase',
+      row,
+      before: prevAssigneeIds,
+      after: assigneeIds,
+      actor: actorOf(req),
+    });
+    res.json(withAssigneeIds(flatten(row), assigneeIds));
+  }),
+);
+
+app.delete(
+  '/api/projects/:pid/testcases/:id',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const before = await prisma.testCase.findUnique({ where: { id: req.params.id } });
+    if (!before || before.projectId !== pid) throw bad('Test bulunamadi.', 404);
+    if (before.locked) throw bad('Bu test onaylandi ve kilitli; silinemez.', 403);
+    const reason = requireReason(req);
+    await prisma.traceabilityLink.deleteMany({
+      where: { projectId: pid, OR: [{ fromId: req.params.id }, { toId: req.params.id }] },
+    });
+    await prisma.testCase.delete({ where: { id: req.params.id } });
+    await audit(pid, {
+      action: 'DELETE',
+      entityType: 'testcase',
+      entityId: req.params.id,
+      textId: before.text_id,
+      message: `Test silindi: "${labelOf(before)}".`,
+      reason,
+      actor: actorOf(req),
+    });
+    await cascade(pid);
+    res.json({ ok: true });
+  }),
+);
+
+app.post(
+  '/api/projects/:pid/testcases/batch-delete',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const reason = requireReason(req);
+    const n = await batchDelete(pid, 'testCase', req.body?.ids, 'testcase', reason, actorOf(req));
+    await cascade(pid);
+    res.json({ ok: true, deleted: n });
+  }),
+);
+
+// Issue #120: secili test senaryolarina TOPLU kisi atama.
+//  POST /api/projects/:pid/testcases/batch-assign
+app.post(
+  '/api/projects/:pid/testcases/batch-assign',
+  wrap(async (req, res) => {
+    res.json(await batchAssign(req, req.params.pid, 'testcase', req.body));
+  }),
+);
+
+// ===========================================================================
+//  GLOSSARY
+// ===========================================================================
+app.get(
+  '/api/projects/:pid/glossary',
+  wrap(async (req, res) => {
+    const rows = await prisma.glossaryTerm.findMany({ where: { projectId: req.params.pid }, orderBy: { term: 'asc' } });
+    res.json(rows);
+  }),
+);
+
+app.post(
+  '/api/projects/:pid/glossary',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const b = req.body || {};
+    if (!b.term || !b.term.trim()) throw bad('Terim zorunlu.');
+    const text_id = (b.text_id && b.text_id.trim()) || (await nextTextId(pid, 'glossary', false));
+    const row = await prisma.glossaryTerm.create({
+      data: {
+        projectId: pid,
+        text_id,
+        term: b.term.trim(),
+        definition: cleanRichText((b.definition || '').trim()),
+        author: b.author || 'ehsim.user',
+      },
+    });
+    await audit(pid, {
+      action: 'CREATE',
+      entityType: 'glossary',
+      entityId: row.id,
+      textId: row.text_id,
+      message: `Sozluk terimi eklendi: "${row.term}".`,
+    });
+    res.status(201).json(row);
+  }),
+);
+
+app.put(
+  '/api/projects/:pid/glossary/:id',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const before = await prisma.glossaryTerm.findUnique({ where: { id: req.params.id } });
+    if (!before || before.projectId !== pid) throw bad('Terim bulunamadi.', 404);
+    const b = req.body || {};
+    const data = {};
+    for (const k of ['term', 'definition', 'text_id']) if (b[k] != null) data[k] = b[k].trim();
+    if (data.definition != null) data.definition = cleanRichText(data.definition);
+    const row = await prisma.glossaryTerm.update({ where: { id: req.params.id }, data });
+    await audit(pid, {
+      action: 'UPDATE',
+      entityType: 'glossary',
+      entityId: row.id,
+      textId: row.text_id,
+      message: `Sozluk terimi guncellendi: "${row.term}".`,
+    });
+    res.json(row);
+  }),
+);
+
+app.delete(
+  '/api/projects/:pid/glossary/:id',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const before = await prisma.glossaryTerm.findUnique({ where: { id: req.params.id } });
+    if (!before || before.projectId !== pid) throw bad('Terim bulunamadi.', 404);
+    const reason = requireReason(req);
+    await prisma.traceabilityLink.deleteMany({
+      where: { projectId: pid, OR: [{ fromId: req.params.id }, { toId: req.params.id }] },
+    });
+    await prisma.glossaryTerm.delete({ where: { id: req.params.id } });
+    await audit(pid, {
+      action: 'DELETE',
+      entityType: 'glossary',
+      entityId: req.params.id,
+      textId: before.text_id,
+      message: `Sozluk terimi silindi: "${before.term}".`,
+      reason,
+      actor: actorOf(req),
+    });
+    res.json({ ok: true });
+  }),
+);
+
+app.post(
+  '/api/projects/:pid/glossary/batch-delete',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const reason = requireReason(req);
+    const n = await batchDelete(pid, 'glossaryTerm', req.body?.ids, 'glossary', reason, actorOf(req));
+    res.json({ ok: true, deleted: n });
+  }),
+);
+
+// ===========================================================================
+//  LINKS (traceability)
+// ===========================================================================
+app.get(
+  '/api/projects/:pid/links',
+  wrap(async (req, res) => {
+    const rows = await prisma.traceabilityLink.findMany({ where: { projectId: req.params.pid } });
+    res.json(rows);
+  }),
+);
+
+// Yardimci: proje icindeki bir id'yi req/test/glossary olarak coz.
+async function resolveNode(pid, id) {
+  const req = await prisma.requirement.findUnique({ where: { id } });
+  if (req && req.projectId === pid) return { kind: 'requirement', node: req };
+  const test = await prisma.testCase.findUnique({ where: { id } });
+  if (test && test.projectId === pid) return { kind: 'test', node: test };
+  const glo = await prisma.glossaryTerm.findUnique({ where: { id } });
+  if (glo && glo.projectId === pid) return { kind: 'glossary', node: { ...glo, type: 'Glossary' } };
+  return null;
+}
+
+// Tek bir bagi kurar (dogrulama + create + Verifies alan/durum senkron + audit).
+// Cascade CAGRILMAZ; cagiran taraf toplu islem sonunda bir kez cascade eder.
+// idempotent: ayni bag zaten varsa yeniden olusturmaz, mevcut olani doner.
+async function createOneLink(pid, { fromId, toId, type, testStatus: _testStatus }) {
+  if (!fromId || !toId || !type) throw bad('fromId, toId, type zorunlu.');
+
+  const fromR = await resolveNode(pid, fromId);
+  const toR = await resolveNode(pid, toId);
+  if (!fromR || !toR) throw bad('Bag icin gecersiz dugum(ler).');
+
+  const check = validateLink(fromR.node, toR.node, type, toR.kind);
+  if (!check.ok) throw bad(check.error);
+
+  // NOT: Bir test artik BIRDEN FAZLA gereksinimi dogrulayabilir (coklu Verifies).
+  // Tek-gereksinim kisiti kaldirildi. Ayrica Verifies baginda testin alan/
+  // oncelik/dal/sonuc degerleri ARTIK OTOMATIK doldurulmaz; bunlar teste elle
+  // girilir (bir test farkli tipte/alanda gereksinimlere baglanabildiginden
+  // otomatik kopyalama anlamsizdir).
+
+  // Ayni bag zaten varsa tekrar olusturma (toplu islemde guvenli).
+  const dup = await prisma.traceabilityLink.findFirst({ where: { projectId: pid, fromId, toId, type } });
+  const link =
+    dup ||
+    (await prisma.traceabilityLink.create({
+      data: { projectId: pid, fromId, toId, type, createdBy: 'ehsim.user' },
+    }));
+  if (!dup) {
+    await audit(pid, {
+      action: 'LINK',
+      entityType: 'link',
+      entityId: link.id,
+      textId: `${fromR.node.text_id} -> ${toR.node.text_id}`,
+      message: `Bag kuruldu: ${fromR.node.text_id} «${type}» ${toR.node.text_id}.`,
+    });
+  }
+  return link;
+}
+
+app.post(
+  '/api/projects/:pid/links',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const { fromId, toId, type, testStatus: _testStatus } = req.body || {};
+    const link = await createOneLink(pid, { fromId, toId, type, testStatus: _testStatus });
+    await cascade(pid);
+    res.status(201).json(link);
+  }),
+);
+
+// --- TOPLU BAG: bir HEDEF'e (target) secilen tum kaynaklari zincirle ---------
+//  Body: { type, targetId, sourceIds: [...], testStatus? }
+//  DEPOLAMA YONU her tipte AYNI: fromId = targetId (ust/gereksinim),
+//  toId = her sourceId (alt/test/terim). Boylece Satisfies/Verifies/Assigned To
+//  icin tek, tutarli bir cagri yeterlidir.
+app.post(
+  '/api/projects/:pid/links/batch',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const { type, targetId, sourceIds, testStatus } = req.body || {};
+    if (!type || !targetId || !Array.isArray(sourceIds) || sourceIds.length === 0) {
+      throw bad('type, targetId ve en az bir sourceId zorunlu.');
+    }
+    const results = { linked: 0, skipped: [] };
+    for (const sourceId of sourceIds) {
+      if (sourceId === targetId) {
+        results.skipped.push({ id: sourceId, reason: 'self' });
+        continue;
+      }
+      try {
+        await createOneLink(pid, { fromId: targetId, toId: sourceId, type, testStatus });
+        results.linked += 1;
+      } catch (e) {
+        // Bir kaynak baglanamazsa (orn. test zaten bagli) atla, digerlerine devam et.
+        results.skipped.push({ id: sourceId, reason: e?.message || 'hata' });
+      }
+    }
+    await cascade(pid);
+    res.status(201).json(results);
+  }),
+);
+
+app.delete(
+  '/api/projects/:pid/links/:id',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const before = await prisma.traceabilityLink.findUnique({ where: { id: req.params.id } });
+    if (!before || before.projectId !== pid) throw bad('Bag bulunamadi.', 404);
+    const reason = requireReason(req);
+    await prisma.traceabilityLink.delete({ where: { id: req.params.id } });
+    await audit(pid, {
+      action: 'UNLINK',
+      entityType: 'link',
+      entityId: req.params.id,
+      message: `Bag koparildi (${before.type}).`,
+      reason,
+      actor: actorOf(req),
+    });
+    await cascade(pid);
+    res.json({ ok: true });
+  }),
+);
+
+// Issue #57: TEK bir supheli bagi temizle (yalnizca approve izni olanlar;
+//  izin, bagin fromId'sindeki gereksinimin bilesenine gore denetlenir).
+app.post(
+  '/api/projects/:pid/links/:id/clear-suspect',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const link = await prisma.traceabilityLink.findUnique({ where: { id: req.params.id } });
+    if (!link || link.projectId !== pid) throw bad('Bag bulunamadi.', 404);
+    const from = await prisma.requirement.findUnique({ where: { id: link.fromId } });
+    if (!from || from.projectId !== pid) throw bad('Bag kaynagi bulunamadi.', 404);
+    await assertApprovePermission(req, pid, 'requirement', from);
+    const updated = await prisma.traceabilityLink.update({ where: { id: link.id }, data: { isSuspect: false } });
+    await audit(pid, {
+      action: 'SUSPECT_CLEAR',
+      entityType: 'link',
+      entityId: link.id,
+      textId: `${from.text_id} -> ${updated.toId}`,
+      actor: actorOf(req),
+      message: `Supheli bag temizlendi: ${from.text_id} (${link.type}).`,
+    });
+    res.json({ ok: true, cleared: 1 });
+  }),
+);
+
+// ===========================================================================
+//  AUDIT
+// ===========================================================================
+app.get(
+  '/api/projects/:pid/audit',
+  wrap(async (req, res) => {
+    const rows = await prisma.auditLog.findMany({
+      where: { projectId: req.params.pid },
+      orderBy: { createdAt: 'desc' },
+      take: 1000,
+    });
+    res.json(rows);
+  }),
+);
+
+// ===========================================================================
+//  SNAPSHOTS (baseline / sürüm) — proje anlık görüntüleri.
+//  Issue #8: Sürüm Yönetimi (Snapshot) Altyapısı.
+//  PM: create/delete/list/view. Personel: list/view (read-only).
+// ===========================================================================
+app.get(
+  '/api/projects/:pid/snapshots',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const take = Math.min(Number(req.query.take) || 20, 100);
+    const skip = Number(req.query.skip) || 0;
+    const [rows, total] = await Promise.all([
+      prisma.projectSnapshot.findMany({
+        where: { projectId: pid },
+        orderBy: { createdAt: 'desc' },
+        take,
+        skip,
+        // Baseline SETI (Issue #128): listede "hangi paketin parcasi"
+        // gorunsun diye ust veri birlikte gelir; items yine gelmez (agir).
+        include: { items: false, set: { select: { id: true, name: true, label: true } } },
+      }),
+      prisma.projectSnapshot.count({ where: { projectId: pid } }),
+    ]);
+    res.json({ data: rows, total, take, skip });
+  }),
+);
+
+app.post(
+  '/api/projects/:pid/snapshots',
+  requirePM,
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const b = req.body || {};
+    // Issue #128: ad yaninda SURUM ETIKETI (v1.0/SRR/PDR/CDR), aciklama ve
+    // "resmi baseline" isareti alinir. Baseline gerekce ZORUNLU (baselines.js).
+    //
+    // KAPSAM: `scope: 'project'` tum projeyi dondurur; `modules: [...]`
+    // yalnizca secili modulleri (sol menu sayfalari). Birden cok modul
+    // secilirse her modul icin AYRI bir baseline alinir ve hepsi tek bir
+    // BASELINE SET altinda toplanir (bkz. baselines.js createBaselineSet).
+    const { set, snapshots, snapshot } = await createSnapshotForScope(
+      prisma,
+      pid,
+      {
+        name: b.name,
+        label: b.label,
+        description: b.description,
+        isBaseline: b.isBaseline,
+        reason: b.reason,
+        scope: b.scope,
+        modules: b.modules,
+      },
+      actorOf(req),
+      flatten,
+    );
+
+    for (const row of snapshots) {
+      await audit(pid, {
+        action: row.isBaseline ? 'BASELINE_CREATE' : 'SNAPSHOT_CREATE',
+        entityType: 'snapshot',
+        entityId: row.id,
+        textId: row.label ? `${row.name} (${row.label})` : row.name,
+        actor: actorOf(req),
+        reason: row.reason,
+        message: row.isBaseline
+          ? `Baseline olusturuldu: "${row.name}"${row.label ? ` [${row.label}]` : ''} ` +
+            `— kapsam: ${scopeSummary(row.scope, row.modules)}` +
+            `${row.version ? `, surum ${row.version}` : ''}` +
+            `${set ? `, "${set.name}" seti icinde` : ''}.`
+          : `Snapshot alindi: "${row.name}" — kapsam: ${scopeSummary(row.scope, row.modules)}.`,
+      });
+    }
+
+    // Tek snapshot alindiysa (eski davranis) satirin kendisi doner; set
+    // olustuysa set + icindeki baseline'lar birlikte doner.
+    res.status(201).json(set ? { ...snapshot, set, snapshots } : snapshot);
+  }),
+);
+
+// Baseline SETLERI: her set, icerdigi modul baseline'lariyla birlikte.
+app.get(
+  '/api/projects/:pid/baseline-sets',
+  wrap(async (req, res) => {
+    res.json(await listBaselineSets(prisma, req.params.pid));
+  }),
+);
+
+// Baseline ust verisi: ad / etiket / aciklama / "resmi baseline" isareti.
+// ICERIK (items) ASLA degismez — snapshot bir fotograftir, yalnizca uzerindeki
+// etiket duzenlenebilir.
+app.patch(
+  '/api/projects/:pid/snapshots/:snapshotId',
+  requirePM,
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const before = await prisma.projectSnapshot.findUnique({ where: { id: req.params.snapshotId } });
+    if (!before || before.projectId !== pid) throw bad('Snapshot bulunamadi.', 404);
+    const data = validateBaselineUpdate(before, req.body || {});
+    const snapshot = await prisma.projectSnapshot.update({ where: { id: before.id }, data });
+
+    const becameBaseline = data.isBaseline === true && !before.isBaseline;
+    const lostBaseline = data.isBaseline === false && before.isBaseline;
+    await audit(pid, {
+      action: becameBaseline || lostBaseline ? 'BASELINE_UPDATE' : 'SNAPSHOT_UPDATE',
+      entityType: 'snapshot',
+      entityId: snapshot.id,
+      textId: snapshot.label ? `${snapshot.name} (${snapshot.label})` : snapshot.name,
+      actor: actorOf(req),
+      reason: data.reason ?? snapshot.reason,
+      message: becameBaseline
+        ? `Baseline olarak isaretlendi: "${snapshot.name}"${snapshot.label ? ` [${snapshot.label}]` : ''}.`
+        : lostBaseline
+          ? `Baseline isareti kaldirildi: "${snapshot.name}".`
+          : `Snapshot ust verisi guncellendi: "${snapshot.name}".`,
+    });
+    res.json(snapshot);
+  }),
+);
+
+// Geri yukleme ONIZLEMESI — hicbir sey yazmaz. Kullanici kac kaydin
+// eklenecegini/guncellenecegini/silinecegini gormeden onay veremez.
+// KISMI restore icin `?selection=id1,id2`: yalnizca secili kayitlar sayilir
+// ve o durumda HICBIR SEY SILINMEZ (bkz. baselines.js buildRestorePlan).
+app.get(
+  '/api/projects/:pid/snapshots/:snapshotId/restore-preview',
+  requirePM,
+  wrap(async (req, res) => {
+    const raw = String(req.query.selection || '').trim();
+    const selection = raw
+      ? raw
+          .split(',')
+          .map((id) => id.trim())
+          .filter(Boolean)
+      : null;
+    res.json(await buildRestorePlan(prisma, req.params.pid, req.params.snapshotId, { selection }));
+  }),
+);
+
+// Geri yukleme. Gerekce ZORUNLU; oncesinde otomatik guvenlik kopyasi alinir;
+// uygulama TEK transaction icinde yurur (yarida kalirsa hicbir sey yazilmaz).
+app.post(
+  '/api/projects/:pid/snapshots/:snapshotId/restore',
+  requirePM,
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const reason = requireReason(req);
+    const snapshot = await prisma.projectSnapshot.findUnique({ where: { id: req.params.snapshotId } });
+    if (!snapshot || snapshot.projectId !== pid) throw bad('Snapshot bulunamadi.', 404);
+
+    // Issue #128: `selection` verilirse KISMI restore — yalnizca secili
+    // kayitlar geri yuklenir, hicbir sey silinmez.
+    const result = await restoreSnapshot(prisma, pid, snapshot.id, {
+      reason,
+      actor: actorOf(req),
+      flatten,
+      selection: Array.isArray(req.body?.selection) ? req.body.selection : null,
+    });
+
+    await audit(pid, {
+      action: 'SNAPSHOT_RESTORE',
+      entityType: 'snapshot',
+      entityId: snapshot.id,
+      textId: snapshot.label ? `${snapshot.name} (${snapshot.label})` : snapshot.name,
+      actor: actorOf(req),
+      reason,
+      message:
+        `"${snapshot.name}" anina geri donuldu ` +
+        `(+${result.plan.totals.added} / ~${result.plan.totals.updated} / -${result.plan.totals.deleted}). ` +
+        `Kapsam: ${scopeSummary(result.scope, result.modules)}` +
+        `${result.partial ? ' (yalnizca secili kayitlar)' : ''}. ` +
+        `Onay durumu ve kilitler de o anki haline dondu. ` +
+        `Guvenlik kopyasi: "${result.safetySnapshotName}".`,
+    });
+
+    res.json(result);
+  }),
+);
+
+// Fark raporu: iki snapshot ya da snapshot <-> canli durum.
+// ?from=<snapshotId|live>&to=<snapshotId|live>
+app.get(
+  '/api/projects/:pid/snapshots-diff',
+  wrap(async (req, res) => {
+    const from = String(req.query.from || '').trim();
+    const to = String(req.query.to || 'live').trim();
+    if (!from) throw bad('from parametresi zorunlu (snapshot id ya da "live").');
+    res.json(await diffSnapshots(prisma, req.params.pid, from, to, flatten));
+  }),
+);
+
+// ---------------------------------------------------------------------------
+//  Kayit uzerinde baseline gorunurlugu (Issue #128, madde 5)
+//  "Bu gereksinim/test hangi baseline'larin icinde kaldi?" Kayda bir sey
+//  yazilmaz; cevap SnapshotItem'dan okunur. Okuma yetkisi yeterlidir.
+// ---------------------------------------------------------------------------
+app.get(
+  '/api/projects/:pid/entity-baselines/:entityType/:entityId',
+  wrap(async (req, res) => {
+    const { pid, entityType, entityId } = req.params;
+    res.json(await listRecordBaselines(prisma, pid, entityType, entityId));
+  }),
+);
+
+// Kaydin SECILEN baseline'daki hali + canli halle ALAN BAZINDA farki.
+app.get(
+  '/api/projects/:pid/entity-baselines/:entityType/:entityId/:snapshotId',
+  wrap(async (req, res) => {
+    const { pid, entityType, entityId, snapshotId } = req.params;
+    res.json(await recordBaselineDetail(prisma, pid, entityType, entityId, snapshotId, flatten));
+  }),
+);
+
+app.get(
+  '/api/projects/:pid/snapshots/:snapshotId',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const snapshotId = req.params.snapshotId;
+
+    const snapshot = await prisma.projectSnapshot.findUnique({
+      where: { id: snapshotId },
+      include: { items: true, set: true },
+    });
+
+    if (!snapshot || snapshot.projectId !== pid) throw bad('Snapshot bulunamadi.', 404);
+
+    res.json(snapshot);
+  }),
+);
+
+app.delete(
+  '/api/projects/:pid/snapshots/:snapshotId',
+  requirePM,
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const snapshotId = req.params.snapshotId;
+
+    const snapshot = await prisma.projectSnapshot.findUnique({ where: { id: snapshotId } });
+    if (!snapshot || snapshot.projectId !== pid) throw bad('Snapshot bulunamadi.', 404);
+    const reason = requireReason(req);
+    // Issue #128: baseline DONDURULMUSTUR. Yalnizca acikca `force` isaretiyle
+    // (ozel izin) silinebilir; bu da audit'e ayrica yazilir.
+    assertDeletable(snapshot, { force: Boolean(req.body?.force) });
+
+    await prisma.snapshotItem.deleteMany({ where: { snapshotId } });
+    await prisma.projectSnapshot.delete({ where: { id: snapshotId } });
+
+    await audit(pid, {
+      action: 'SNAPSHOT_DELETE',
+      entityType: 'snapshot',
+      entityId: snapshotId,
+      textId: snapshot.name,
+      actor: actorOf(req),
+      reason,
+      message: snapshot.isBaseline
+        ? `BASELINE silindi (ozel izin): "${snapshot.name}"${snapshot.label ? ` [${snapshot.label}]` : ''}.`
+        : `Snapshot silindi: "${snapshot.name}".`,
+    });
+
+    res.json({ ok: true });
+  }),
+);
+
+// ===========================================================================
+//  IMPACT ANALYSIS — backend tarafinda Recursive CTE ile etki agaci.
+//  Issue #46 — frontend'deki buildImpactTree'yi backend'e tasima.
+// ===========================================================================
+app.get(
+  '/api/projects/:pid/impact',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const reqId = req.query.reqId;
+    if (!reqId || !reqId.trim()) throw bad('reqId zorunlu.');
+    const result = await getImpactTree(pid, reqId.trim());
+    if (!result) throw bad('Gereksinim bulunamadı veya etki agaci bos.', 404);
+    res.json(result);
+  }),
+);
+
+// ===========================================================================
+//  RECOMPUTE (cascade) — manuel tetik
+// ===========================================================================
+app.post(
+  '/api/projects/:pid/recompute',
+  wrap(async (req, res) => {
+    const n = await cascade(req.params.pid);
+    res.json({ updated: n });
+  }),
+);
+
+// Issue #97: proje-bazli ROLES ve PERSONNEL CRUD uclari KALDIRILDI.
+// Rol/izin yonetimi admin konsolundaki SystemRole ekranindan (Issue #101)
+// yapilir; proje uyeligi ProjectMember tablosundan (Issue #103).
+
+// ===========================================================================
+//  APPROVALS (consensus onay + kilitleme)
+// ===========================================================================
+// Bir projedeki TUM gereksinim ve testlerin onay durumunu yeniden hesapla.
+//  Issue #15: N+1 dongu yerine cascade.js'teki toplu SQL yolu — oy havuzu
+//  1 kez okunur, bilesen basina 2 parametrik bulk UPDATE (toplam 12) calisir;
+//  degeri degismeyen kayitlara dokunulmaz.
+//  Issue #97: dogrudan recomputeApprovalsBulk cagriliyor (Role/Personnel CRUD
+//  kalktigi icin ara fonksiyona gerek kalmadi).
+
+app.get(
+  '/api/projects/:pid/approvals',
+  wrap(async (req, res) => {
+    const rows = await prisma.approval.findMany({ where: { projectId: req.params.pid } });
+    res.json(rows);
+  }),
+);
+
+// --- Ortak yardimcilar (Issue #126) ----------------------------------------
+//  Onay uclarinin hepsi ayni varlik cozumlemesini yapar: tipi dogrula, kaydi
+//  bul, projeye ait oldugunu garanti et.
+async function loadApprovalEntity(pid, entityType, entityId) {
+  if (!entityType || !entityId) throw bad('entityType, entityId zorunlu.');
+  if (!['requirement', 'testcase'].includes(entityType)) throw bad('Gecersiz entityType.');
+  const model = entityType === 'requirement' ? 'requirement' : 'testCase';
+  const entity = await prisma[model].findUnique({ where: { id: String(entityId) } });
+  if (!entity || entity.projectId !== pid) throw bad('Varlik bulunamadi.', 404);
+  return entity;
+}
+
+//  Bir bilesen icin onay YETKISI olan TUM aktif kullanicilar (proje uyeligine
+//  BAKMADAN). getRequiredVoters havuzu yalnizca projenin uyelerini alir;
+//  "Onaya davet et" ise havuz disindaki yetkilileri de kapsar (spec: yetkili
+//  kullanicilar onay listesine eklenebilir).
+async function approveCapableUsers(componentKey) {
+  const [users, roles] = await Promise.all([
+    prisma.user.findMany({
+      where: { isActive: true },
+      select: { id: true, name: true, roleKey: true, role: true },
+    }),
+    prisma.systemRole.findMany({ where: { isActive: true } }),
+  ]);
+  const roleByKey = new Map(roles.map((r) => [r.key, r]));
+  const out = [];
+  for (const u of users) {
+    if (isPMRole(u)) {
+      out.push({ id: u.id, name: u.name, roleName: u.roleKey || u.role });
+      continue;
+    }
+    const sr = u.roleKey ? roleByKey.get(u.roleKey) : null;
+    if (!sr) continue;
+    const perm = (sr.permissions || {}).approve || {};
+    if (perm.enabled && Array.isArray(perm.components) && perm.components.includes(componentKey))
+      out.push({ id: u.id, name: u.name, roleName: sr.name });
+  }
+  return out;
+}
+
+//  Oy verebilir mi? Issue #126: onaya DAVET EDILEN kullanici proje uyesi
+//  olmasa da oyunu kullanabilir — davetin amaci tam olarak budur.
+//  Aksi halde mevcut kural aynen isler: proje uyeligi + bilesen approve izni.
+//  DIKKAT: yalnizca davetten dogan satir (invitedById dolu) muafiyet saglar;
+//  projeden cikarilmis uyenin gecmis oy satiri yeniden oy hakki VERMEZ.
+async function assertCanVote(pid, entityType, entity, user, existingRow) {
+  const isPM = isPMRole(user);
+  if (isPM) return true;
+  if (existingRow?.invitedById) return true; // onaya davet edilmis
+  const membership = await prisma.projectMember.findUnique({
+    where: { projectId_userId: { projectId: pid, userId: user.id } },
+    select: { id: true },
+  });
+  if (!membership) throw bad('Bu projeye erisim yetkiniz yok.', 403);
+  const resolved = await resolveUserRole(prisma, user);
+  const perm = (resolved.permissions || {}).approve || {};
+  const compKey = componentKeyOf(entityType, entity.type);
+  if (!perm.enabled || !Array.isArray(perm.components) || !perm.components.includes(compKey))
+    throw bad('Bu bilesen icin onaylama yetkiniz yok.', 403);
+  return true;
+}
+
+//  Oturum kullanicisini (ve varsa mevcut oy satirini) getirir.
+async function currentVoter(req) {
+  const userId = req.auth?.userId;
+  if (!userId) throw bad('Gecersiz kimlik.', 401);
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) throw bad('Kullanici bulunamadi.', 401);
+  return user;
+}
+
+// Oy ver / degistir / geri cek. Kilitliyken yalnizca PM degistirebilir.
+// Issue #97: tamamen User tabanli — voterId her zaman User UUID.
+// Issue #126: body'ye `decision` ('approve' | 'reject') ve `comment` eklendi;
+// `action: 'withdraw'` oyu acikca geri ceker. Eski sozlesme (yalnizca
+// entityType+entityId) KORUNUR: tekrar cagri onay <-> geri cekme toggle'idir.
+app.post(
+  '/api/projects/:pid/approvals/vote',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const { entityType, entityId, action, comment } = req.body || {};
+    const decision = req.body?.decision;
+    if (decision && ![DECISION.APPROVE, DECISION.REJECT].includes(decision))
+      throw bad('Gecersiz decision (approve | reject).');
+    const entity = await loadApprovalEntity(pid, entityType, entityId);
+    const user = await currentVoter(req);
+    const isPM = isPMRole(user);
+    const voterId = user.id;
+    const voterName = user.name;
+    const existing = await prisma.approval.findFirst({
+      where: { projectId: pid, entityType, entityId, voterId },
+    });
+    await assertCanVote(pid, entityType, entity, user, existing);
+    if (entity.locked && !isPM)
+      throw bad('Bu kayit onaylandi ve kilitli. Yalnizca Proje Yoneticisi kilidi acabilir.', 403);
+
+    // Hedef karar: acik `decision` > toggle (eski davranis).
+    // Toggle yalnizca fiilen OY VERILMIS satirda geri cekmeye doner; bekleyen
+    // davet ('pending') satiri bir oy DEGILDIR, toggle onu onaya cevirir.
+    const hasVote = existing && decisionOf(existing) !== DECISION.PENDING;
+    const withdraw = action === 'withdraw' || (!decision && hasVote);
+    if (withdraw) {
+      if (!existing) throw bad('Geri cekilecek oy yok.', 404);
+      if (existing.invitedById) {
+        // Davetten dogan satir SILINMEZ: davet korunsun diye 'pending'e doner.
+        await prisma.approval.update({
+          where: { id: existing.id },
+          data: { decision: DECISION.PENDING, comment: null },
+        });
+      } else {
+        await prisma.approval.delete({ where: { id: existing.id } });
+      }
+      await audit(pid, {
+        action: 'APPROVAL_WITHDRAW',
+        entityType,
+        entityId,
+        textId: entity.text_id,
+        actor: voterId,
+        message: `Onay geri cekildi: ${voterName}.`,
+      });
+    } else {
+      const target = decision || DECISION.APPROVE;
+      const data = {
+        decision: target,
+        // Yorum yalnizca acikca gonderildiyse yazilir; gonderilmezse mevcut
+        // yorum korunur (oy degistirmek yorumu silmesin).
+        ...(comment === undefined ? {} : { comment: cleanComment(comment) }),
+      };
+      if (existing) {
+        await prisma.approval.update({ where: { id: existing.id }, data });
+      } else {
+        await prisma.approval.create({
+          data: {
+            projectId: pid,
+            entityType,
+            entityId,
+            voterId,
+            voterName: voterName || voterId,
+            ...data,
+          },
+        });
+      }
+      await audit(pid, {
+        action: target === DECISION.REJECT ? 'APPROVAL_REJECT_VOTE' : 'APPROVAL_VOTE',
+        entityType,
+        entityId,
+        textId: entity.text_id,
+        actor: voterId,
+        message: target === DECISION.REJECT ? `Reddedildi: ${voterName}.` : `Onaylandi: ${voterName}.`,
+      });
+    }
+    const state = await recomputeApproval(pid, entityType, entityId);
+    res.json(state);
+  }),
+);
+
+// Onay yorumu ("Yorum Ekle"): yorum KENDI oy kaydina baglanir, boylece
+// panelde hangi oyla iliskili oldugu gorunur. Oyu/daveti olmayan kullanici
+// yorum ekleyemez — baglanacagi bir oy kaydi yoktur.
+app.post(
+  '/api/projects/:pid/approvals/comment',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const { entityType, entityId, comment } = req.body || {};
+    const entity = await loadApprovalEntity(pid, entityType, entityId);
+    const user = await currentVoter(req);
+    const existing = await prisma.approval.findFirst({
+      where: { projectId: pid, entityType, entityId, voterId: user.id },
+    });
+    if (!existing) throw bad('Yorum eklemek icin once onay listesinde olmalisiniz.', 403);
+    const text = cleanComment(comment);
+    await prisma.approval.update({ where: { id: existing.id }, data: { comment: text } });
+    await audit(pid, {
+      action: 'APPROVAL_COMMENT',
+      entityType,
+      entityId,
+      textId: entity.text_id,
+      actor: user.id,
+      message: text ? `Onay yorumu eklendi (${user.name}): "${text}".` : `Onay yorumu kaldirildi (${user.name}).`,
+    });
+    res.json({ ok: true, comment: text });
+  }),
+);
+
+// Onaya davet et: bilesende onay YETKISI olan bir kullaniciyi bu kaydin onay
+// listesine ekler ('pending' oy yuvasi). Bekleyen davet konsensusu BLOKLAR —
+// davet edilen oy verene kadar kayit kilitlenmez.
+app.post(
+  '/api/projects/:pid/approvals/invite',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const { entityType, entityId, userId } = req.body || {};
+    if (!userId) throw bad('userId zorunlu.');
+    const entity = await loadApprovalEntity(pid, entityType, entityId);
+    const inviter = await currentVoter(req);
+    // Davet edebilmek icin davet edenin de bu kayitta soz hakki olmali:
+    // PM veya bilesende onay yetkisi olan proje uyesi.
+    await assertCanVote(pid, entityType, entity, inviter, null);
+    const compKey = componentKeyOf(entityType, entity.type);
+    const capable = await approveCapableUsers(compKey);
+    const invitee = capable.find((u) => u.id === userId);
+    if (!invitee) throw bad('Bu kullanicinin bu bilesende onay yetkisi yok.', 400);
+    const existing = await prisma.approval.findFirst({
+      where: { projectId: pid, entityType, entityId, voterId: userId },
+    });
+    if (existing) throw bad('Bu kullanici zaten onay listesinde.', 409);
+    await prisma.approval.create({
+      data: {
+        projectId: pid,
+        entityType,
+        entityId,
+        voterId: userId,
+        voterName: invitee.name || userId,
+        decision: DECISION.PENDING,
+        invitedById: inviter.id,
+      },
+    });
+    await audit(pid, {
+      action: 'APPROVAL_INVITE',
+      entityType,
+      entityId,
+      textId: entity.text_id,
+      actor: inviter.id,
+      message: `Onaya davet edildi: ${invitee.name} (davet eden: ${inviter.name}).`,
+    });
+    const state = await recomputeApproval(pid, entityType, entityId);
+    res.json(state);
+  }),
+);
+
+// Test senaryosunu DERHAL "Failed" yapar. Onaylamanin aksine TAM konsensus
+// GEREKMEZ: onay yetkisi olan TEK kisi (PM dahil) bir hatayi isaretleyebilmeli.
+// Yalnizca testcase icin gecerlidir — gereksinimler artik kendi baslarina
+// onaylanmadigi/reddedilmedigi icin (durumlari bagli testten turetilir,
+// bkz. cascade.js).
+app.post(
+  '/api/projects/:pid/approvals/reject',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const { entityId } = req.body || {};
+    if (!entityId) throw bad('entityId zorunlu.');
+    const entity = await prisma.testCase.findUnique({ where: { id: entityId } });
+    if (!entity || entity.projectId !== pid) throw bad('Varlik bulunamadi.', 404);
+    if (entity.locked && req.auth?.roleKey !== 'pm')
+      throw bad('Bu kayit onaylandi ve kilitli. Yalnizca Proje Yöneticisi kilidi acabilir.', 403);
+    await assertApprovePermission(req, pid, 'testcase', entity);
+    const row = await prisma.testCase.update({
+      where: { id: entityId },
+      data: { status: STATUS.REJECTED, approvalStatus: 'Pending', locked: true },
+    });
+    // Issue #126: reddin KIMDEN geldigi kayitta gorunur olsun — reddeden kendi
+    // oy yuvasina 'reject' yazar. Durum/kilit mantigi DEGISMEZ (tek yetkili
+    // yeterli); satir yalnizca panelin "Reddeden" listesini besler ve konsensus
+    // yeniden hesaplandiginda kaydin kendiliginden onaylanmasini engeller.
+    const rejecter = await prisma.user.findUnique({ where: { id: actorOf(req) } });
+    if (rejecter) {
+      const own = await prisma.approval.findFirst({
+        where: { projectId: pid, entityType: 'testcase', entityId, voterId: rejecter.id },
+      });
+      const data = {
+        decision: DECISION.REJECT,
+        // Yorum yalnizca gonderildiyse yazilir; gonderilmezse onceki korunur.
+        ...(req.body?.comment === undefined ? {} : { comment: cleanComment(req.body.comment) }),
+      };
+      if (own) {
+        await prisma.approval.update({ where: { id: own.id }, data });
+      } else {
+        await prisma.approval.create({
+          data: {
+            projectId: pid,
+            entityType: 'testcase',
+            entityId,
+            voterId: rejecter.id,
+            voterName: rejecter.name || rejecter.id,
+            ...data,
+          },
+        });
+      }
+    }
+    await audit(pid, {
+      action: 'TEST_REJECT',
+      entityType: 'testcase',
+      entityId,
+      textId: entity.text_id,
+      actor: actorOf(req),
+      message: `Test reddedildi (Failed): "${labelOf(entity)}".`,
+    });
+    // Bagli gereksinim(ler)in dogrulama durumu 'Rejected'e donsun.
+    await cascade(pid);
+    res.json({ status: row.status, approvalStatus: row.approvalStatus, locked: row.locked });
+  }),
+);
+
+// PM kilit acar: PM'in onayini geri ceker -> durum Beklemede'ye doner.
+app.post(
+  '/api/projects/:pid/approvals/unlock',
+  requirePM,
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const { entityType, entityId } = req.body || {};
+    if (!entityType || !entityId) throw bad('entityType, entityId zorunlu.');
+    await prisma.approval.deleteMany({ where: { projectId: pid, entityType, entityId, voterId: req.auth.userId } });
+    const model = entityType === 'requirement' ? 'requirement' : 'testCase';
+    const entity = await prisma[model].findUnique({ where: { id: entityId } });
+    await audit(pid, {
+      action: 'UNLOCK',
+      entityType,
+      entityId,
+      textId: entity?.text_id,
+      actor: req.auth.userId,
+      message: 'Kilit acildi; PM onayi geri cekildi, durum Beklemede.',
+    });
+    const state = await recomputeApproval(pid, entityType, entityId);
+    res.json(state);
+  }),
+);
+
+// Onay detayi: her gerekli oy verenin karari + bekleyenler + davet adaylari.
+// Issue #97: oy verenler User tabanli (PM'ler + approve izinli uyeler).
+// Issue #126: bu uc artik SADECE PM'in "Onay Detayi" modalini degil, kayit
+// detayindaki (ViewModal) kalici Onaylar panelini de besler — bu yuzden proje
+// kapsaminda okuyan HER kullaniciya aciktir. Eski alanlar (voters[].voted,
+// locked, approvalStatus) sozlesme geregi KORUNUR; yenileri eklenmistir.
+app.get(
+  '/api/projects/:pid/approvals/matrix',
+  wrap(async (req, res) => {
+    const pid = req.params.pid;
+    const { entityType, entityId } = req.query;
+    const entity = await loadApprovalEntity(pid, entityType, String(entityId || ''));
+    const { requiredVoters } = await requiredVotersFor(pid, entityType, entity);
+    const approvals = await prisma.approval.findMany({
+      where: { projectId: pid, entityType, entityId: String(entityId) },
+    });
+    // Havuz disindaki satirlarin (davet edilen / projeden ayrilmis) rolunu
+    // gosterebilmek icin adlari tek sorguda cozeriz (N+1 yok).
+    const poolIds = new Set(requiredVoters.map((v) => v.id));
+    const outsideIds = approvals.map((a) => a.voterId).filter((id) => !poolIds.has(id));
+    const outsideUsers = outsideIds.length
+      ? await prisma.user.findMany({
+          where: { id: { in: outsideIds } },
+          select: { id: true, name: true, roleKey: true, role: true },
+        })
+      : [];
+    const outsideById = new Map(outsideUsers.map((u) => [u.id, u]));
+    const enriched = approvals.map((a) => {
+      const u = outsideById.get(a.voterId);
+      return {
+        ...a,
+        voterName: a.voterName || u?.name || a.voterId,
+        voterRole: u ? u.roleKey || u.role : undefined,
+      };
+    });
+    const summary = summarizeApprovals(requiredVoters, enriched);
+    // Davet adaylari: bilesende onay yetkisi olan, listede HENUZ olmayanlar.
+    const compKey = componentKeyOf(entityType, entity.type);
+    const listed = new Set(summary.rows.map((r) => r.voterId));
+    const candidates = (await approveCapableUsers(compKey))
+      .filter((u) => !listed.has(u.id))
+      .map((u) => ({ id: u.id, name: u.name, role: u.roleName || '-' }));
+    res.json({
+      approvalStatus: entity.approvalStatus,
+      locked: entity.locked,
+      textId: entity.text_id,
+      title: entity.title,
+      // Geriye donuk: ApprovalMatrixModal bu diziyi `voted` alaniyla okur.
+      voters: summary.rows,
+      approvers: summary.approvers,
+      rejecters: summary.rejecters,
+      waiting: summary.waiting,
+      counts: {
+        approved: summary.approvedCount,
+        rejected: summary.rejectedCount,
+        pending: summary.pendingCount,
+      },
+      consensus: summary.consensus,
+      candidates,
+      // Panelin "bu benim satirim mi" kararini sunucu verir (× ve yorum
+      // aksiyonlari yalnizca ilgili yetkili kullanici icin acilir).
+      currentUserId: req.auth?.userId || null,
+    });
+  }),
+);
+
+// --- 404 ---
+app.use((req, res) => res.status(404).json({ error: `Bulunamadi: ${req.method} ${req.path}` }));
+
+// Test ortaminda (node:test + supertest) dinlemeye kapilmayalim; app disa
+// aktarilir, supertest kendi portunu yonetir.
+if (process.env.NODE_ENV !== 'test') {
+  // Issue #101: sistem rollerini garanti altina al (idempotent) sonra dinle.
+  ensureSystemRoles(prisma)
+    .then(() => {
+      app.listen(PORT, () => {
+        console.log(`[api] EHSIM RMT backend calisiyor -> http://localhost:${PORT}/api`);
+      });
+    })
+    .catch((e) => {
+      console.error('[system-roles] seed hatasi:', e);
+      app.listen(PORT, () => {
+        console.log(`[api] EHSIM RMT backend calisiyor -> http://localhost:${PORT}/api`);
+      });
+    });
+  // Coklu atamaya gecis: eski tek atamalari (assigneeId) ara tabloya tasi.
+  // Idempotenttir; zaten tasinmis kayitlara dokunmaz.
+  backfillAssignees(prisma)
+    .then(({ requirements, testCases }) => {
+      if (requirements + testCases > 0) {
+        console.log(`[api] Atama gecisi: ${requirements} gereksinim, ${testCases} test tasindi.`);
+      }
+    })
+    .catch((e) => console.error('[api] Atama gecisi basarisiz:', e?.message || e));
+}
+// NOT: ReqIF/.reqifz/.xml ice aktarma ucu burada DEGIL, traceability.js'de
+// ('/api/projects/:pid/traceability/import/reqif') — frontend'in fiilen
+// cagirdigi tek yer orasi. Bu route eskiden burada da tekrarlanmis
+// (kopya/olu kod) haldeydi; kafakarisikligi ve mantik sapmasini onlemek
+// icin kaldirildi.
+
+export default app;

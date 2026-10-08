@@ -1,0 +1,509 @@
+// ============================================================================
+//  Sidebar.jsx  —  Sol navigasyon (yeni yapi).
+//  Sira: Dashboard -> Hiyerarsi[User/System/Sub-system Req + Acceptance/System/
+//  Sub-system Test + Glossary] -> Kapsam Raporu -> Izlenebilirlik Matrisi ->
+//  AI Belge Analizi -> Degisiklik Tarihcesi.
+//  Aktif proje adi ustte gosterilir; "Projeler" ile secim ekranina donulur.
+// ============================================================================
+import { useMemo, useState } from 'react'
+import {
+  IconDashboard,
+  IconList,
+  IconMatrix,
+  IconShield,
+  IconHistory,
+  IconSparkle,
+  IconChevron,
+  IconDoc,
+  IconAlert,
+  IconPlus,
+  IconTarget,
+  IconMindMap,
+  IconComponent,
+} from '../common/Icons.jsx'
+import Logo from '../common/Logo.jsx'
+import NavManager from './NavManager.jsx'
+import { useProject } from '../../context/ProjectContext.jsx'
+import { useApp } from '../../context/AppContext.jsx'
+import { useLang } from '../../context/LanguageContext.jsx'
+import { useAuth } from '../../context/AuthContext.jsx'
+import { REQ_PAGES, TYPE_SUFFIX } from '../../utils/constants.js'
+import { buildComponentNavTree } from '../../utils/componentNav.js'
+
+// Sayfa anahtari -> i18n etiket anahtari. Bu liste SABITTIR (backend
+// navDefaults.js NAV_PAGE_KEYS ile birebir ayni); kullanici yalnizca bu
+// sayfalari GRUPLAR, yeni sayfa/tip yaratamaz.
+export const PAGE_LABEL_KEYS = {
+  'req-user': 'nav.reqUser',
+  'req-system': 'nav.reqSystem',
+  'req-subsystem': 'nav.reqSubsystem',
+  'test-acceptance': 'nav.testAcceptance',
+  'test-system': 'nav.testSystem',
+  'test-subsystem': 'nav.testSubsystem',
+  glossary: 'nav.glossary',
+}
+
+const TOP = [
+  { key: 'dashboard', labelKey: 'nav.dashboard', icon: IconDashboard },
+  // Urun Agaci (PBS) — lazy-load hiyerarsi gorunumu (Issue #9).
+  { key: 'pbs-tree', labelKey: 'nav.pbsTree', icon: IconList },
+  // Issue #129: Bilesen bazli gorunum — ayni urun kirilimine SEVIYE yerine
+  // BILESEN uzerinden bakar (secilen bilesenin tum gereksinimleri tek liste).
+  { key: 'components', labelKey: 'nav.components', icon: IconComponent },
+]
+const BOTTOM = [
+  { key: 'coverage', labelKey: 'nav.coverage', icon: IconShield },
+  { key: 'traceability', labelKey: 'nav.traceability', icon: IconMatrix },
+  // Issue #122: izlenebilirlik zincirinin zihin haritasi tarzi "Gereksinim
+  // Haritasi" gorunumu. "Baglanti Agaci" (pbs-tree) AYRI ve DEGISMEMIS bir
+  // sayfadir; bu sekme onun yerine gecmez, yanina eklenir.
+  { key: 'requirement-map', labelKey: 'nav.requirementMap', icon: IconMindMap },
+  { key: 'traceability-export', labelKey: 'nav.traceabilityExport', icon: IconMatrix },
+  { key: 'traceability-import', labelKey: 'nav.traceabilityImport', icon: IconMatrix },
+  { key: 'suspect', labelKey: 'nav.suspect', icon: IconAlert },
+  { key: 'documents', labelKey: 'nav.documents', icon: IconSparkle },
+  // Dokuman kutuphanesi: bilgisayardan yuklenen PDF/Excel belgeleri kalici tutar.
+  { key: 'document-library', labelKey: 'nav.documentLibrary', icon: IconDoc },
+  { key: 'audit', labelKey: 'nav.audit', icon: IconHistory },
+]
+// Baseline'lar (snapshots) Gereksinimler grubunun altinda durur; hicbir
+// grupta gereksinim sayfasi yoksa alt listeye duser (kaybolmaz).
+const BASELINES = { key: 'snapshots', labelKey: 'nav.snapshots', icon: IconDoc }
+
+function NavButton({ active, onClick, Icon, label, indent = false }) {
+  return (
+    <button
+      onClick={onClick}
+      className={
+        'flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors ' +
+        (indent ? 'pl-9 !py-2 text-[13px] ' : '') +
+        (active
+          ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300'
+          : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100')
+      }
+    >
+      {Icon && <Icon size={indent ? 16 : 19} />}
+      <span className="flex-1 text-left">{label}</span>
+    </button>
+  )
+}
+
+/**
+ * Issue #140: bilesen gereksinim girdisi — "<Bilesen adi> Gereksinimleri · N".
+ * Alt bilesenler IC ICE cizilir (urun kirilimi menude de korunur); sayac
+ * bilesenin alt kirilimi DAHIL gorulebilen gereksinim adedidir.
+ */
+function ComponentNavRow({ entry, depth, active, onNavigate, label, open, onToggle }) {
+  const hasChildren = entry.children.length > 0
+  const isActive = active === entry.key
+  return (
+    <div className="flex items-center gap-1" style={{ paddingLeft: 12 + depth * 12 }}>
+      {hasChildren ? (
+        <button
+          onClick={onToggle}
+          aria-label={label}
+          aria-expanded={open}
+          data-testid={`nav-component-toggle-${entry.componentId}`}
+          className="shrink-0 rounded p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
+        >
+          <IconChevron
+            size={13}
+            className={open ? 'rotate-90 transition-transform' : 'transition-transform'}
+          />
+        </button>
+      ) : (
+        <span className="w-[21px] shrink-0" />
+      )}
+      <button
+        onClick={() => onNavigate(entry.key)}
+        title={label}
+        data-testid={`nav-component-${entry.componentId}`}
+        className={
+          'flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-2 text-[13px] font-semibold transition-colors ' +
+          (isActive
+            ? 'bg-brand-50 text-brand-700 dark:bg-brand-900/30 dark:text-brand-300'
+            : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100')
+        }
+      >
+        <IconComponent size={15} className="shrink-0 opacity-70" />
+        <span className="flex-1 truncate text-left">{label}</span>
+        {/* Gereksinimi olmayan bilesen de gorunur: rozet 0 yazar (Issue #140). */}
+        <span
+          data-testid={`nav-component-count-${entry.componentId}`}
+          className="shrink-0 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-bold tabular-nums text-slate-500 dark:bg-slate-800 dark:text-slate-400"
+        >
+          {entry.count}
+        </span>
+      </button>
+    </div>
+  )
+}
+
+export default function Sidebar({ active, onNavigate }) {
+  const { activeProject, closeProject } = useProject()
+  const { nav, components, requirements, addNavItem, materializeNav } = useApp()
+  const { t } = useLang()
+  const { isPM, can } = useAuth()
+  // Kapali gruplarin id'leri (varsayilan: hepsi acik).
+  const [closedGroups, setClosedGroups] = useState(() => new Set())
+  const [navMgrOpen, setNavMgrOpen] = useState(false)
+  // Grubun yanindaki "+" ile hizli sayfa ekleme (Menuyu duzenle'yi acmadan).
+  const [quickAddGroupId, setQuickAddGroupId] = useState(null)
+  const [quickAddPage, setQuickAddPage] = useState({
+    pageKey: 'req-user',
+    label: '',
+    typeFilter: '',
+  })
+  const [quickAddBusy, setQuickAddBusy] = useState(false)
+  const [quickAddError, setQuickAddError] = useState('')
+
+  const groups = useMemo(() => nav?.groups || [], [nav])
+  const ungrouped = nav?.ungrouped || []
+  // Issue #140: bilesenlere bagli gereksinimler menude OTOMATIK belirir.
+  // Girdiler bilesen agacindan TURETILIR (yeni pageKey/NavItem uretilmez),
+  // bu yuzden ad degisimi / silme / bag kaldirma aninda yansir. Sayac ve
+  // liste, kullanicinin GOREBILDIGI kayitlarla sinirlidir (izin: kaydin
+  // kendi sayfa anahtari uzerinden — bkz. utils/componentNav.js).
+  const componentNav = useMemo(
+    () => buildComponentNavTree(components, requirements, { can }),
+    [components, requirements, can],
+  )
+  // Bilesen girdileri Gereksinimler grubunun ICINDE, sabit sayfalarin
+  // YANINDA durur (onlarin yerine gecmez). Grup adi kullanici tarafindan
+  // degistirilmis olabilecegi icin grup, icerdigi 'req-*' sayfalarindan
+  // bulunur; hicbir grupta gereksinim sayfasi yoksa girdiler gruplarin
+  // altinda kendi basina listelenir.
+  const componentGroupIndex = useMemo(
+    () => groups.findIndex((g) => (g.items || []).some((it) => REQ_PAGES[it.pageKey])),
+    [groups],
+  )
+  // Materialize edilmemis varsayilan gruplarin etiketi i18n'den gelir;
+  // kullanici ozellestirdikten sonra kendi verdigi duz isim kullanilir.
+  const groupLabel = (g) => (g.nameKey ? t(g.nameKey) : g.name)
+  // Ozel ad verilmisse onu, yoksa sayfanin varsayilan i18n etiketini kullan.
+  // Tip filtresi varsa kisa bir sonek eklenir (orn. "· SW") — ayni pageKey'den
+  // Software/Hardware icin ayri sayfalar eklendiginde ayirt edilebilsinler.
+  const navItemLabel = (item) => {
+    const base = item.label || t(PAGE_LABEL_KEYS[item.pageKey] || item.pageKey)
+    if (!item.typeFilter) return base
+    return `${base} · ${TYPE_SUFFIX[item.typeFilter] || item.typeFilter}`
+  }
+  const toggleGroup = (id) =>
+    setClosedGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+  // Bilesen etiketi: "<Bilesen adi> Gereksinimleri" (i18n; EN: "<name>
+  // Requirements"). Adsiz bilesen olamaz (backend zorunlu tutar).
+  const componentNavLabel = (entry) => t('nav.componentRequirements', { name: entry.name })
+
+  // Ic ice bilesen dali. Kapali/acik durumu gruplarla AYNI kumede tutulur
+  // (anahtar bilesenin menu anahtaridir), boylece bilesen silinince artik
+  // kimse o anahtari sormaz ve durum kendiliginden temizlenir.
+  const renderComponentNav = (entries, depth = 0) =>
+    entries.map((entry) => {
+      const open = !closedGroups.has(entry.key)
+      return (
+        <div key={entry.key}>
+          <ComponentNavRow
+            entry={entry}
+            depth={depth}
+            active={active}
+            onNavigate={onNavigate}
+            label={componentNavLabel(entry)}
+            open={open}
+            onToggle={() => toggleGroup(entry.key)}
+          />
+          {open && entry.children.length > 0 && (
+            <div className="space-y-0.5">{renderComponentNav(entry.children, depth + 1)}</div>
+          )}
+        </div>
+      )
+    })
+
+  // "+" ile grubun yanindan dogrudan sayfa ekleme — "Menuyu duzenle" acmaya
+  // gerek kalmadan. Varsayilan (heniz DB'ye yazilmamis) gruplarin id'si
+  // olmadigi icin once materialize edilir, sonra ayni ada sahip materialize
+  // edilmis grup bulunur.
+  const openQuickAdd = (g, gid) => {
+    setQuickAddError('')
+    setQuickAddPage({ pageKey: 'req-user', label: '', typeFilter: '' })
+    setQuickAddGroupId(gid)
+    setClosedGroups((prev) => {
+      if (!prev.has(gid)) return prev
+      const next = new Set(prev)
+      next.delete(gid)
+      return next
+    })
+  }
+
+  const closeQuickAdd = () => {
+    setQuickAddGroupId(null)
+    setQuickAddError('')
+  }
+
+  const submitQuickAdd = async (g) => {
+    setQuickAddBusy(true)
+    setQuickAddError('')
+    try {
+      let groupId = g.id
+      if (!groupId) {
+        const layout = await materializeNav()
+        groupId = layout?.groups?.find((mg) => mg.name === g.name)?.id
+      }
+      if (!groupId) throw new Error(t('form.saveError'))
+      await addNavItem({
+        groupId,
+        pageKey: quickAddPage.pageKey,
+        label: quickAddPage.label.trim() || null,
+        typeFilter: quickAddPage.typeFilter || null,
+      })
+      setQuickAddGroupId(null)
+    } catch (err) {
+      setQuickAddError(err?.message || t('form.saveError'))
+    } finally {
+      setQuickAddBusy(false)
+    }
+  }
+
+  return (
+    <aside className="flex w-64 shrink-0 flex-col border-r border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+      {/* Logo + proje */}
+      <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
+        <div className="flex items-center gap-3">
+          <Logo size={38} className="shrink-0 drop-shadow-sm" />
+          <div className="min-w-0 leading-tight">
+            <div className="truncate text-sm font-extrabold tracking-tight text-slate-900 dark:text-white">
+              {t('app.name')}
+            </div>
+            <div className="truncate text-[11px] font-medium text-slate-400">
+              {activeProject?.name || t('app.subtitle')}
+            </div>
+          </div>
+        </div>
+        <button
+          onClick={closeProject}
+          className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 py-1.5 text-[11px] font-semibold text-slate-500 transition-colors hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-400 dark:hover:bg-slate-800"
+        >
+          <IconChevron size={12} className="rotate-180" /> {t('nav.projects')}
+        </button>
+      </div>
+
+      {/* Nav */}
+      <nav className="flex-1 space-y-1 overflow-y-auto p-3">
+        {TOP.map((item) => (
+          <NavButton
+            key={item.key}
+            active={active === item.key}
+            onClick={() => onNavigate(item.key)}
+            Icon={item.icon}
+            label={t(item.labelKey)}
+          />
+        ))}
+
+        {/* Issue #97: proje-bazli Roller sayfasi KALDIRILDI — rol/izin yonetimi
+            admin konsolundaki SystemRole ekranindan (Issue #101) yapilir. */}
+
+        {/* Bana Atananlar — atama User tabanlidir (#97/A): PM dahil herkes
+            kendisine atanmis isleri gorebilir (personel kimligi gerekmez). */}
+        <NavButton
+          key="my-work"
+          active={active === 'my-work'}
+          onClick={() => onNavigate('my-work')}
+          Icon={IconTarget}
+          label={t('nav.myWork')}
+        />
+
+        {/* Menu gruplari (proje bazli, kullanici yonetimli — Issue #9/6) */}
+        {groups.map((g, gi) => {
+          const gid = g.id || `default-${gi}`
+          const isOpen = !closedGroups.has(gid)
+          const groupActive = g.items.some((i) => (i.id || i.pageKey) === active)
+          return (
+            <div key={gid}>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => toggleGroup(gid)}
+                  data-testid={`nav-group-btn-${groupLabel(g)}`}
+                  className={
+                    'flex flex-1 items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-semibold transition-colors ' +
+                    (groupActive
+                      ? 'text-brand-700 dark:text-brand-300'
+                      : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100')
+                  }
+                >
+                  <IconList size={19} />
+                  <span className="flex-1 truncate text-left">{groupLabel(g)}</span>
+                  <IconChevron
+                    size={15}
+                    className={isOpen ? 'rotate-90 transition-transform' : 'transition-transform'}
+                  />
+                </button>
+                {isPM && (
+                  <button
+                    onClick={() => openQuickAdd(g, gid)}
+                    title={t('navmgr.addPage')}
+                    aria-label={`${groupLabel(g)} ${t('navmgr.addPage')}`}
+                    data-testid={`nav-group-quickadd-${groupLabel(g)}`}
+                    className="btn-ghost shrink-0 !px-2 text-brand-600"
+                  >
+                    <IconPlus size={14} />
+                  </button>
+                )}
+              </div>
+              {isOpen && (
+                <div className="space-y-0.5">
+                  {g.items.map((item) => (
+                    <NavButton
+                      key={item.id || item.pageKey}
+                      active={active === (item.id || item.pageKey)}
+                      onClick={() => onNavigate(item.id || item.pageKey)}
+                      Icon={null}
+                      label={navItemLabel(item)}
+                      indent
+                    />
+                  ))}
+                  {/* Issue #140: bilesen gereksinim girdileri — sabit
+                      sayfalarin YANINDA, onlari degistirmeden. */}
+                  {gi === componentGroupIndex && renderComponentNav(componentNav)}
+                  {gi === componentGroupIndex && (
+                    <NavButton
+                      active={active === BASELINES.key}
+                      onClick={() => onNavigate(BASELINES.key)}
+                      Icon={null}
+                      label={t(BASELINES.labelKey)}
+                      indent
+                    />
+                  )}
+                </div>
+              )}
+              {quickAddGroupId === gid && (
+                <div
+                  data-testid="nav-quickadd-form"
+                  className="mx-1 mt-1 space-y-2 rounded-lg bg-slate-50 p-3 dark:bg-slate-800/60"
+                >
+                  {quickAddError && (
+                    <div className="rounded bg-rose-50 px-2 py-1 text-[11px] text-rose-700 dark:bg-rose-900/30 dark:text-rose-300">
+                      {quickAddError}
+                    </div>
+                  )}
+                  <select
+                    value={quickAddPage.pageKey}
+                    onChange={(e) =>
+                      setQuickAddPage((v) => ({ ...v, pageKey: e.target.value, typeFilter: '' }))
+                    }
+                    disabled={quickAddBusy}
+                    data-testid="nav-quickadd-type"
+                    className="input w-full !py-1 text-xs"
+                  >
+                    {Object.keys(PAGE_LABEL_KEYS).map((k) => (
+                      <option key={k} value={k}>
+                        {t(PAGE_LABEL_KEYS[k])}
+                      </option>
+                    ))}
+                  </select>
+                  {(REQ_PAGES[quickAddPage.pageKey]?.typeOptions?.length || 0) > 1 && (
+                    <select
+                      value={quickAddPage.typeFilter}
+                      onChange={(e) =>
+                        setQuickAddPage((v) => ({ ...v, typeFilter: e.target.value }))
+                      }
+                      disabled={quickAddBusy}
+                      data-testid="nav-quickadd-typefilter"
+                      className="input w-full !py-1 text-xs"
+                    >
+                      <option value="">{t('navmgr.noTypeFilter')}</option>
+                      {REQ_PAGES[quickAddPage.pageKey].typeOptions.map((tp) => (
+                        <option key={tp} value={tp}>
+                          {tp}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <input
+                    value={quickAddPage.label}
+                    onChange={(e) => setQuickAddPage((v) => ({ ...v, label: e.target.value }))}
+                    placeholder={t('navmgr.pageNamePlaceholder')}
+                    disabled={quickAddBusy}
+                    data-testid="nav-quickadd-name"
+                    className="input w-full !py-1 text-xs"
+                  />
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => submitQuickAdd(g)}
+                      disabled={quickAddBusy}
+                      data-testid="nav-quickadd-submit"
+                      className="btn-primary !px-3 !py-1 text-xs"
+                    >
+                      {t('navmgr.addPage')}
+                    </button>
+                    <button
+                      onClick={closeQuickAdd}
+                      disabled={quickAddBusy}
+                      className="btn-secondary !px-3 !py-1 text-xs"
+                    >
+                      {t('form.cancel')}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )
+        })}
+
+        {/* Hicbir grupta gereksinim sayfasi yoksa bilesen girdileri burada
+            (gruplarin altinda) durur — menude kaybolmazlar. */}
+        {componentGroupIndex === -1 && componentNav.length > 0 && (
+          <div className="space-y-0.5">{renderComponentNav(componentNav)}</div>
+        )}
+
+        {/* Grupsuz sayfalar (varsayilan: Sozluk) */}
+        {ungrouped.map((item) => (
+          <NavButton
+            key={item.id || item.pageKey}
+            active={active === (item.id || item.pageKey)}
+            onClick={() => onNavigate(item.id || item.pageKey)}
+            Icon={IconList}
+            label={navItemLabel(item)}
+          />
+        ))}
+
+        {/* Menuyu duzenle — yalnizca PM (backend de requirePM ile korunuyor) */}
+        {isPM && (
+          <button
+            onClick={() => setNavMgrOpen(true)}
+            className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-[12px] font-semibold text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-300"
+          >
+            <IconPlus size={14} />
+            {t('nav.manageMenu')}
+          </button>
+        )}
+
+        <div className="my-2 border-t border-slate-100 dark:border-slate-800" />
+
+        {(componentGroupIndex === -1 ? [...BOTTOM, BASELINES] : BOTTOM).map((item) => (
+          <NavButton
+            key={item.key}
+            active={active === item.key}
+            onClick={() => onNavigate(item.key)}
+            Icon={item.icon}
+            label={t(item.labelKey)}
+          />
+        ))}
+      </nav>
+
+      <NavManager open={navMgrOpen} onClose={() => setNavMgrOpen(false)} />
+
+      {/* Alt not */}
+      <div className="border-t border-slate-200 p-4 dark:border-slate-800">
+        <div className="rounded-lg bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+          {t('sidebar.dataNote', { b: 'DO-178C' })}
+          <span className="font-semibold text-brand-600 dark:text-brand-400"> PostgreSQL</span>
+        </div>
+      </div>
+    </aside>
+  )
+}

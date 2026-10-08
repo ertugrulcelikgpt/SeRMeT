@@ -1,0 +1,196 @@
+// ============================================================================
+//  snapshot.test.js — Backend API testleri: ProjectSnapshot (Issue #8).
+//  TDD: bu test önce, endpoint'ler eklendikten sonra yeşile döner.
+//  Kapsam: snapshot oluşturma (PM), yetkisiz erişim reddi, listeleme,
+//  salt-okunur detay, silme ve AuditLog kaydı.
+//
+//  Calistirma: npm test backend/tests/snapshot.test.js
+//  DB: npm test altında otomatik seed edilir (api.test.js shared before).
+import assert from 'node:assert/strict';
+import { before, after, test } from 'node:test';
+import request from 'supertest';
+// Ortak env + DB reset (tek dogruluk kaynagi: tests/_setup.js).
+import './_setup.js';
+import { resetDb } from './_setup.js';
+
+const { default: app } = await import('../src/server.js');
+const { PrismaClient } = await import('@prisma/client');
+
+const prisma = new PrismaClient();
+
+const PM_CREDENTIALS = { username: 'pm-snap', password: 'pm-snap-pass-1234' };
+let pmToken = null;
+let proj = null;
+
+before(async () => {
+  resetDb();
+
+  const { hashPassword } = await import('../src/auth.js');
+
+  await prisma.user.create({
+    data: {
+      username: PM_CREDENTIALS.username,
+      passwordHash: await hashPassword(PM_CREDENTIALS.password),
+      name: 'Snapshot Test PM',
+      role: 'Proje Yöneticisi',
+    },
+  });
+
+  proj = await prisma.project.create({ data: { name: 'Snapshot Test Project' } });
+
+  // Projeye birkaç varlık koyalım (snapshot içinde görmek için).
+  await prisma.requirement.create({
+    data: { projectId: proj.id, text_id: 'REQ-USR-001', title: 'Snapshot gereksinimi', type: 'User Requirement' },
+  });
+  await prisma.testCase.create({
+    data: { projectId: proj.id, text_id: 'TC-ACC-001', title: 'Snapshot testi', type: 'Acceptance Test' },
+  });
+  await prisma.traceabilityLink.create({
+    data: {
+      projectId: proj.id,
+      fromId: (await prisma.requirement.findFirst({ where: { projectId: proj.id } })).id,
+      toId: (await prisma.testCase.findFirst({ where: { projectId: proj.id } })).id,
+      type: 'Verifies',
+    },
+  });
+
+  // PM token al.
+  const res = await request(app).post('/api/auth/login').send(PM_CREDENTIALS);
+  pmToken = res.body.accessToken;
+});
+
+after(async () => {
+  await prisma.$disconnect();
+});
+
+// --- Token / yetki ----------------------------------------------------------
+
+test('POST /api/projects/:pid/snapshots — tokensiz 401 dondurur', async () => {
+  const res = await request(app).post(`/api/projects/${proj.id}/snapshots`).send({ name: 'Bo güvenlik' });
+  assert.equal(res.status, 401);
+});
+
+test('POST /api/projects/:pid/snapshots — PM token ile snapshot olusturur', async () => {
+  const res = await request(app)
+    .post(`/api/projects/${proj.id}/snapshots`)
+    .set('Authorization', `Bearer ${pmToken}`)
+    .send({ name: 'Beta snapshot' });
+  assert.equal(res.status, 201);
+  assert.ok(res.body.id);
+  assert.equal(res.body.name, 'Beta snapshot');
+});
+
+test('GET /api/projects/:pid/snapshots — PM token ile listeyi dondurur', async () => {
+  const res = await request(app).get(`/api/projects/${proj.id}/snapshots`).set('Authorization', `Bearer ${pmToken}`);
+  assert.equal(res.status, 200);
+  assert.ok(Array.isArray(res.body.data));
+  assert.ok(res.body.data.length >= 1);
+  assert.ok(res.body.data[0].createdAt);
+  assert.ok(typeof res.body.total === 'number');
+  assert.ok(res.body.take > 0);
+  assert.ok(res.body.skip >= 0);
+});
+
+test('GET /api/projects/:pid/snapshots/:snapshotId — detayi (items) ile dondurur', async () => {
+  // önce bir snapshot yarat.
+  const created = await request(app)
+    .post(`/api/projects/${proj.id}/snapshots`)
+    .set('Authorization', `Bearer ${pmToken}`)
+    .send({ name: 'Detay snapshot' });
+  assert.equal(created.status, 201);
+  const sid = created.body.id;
+
+  const res = await request(app)
+    .get(`/api/projects/${proj.id}/snapshots/${sid}`)
+    .set('Authorization', `Bearer ${pmToken}`);
+  assert.equal(res.status, 200);
+  assert.equal(res.body.name, 'Detay snapshot');
+  assert.ok(res.body.projectId === proj.id);
+  // items frozen copy içermeli.
+  assert.ok(Array.isArray(res.body.items));
+  const reqItem = res.body.items.find((i) => i.entityType === 'requirement');
+  assert.ok(reqItem, 'snapshot items içinde requirement olmalı');
+  assert.equal(reqItem.data.title, 'Snapshot gereksinimi');
+});
+
+// Kullanıcı talebi: snapshot artık (1) modular öznitelik ŞEMASINI ve (2) o
+// anki menü grup/sayfa düzenini de yakalamalı — yalnızca canlı şemaya değil.
+test('POST /snapshots — modular öznitelik tanımlarını ve menü düzenini de yakalar', async () => {
+  const attr = await request(app)
+    .post(`/api/projects/${proj.id}/attributes`)
+    .set('Authorization', `Bearer ${pmToken}`)
+    .send({ label: 'Risk Skoru', entityType: 'requirement', dataType: 'number' });
+  assert.equal(attr.status, 201);
+
+  const group = await request(app)
+    .post(`/api/projects/${proj.id}/nav/groups`)
+    .set('Authorization', `Bearer ${pmToken}`)
+    .send({ name: 'Snapshot Test Grubu' });
+  assert.equal(group.status, 201);
+
+  const item = await request(app)
+    .post(`/api/projects/${proj.id}/nav/items`)
+    .set('Authorization', `Bearer ${pmToken}`)
+    .send({ groupId: group.body.id, pageKey: 'req-user' });
+  assert.equal(item.status, 201);
+
+  const created = await request(app)
+    .post(`/api/projects/${proj.id}/snapshots`)
+    .set('Authorization', `Bearer ${pmToken}`)
+    .send({ name: 'Sema snapshot' });
+  assert.equal(created.status, 201);
+
+  const detail = await request(app)
+    .get(`/api/projects/${proj.id}/snapshots/${created.body.id}`)
+    .set('Authorization', `Bearer ${pmToken}`);
+  assert.equal(detail.status, 200);
+
+  const attrDefItem = detail.body.items.find((i) => i.entityType === 'attributeDef' && i.data.label === 'Risk Skoru');
+  assert.ok(attrDefItem, 'snapshot items icinde yakalanan attributeDef olmali');
+  assert.equal(attrDefItem.data.entityType, 'requirement');
+  assert.equal(attrDefItem.data.dataType, 'number');
+
+  const navItem = detail.body.items.find((i) => i.entityType === 'navLayout');
+  assert.ok(navItem, 'snapshot items icinde navLayout olmali (TEK satir)');
+  const capturedGroup = navItem.data.groups.find((g) => g.name === 'Snapshot Test Grubu');
+  assert.ok(capturedGroup, 'yeni olusturulan menu grubu yakalanmali');
+  assert.ok(
+    capturedGroup.items.some((it) => it.pageKey === 'req-user'),
+    'gruba eklenen sayfa yakalanmali',
+  );
+});
+
+test('GET /api/projects/:pid/snapshots/:snapshotId — baska projenin id si 404', async () => {
+  const other = await prisma.project.create({ data: { name: 'Dış proje' } });
+  const res = await request(app)
+    .get(`/api/projects/${other.id}/snapshots/${proj.id}`) // geçersiz snapshotId, farklı proje
+    .set('Authorization', `Bearer ${pmToken}`);
+  assert.equal(res.status, 404);
+});
+
+test("DELETE /api/projects/:pid/snapshots/:snapshotId — PM silebilir; AuditLog'da DELETE aksiyonu", async () => {
+  const created = await request(app)
+    .post(`/api/projects/${proj.id}/snapshots`)
+    .set('Authorization', `Bearer ${pmToken}`)
+    .send({ name: 'Silinecek' });
+  const sid = created.body.id;
+
+  const res = await request(app)
+    .delete(`/api/projects/${proj.id}/snapshots/${sid}`)
+    .set('Authorization', `Bearer ${pmToken}`)
+    .send({ reason: 'Test verisi temizligi.' });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.ok, true);
+
+  // AuditLog kontrolü.
+  const log = await prisma.auditLog.findFirst({
+    where: { projectId: proj.id, action: 'SNAPSHOT_DELETE', entityId: sid },
+  });
+  assert.ok(log, 'AuditLog SNAPSHOT_DELETE kaydı yok');
+
+  // snapshot geri dönmeli.
+  const getRes = await request(app)
+    .get(`/api/projects/${proj.id}/snapshots/${sid}`)
+    .set('Authorization', `Bearer ${pmToken}`);
+  assert.equal(getRes.status, 404);
+});
